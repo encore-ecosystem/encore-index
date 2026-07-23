@@ -1,0 +1,30 @@
+import core::vec::Vec
+import rich::{Console, PrettyPrinter, ProgressBar, Prompt, SelectPrompt, pretty_list}
+
+fn main() -> u32 {
+    let console = Console::new()
+    let printer = PrettyPrinter::new()
+
+    console.rule("Pretty")
+    console.println(printer.render_kv("mode", "bootstrap"))
+
+    let mut modules = Vec[str]::new()
+    modules.push("lexer")
+    modules.push("parser")
+    modules.push("translator")
+    console.println(pretty_list(modules))
+
+    console.rule("Progress")
+    console.progress(ProgressBar::new(12_usize), 2_usize, 3_usize, "compile")
+
+    console.rule("Prompt")
+    let mut profiles = Vec[str]::new()
+    profiles.push("debug")
+    profiles.push("release")
+    profiles.push("extreme")
+    let target = console.prompt(Prompt::with_default("Target", "bootstrap"))
+    let profile = console.select(SelectPrompt::with_default("Profile", profiles, 0_usize))
+    console.info("selected: " + target)
+    console.info("profile: " + profile)
+    ret 0_u32
+}

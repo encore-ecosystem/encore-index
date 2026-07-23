@@ -1,0 +1,25 @@
+//! Provides futures and blocking future execution.
+
+pub import core::future::{Context, Future, Poll, Ready, Waker, context, ready}
+
+extern fn encore_async_waker_new() -> usize
+extern fn encore_async_waker_wait(token: usize) -> ()
+extern fn encore_async_waker_drop(token: usize) -> ()
+
+/// Performs the `block_on` operation.
+pub fn block_on[T, F: Future[T]](future: F) -> T {
+    let token = encore_async_waker_new()
+    let mut current = future
+    loop {
+        match current.poll(context(token)) {
+            Poll[F, T]::Ready(value) => {
+                encore_async_waker_drop(token)
+                ret value
+            }
+            Poll[F, T]::Pending(next) => {
+                current = next
+                encore_async_waker_wait(token)
+            }
+        }
+    }
+}

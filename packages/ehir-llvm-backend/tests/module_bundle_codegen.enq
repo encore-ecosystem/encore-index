@@ -1,0 +1,33 @@
+import core::option::Option
+import core::testing::assert
+
+import ehirlib::parse_module_bundle_text
+import refrain::codegen::emit_ir_bundle_for_target_parallel
+
+fn main() -> u32 {
+    let source = "entry beta\n\n" +
+        "module alpha {\n" +
+        "fn alpha() -> u32 {\n  $entry:\n    value: u32 = lcpos 7_u32\n    ret value: u32\n}\n\n" +
+        "fn identity[T](value: T) -> T {\n  $entry:\n    ret value: T\n}\n\n" +
+        "struct Counter {\n  value: u32\n}\n\n" +
+        "impl Counter {\n  fn read(self: Counter) -> u32 {\n    $entry:\n      value: u32 = lcpos 9_u32\n      ret value: u32\n  }\n}\n}\n\n" +
+        "module beta {\nimport alpha\n\n" +
+        "fn main() -> u32 {\n  $entry:\n    base: u32 = call alpha()\n    value: u32 = call identity[u32](base: u32)\n    ret value: u32\n}\n}\n"
+    let bundle = parse_module_bundle_text("", source)
+    let modules = emit_ir_bundle_for_target_parallel(bundle, "x86_64-unknown-linux-gnu", 64_usize, 2_usize)
+    if !assert(modules.len() == 2_usize) { ret 1_u32 }
+    let mut alpha_ir = ""
+    let mut beta_ir = ""
+    for module in modules {
+        if module.module_id == "alpha" { alpha_ir = module.ir }
+        elif module.module_id == "beta" { beta_ir = module.ir }
+    }
+    if !assert(alpha_ir.contains("define i32 @alpha")) { ret 2_u32 }
+    if !assert(alpha_ir.contains("declare i32 @main")) { ret 3_u32 }
+    if !assert(beta_ir.contains("declare i32 @alpha")) { ret 4_u32 }
+    if !assert(beta_ir.contains("define i32 @main")) { ret 5_u32 }
+    if !assert(beta_ir.contains("define linkonce_odr i32 @identity__u32")) { ret 6_u32 }
+    if !assert(alpha_ir.contains("define i32 @Counter__read")) { ret 7_u32 }
+    if !assert(beta_ir.contains("declare i32 @Counter__read")) { ret 8_u32 }
+    ret 0_u32
+}

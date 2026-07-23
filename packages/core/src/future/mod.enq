@@ -1,0 +1,55 @@
+//! Provides futures and blocking future execution.
+
+/// Represents the possible `Poll` cases.
+pub enum Poll[S, T] {
+    Ready(T)
+    Pending(S)
+}
+
+extern fn encore_async_waker_wake(token: usize) -> ()
+
+/// Stores the state of a `Waker` value.
+pub struct Waker {
+    token: usize
+}
+
+impl for Waker {
+    /// Performs the `wake` operation.
+    pub fn wake(self: Waker) -> () {
+        encore_async_waker_wake(self.token)
+        ret ()
+    }
+}
+
+/// Stores the state of a `Context` value.
+pub struct Context {
+    waker: Waker
+}
+
+/// Performs the `context` operation.
+pub fn context(token: usize) -> Context {
+    ret Context{Waker{token}}
+}
+
+// Polling consumes the previous state. Pending owns the next state, while
+// Ready owns only the output, so a completed future cannot be polled again.
+/// Defines the behavior required by `Future` implementations.
+pub trait Future[T] {
+    fn poll(self: Self, context: Context) -> Poll[Self, T]
+}
+
+/// Stores the state of a `Ready` value.
+pub struct Ready[T] {
+    value: T
+}
+
+impl[T] Future[T] for Ready[T] {
+    fn poll(self: Ready[T], context: Context) -> Poll[Ready[T], T] {
+        ret Poll[Ready[T], T]::Ready(self.value)
+    }
+}
+
+/// Reads y from the underlying resource.
+pub fn ready[T](value: T) -> Ready[T] {
+    ret Ready[T]{value}
+}

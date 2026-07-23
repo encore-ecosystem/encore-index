@@ -1,0 +1,85 @@
+import core::option::Option
+import std::vec::Vec
+
+
+pub enum PointerKind {
+    Plain
+    Stack
+    Heap
+    Raw
+}
+
+pub struct Type {
+    name: str
+    generics: Vec[Type]
+    pointer: PointerKind
+}
+
+pub fn make_type(name: str, generics: Vec[Type], pointer: PointerKind) -> Type {
+    ret Type{name, generics, pointer}
+}
+
+pub fn plain_type(name: str, generics: Vec[Type]) -> Type {
+    ret Type{name, generics, PointerKind::Plain}
+}
+
+pub fn heap_type(inner: Type) -> Type {
+    ret Type{inner.name, inner.generics, PointerKind::Heap}
+}
+
+pub fn stack_type(inner: Type) -> Type {
+    ret Type{inner.name, inner.generics, PointerKind::Stack}
+}
+
+pub fn raw_type(inner: Type) -> Type {
+    ret Type{inner.name, inner.generics, PointerKind::Raw}
+}
+
+fn join_mangled_generics(generics: Vec[Type]) -> str {
+    let mut out = ""
+    let mut index = 0_usize
+
+    loop {
+        match generics.get(index) {
+            Some(generic) => {
+                if index > 0_usize {
+                    out = out + "_"
+                }
+                out = out + mangle_type_name(generic)
+                index = index + 1_usize
+            }
+            None => {
+                break
+            }
+        }
+    }
+
+    ret out
+}
+
+pub fn mangle_type_name(typ: Type) -> str {
+    match typ.pointer {
+        PointerKind::Heap => {
+            let inner = plain_type(typ.name, typ.generics)
+            ret mangle_type_name(inner) + "_H"
+        }
+        PointerKind::Stack => {
+            let inner = plain_type(typ.name, typ.generics)
+            ret mangle_type_name(inner) + "_S"
+        }
+        PointerKind::Raw => {
+            let inner = plain_type(typ.name, typ.generics)
+            ret mangle_type_name(inner) + "_ptr"
+        }
+        PointerKind::Plain => {}
+    }
+
+    if typ.generics.len() == 0_usize {
+        ret typ.name
+    }
+
+    let mut out = typ.name
+    out = out + "_"
+    out = out + join_mangled_generics(typ.generics)
+    ret out
+}

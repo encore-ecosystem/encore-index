@@ -1,0 +1,207 @@
+import core::option::Option
+import core::testing::assert
+import core::vec::Vec
+
+import refrain::progress::StageProgress
+import refrain::spinner::Spinner
+import refrain::status::status
+import refrain::theme::Theme
+
+pub struct LiveFrame {
+    id: str
+    title: str
+    body: str
+    footer: str
+}
+
+impl for LiveFrame {
+    pub fn new(title: str, body: str) -> Self {
+        ret Self{title, title, body, ""}
+    }
+
+    pub fn with_footer(title: str, body: str, footer: str) -> Self {
+        ret Self{title, title, body, footer}
+    }
+
+    pub fn with_id(id: str, title: str, body: str, footer: str) -> Self {
+        ret Self{id, title, body, footer}
+    }
+
+    pub fn themed(theme: Theme, title: str, body: str, footer: str) -> Self {
+        ret Self{title, theme.live_title(title), body, footer}
+    }
+
+    pub fn set_title(self: mut Self, title: str) -> () {
+        self.title = title
+        ret ()
+    }
+
+    pub fn set_body(self: mut Self, body: str) -> () {
+        self.body = body
+        ret ()
+    }
+
+    pub fn set_footer(self: mut Self, footer: str) -> () {
+        self.footer = footer
+        ret ()
+    }
+
+    pub fn render(self) -> str {
+        let mut out = self.title + "\n" + self.body
+        if self.footer != "" {
+            out += "\n" + self.footer
+        }
+        ret out
+    }
+
+    pub fn title(self) -> str {
+        ret self.title
+    }
+
+    pub fn id(self) -> str {
+        ret self.id
+    }
+}
+
+pub struct LiveView {
+    frames: Vec[LiveFrame]
+}
+
+impl for LiveView {
+    pub fn new() -> Self {
+        ret Self{Vec[LiveFrame]::new()}
+    }
+
+    pub fn push(self: mut Self, frame: LiveFrame) -> () {
+        self.frames.push(frame)
+        ret ()
+    }
+
+    pub fn replace_last(self: mut Self, frame: LiveFrame) -> () {
+        let total = self.frames.len()
+        if total == 0_usize {
+            self.frames.push(frame)
+            ret ()
+        }
+        self.frames.set(total - 1_usize, frame)
+        ret ()
+    }
+
+    pub fn replace_by_title(self: mut Self, title: str, frame: LiveFrame) -> bool {
+        let mut index = 0_usize
+        loop {
+            match self.frames.get(index) {
+                Option[LiveFrame]::Some(current) => {
+                    if current.title() == title {
+                        self.frames.set(index, frame)
+                        ret true
+                    }
+                    index = index + 1_usize
+                }
+                Option[LiveFrame]::None => {
+                    break
+                }
+            }
+        }
+        ret false
+    }
+
+    pub fn replace_by_id(self: mut Self, id: str, frame: LiveFrame) -> bool {
+        let mut index = 0_usize
+        loop {
+            match self.frames.get(index) {
+                Option[LiveFrame]::Some(current) => {
+                    if current.id() == id {
+                        self.frames.set(index, frame)
+                        ret true
+                    }
+                    index = index + 1_usize
+                }
+                Option[LiveFrame]::None => {
+                    break
+                }
+            }
+        }
+        ret false
+    }
+
+    pub fn push_stage(self: mut Self, stage: StageProgress) -> () {
+        self.push(LiveFrame::with_id(stage.id(), stage.label(), stage.body(), stage.footer()))
+        ret ()
+    }
+
+    pub fn replace_stage(self: mut Self, stage: StageProgress) -> bool {
+        ret self.replace_by_id(stage.id(), LiveFrame::with_id(stage.id(), stage.label(), stage.body(), stage.footer()))
+    }
+
+    pub fn render(self) -> str {
+        let mut out = ""
+        let mut index = 0_usize
+        loop {
+            match self.frames.get(index) {
+                Option[LiveFrame]::Some(frame) => {
+                    out += frame.render()
+                    index = index + 1_usize
+                    if index < self.frames.len() {
+                        out += "\n\n"
+                    }
+                }
+                Option[LiveFrame]::None => {
+                    break
+                }
+            }
+        }
+        ret out
+    }
+}
+
+pub fn spinner_frame(spinner: Spinner, tick: usize, message: str) -> LiveFrame {
+    ret LiveFrame::new("Live", status(spinner, tick, message))
+}
+
+pub fn stage_frame(stage: StageProgress) -> LiveFrame {
+    ret LiveFrame::with_id(stage.id(), stage.label(), stage.body(), stage.footer())
+}
+
+#attr(test)
+fn live_view_renders_multiple_frames() -> bool {
+    let mut live = LiveView::new()
+    live.push(LiveFrame::with_id("parse-stage", "Step 1", "parse", ""))
+    live.push(LiveFrame::with_id("translate-stage", "Step 2", "translate", "done"))
+    live.push(LiveFrame::with_id("link-stage", "Step 3", "link", "running"))
+    let mut current = LiveFrame::new("Step 4", "emit")
+    current.set_footer("active")
+    live.replace_last(current)
+    live.replace_by_title("Step 2", LiveFrame::with_id("translate-stage", "Step 2", "translate", "linked"))
+    live.replace_by_id("parse-stage", LiveFrame::with_id("parse-stage", "Step 1", "parse", "done"))
+    live.push_stage(StageProgress::with_footer("codegen-stage", "Codegen", "emit object files", 1_usize, 2_usize, "running"))
+    live.replace_stage(StageProgress::with_footer("codegen-stage", "Codegen", "emit object files", 2_usize, 2_usize, "done"))
+    let rendered = live.render()
+    ret assert(str_contains(rendered, "Step 1"))
+        && assert(str_contains(rendered, "translate"))
+        && assert(str_contains(rendered, "Step 4"))
+        && assert(str_contains(rendered, "linked"))
+        && assert(str_contains(rendered, "done"))
+        && assert(str_contains(rendered, "Codegen"))
+        && assert(str_contains(spinner_frame(Spinner::dots(), 1_usize, "load").render(), "load"))
+        && assert(str_contains(stage_frame(StageProgress::new("stage", "Parse", "parse ast", 1_usize, 2_usize)).render(), "Parse"))
+}
+
+fn str_contains(value: str, needle: str) -> bool {
+    let needle_len = needle.char_len()
+    let value_len = value.char_len()
+    if needle_len == 0_usize {
+        ret true
+    }
+    if needle_len > value_len {
+        ret false
+    }
+    let mut start = 0_usize
+    while start + needle_len <= value_len {
+        if value.slice(start, needle_len) == needle {
+            ret true
+        }
+        start = start + 1_usize
+    }
+    ret false
+}

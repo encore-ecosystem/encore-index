@@ -1,0 +1,49 @@
+import core::vec::Vec
+import json::{Json, field}
+import rich::{Console, Layout, Panel, ProgressBar, ProgressView, Spinner, Table, Text, TreeNode, pretty_list, status}
+
+fn main() -> u32 {
+    let console = Console::new()
+
+    console.rule("Console")
+    console.println(status(Spinner::dots(), 2_usize, "building frontend"))
+    console.println(Text::new("encore bootstrap").bold())
+    console.println(pretty_list(Vec[str]::singleton("frontend")))
+    console.progress(ProgressBar::new(20_usize), 7_usize, 10_usize, "translate")
+
+    let mut progress = ProgressView::new("Pipeline", 16_usize)
+    progress.add_task_with_id("lexer", "lexer", 2_usize, 2_usize)
+    progress.add_task_with_id("parser", "parser", 3_usize, 5_usize)
+    progress.add_task_with_id("link", "link", 0_usize, 1_usize)
+    progress.advance_task_by_id("parser", 1_usize)
+    console.progress_view(progress)
+
+    let mut headers = Vec[str]::new()
+    headers.push("module")
+    headers.push("state")
+    let mut table = Table::with_headers(headers)
+    table.set_title("Modules")
+    let mut row = Vec[str]::new()
+    row.push("frontend")
+    row.push("active")
+    table.add_row(row)
+    console.table(table)
+
+    let mut tree = TreeNode::new("bootstrap")
+    tree.branch("frontend")
+    tree.branch("backend")
+    console.tree(tree)
+
+    console.panel(Panel::titled("Summary", "frontend compiled\nbackend queued"))
+
+    let mut layout = Layout::new("Dashboard")
+    layout.add_section("left", "frontend")
+    layout.add_section("right", "backend")
+    console.layout(layout)
+
+    let mut payload = Vec[(str, Json)]::new()
+    payload.push(field("project", Json::String("encore")))
+    payload.push(field("bootstrap", Json::Bool(true)))
+    console.json(Json::Object(payload))
+    ret 0_u32
+}

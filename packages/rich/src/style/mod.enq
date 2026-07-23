@@ -1,0 +1,37 @@
+import colorterm::{styled, Color, Style}
+
+pub fn accent(text: str) -> str {
+    ret styled(text, Color::Cyan, Style::Bold)
+}
+
+pub fn muted(text: str) -> str {
+    ret styled(text, Color::White, Style::Dim)
+}
+
+pub fn success_text(text: str) -> str {
+    ret styled(text, Color::Green, Style::Normal)
+}
+
+pub fn warn_text(text: str) -> str {
+    ret styled(text, Color::Yellow, Style::Bold)
+}
+
+pub fn error_text(text: str) -> str {
+    ret styled(text, Color::Red, Style::Bold)
+}
+
+pub fn info_label() -> str {
+    ret styled("[info]", Color::Cyan, Style::Normal)
+}
+
+pub fn success_label() -> str {
+    ret styled("[ok]", Color::Green, Style::Normal)
+}
+
+pub fn warn_label() -> str {
+    ret styled("[warn]", Color::Yellow, Style::Bold)
+}
+
+pub fn error_label() -> str {
+    ret styled("[error]", Color::Red, Style::Bold)
+}

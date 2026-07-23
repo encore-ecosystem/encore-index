@@ -1,0 +1,54 @@
+import colorterm::{styled, Color, Style}
+import core::testing::assert
+
+import refrain::spinner::Spinner
+import refrain::style::{info_label, success_label, warn_label, error_label}
+
+pub fn status(spinner: Spinner, index: usize, message: str) -> str {
+    ret styled(spinner.frame(index), Color::Cyan, Style::Normal) + " " + message
+}
+
+pub fn status_info(message: str) -> str {
+    ret info_label() + " " + message
+}
+
+pub fn status_ok(message: str) -> str {
+    ret success_label() + " " + message
+}
+
+pub fn status_warn(message: str) -> str {
+    ret warn_label() + " " + message
+}
+
+pub fn status_fail(message: str) -> str {
+    ret error_label() + " " + message
+}
+
+#attr(test)
+fn status_helpers_include_payload() -> bool {
+    ret assert(str_contains(status(Spinner::dots(), 1_usize, "loading"), "loading"))
+        && assert(str_contains(status_info("info"), "info"))
+        && assert(str_contains(status_ok("ok"), "ok"))
+        && assert(str_contains(status_warn("warn"), "warn"))
+        && assert(str_contains(status_fail("fail"), "fail"))
+}
+
+fn str_contains(value: str, needle: str) -> bool {
+    let needle_len = needle.char_len()
+    let value_len = value.char_len()
+    if needle_len == 0_usize {
+        ret true
+    }
+    if needle_len > value_len {
+        ret false
+    }
+
+    let mut start = 0_usize
+    while start + needle_len <= value_len {
+        if value.slice(start, needle_len) == needle {
+            ret true
+        }
+        start = start + 1_usize
+    }
+    ret false
+}

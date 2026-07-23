@@ -1,0 +1,7 @@
+[project]
+name = "dict"
+version = "1.0.0"
+description = ""
+readme = "README.md"
+licence = "MIT"
+dependencies = ["index@std@1.0.0"]

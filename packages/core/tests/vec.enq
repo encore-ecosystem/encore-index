@@ -1,0 +1,127 @@
+import core::testing::*
+import core::option::Option
+import core::vec::Vec
+
+struct Bucket {
+    items: Vec[u32]
+}
+
+fn main() -> u32 {
+    let mut v = Vec[u32]::new()
+    if !assert(v.len() == 0_usize) {
+        ret 1_u32
+    }
+    if !assert(v.is_empty()) {
+        ret 1_u32
+    }
+
+    v.reserve(5_usize)
+    if !assert(v.capacity() >= 5_usize) {
+        ret 1_u32
+    }
+
+    v.push(3_u32)
+    v.push(5_u32)
+    v.push(8_u32)
+    if !assert(v.len() == 3_usize) {
+        ret 1_u32
+    }
+
+    match v.get(0_usize) {
+        Option[u32]::Some(x) => {
+            if !assert(x == 3_u32) {
+                ret 1_u32
+            }
+        }
+        Option[u32]::None => {
+            ret 1_u32
+        }
+    }
+
+    match v.get(2_usize) {
+        Option[u32]::Some(x) => {
+            if !assert(x == 8_u32) {
+                ret 1_u32
+            }
+        }
+        Option[u32]::None => {
+            ret 1_u32
+        }
+    }
+
+    match v.get(3_usize) {
+        Option[u32]::Some(_) => {
+            ret 1_u32
+        }
+        Option[u32]::None => {}
+    }
+
+    v.set(1_usize, 13_u32)
+    match v.get(1_usize) {
+        Option[u32]::Some(x) => {
+            if !assert(x == 13_u32) {
+                ret 1_u32
+            }
+        }
+        Option[u32]::None => {
+            ret 1_u32
+        }
+    }
+
+    match v.first() {
+        Option[u32]::Some(x) => {
+            if !assert(x == 3_u32) {
+                ret 1_u32
+            }
+        }
+        Option[u32]::None => {
+            ret 1_u32
+        }
+    }
+
+    match v.last() {
+        Option[u32]::Some(x) => {
+            if !assert(x == 8_u32) {
+                ret 1_u32
+            }
+        }
+        Option[u32]::None => {
+            ret 1_u32
+        }
+    }
+
+    let popped = v.pop()
+    match popped {
+        Option[u32]::Some(x) => {
+            if !assert(x == 8_u32) {
+                ret 1_u32
+            }
+        }
+        Option[u32]::None => {
+            ret 1_u32
+        }
+    }
+    if !assert(v.len() == 2_usize) {
+        ret 1_u32
+    }
+
+    let mut extra = Vec[u32]::new()
+    extra.push(21_u32)
+    extra.push(34_u32)
+    v.extend(extra)
+    if !assert(v.len() == 4_usize) {
+        ret 1_u32
+    }
+
+    v.clear()
+    if !assert(v.is_empty()) {
+        ret 1_u32
+    }
+
+    let bucket = Bucket{v}
+    if !assert(bucket.items.len() == 0_usize) {
+        ret 1_u32
+    }
+
+    ret 0_u32
+}

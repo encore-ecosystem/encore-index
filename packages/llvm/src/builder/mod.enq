@@ -1,0 +1,177 @@
+import core::option::Option
+import std::vec::Vec
+import refrain::types::LLVMType
+import refrain::types::void_type
+import refrain::value::LLVMValue
+import refrain::core::LLVMParam
+import refrain::core::LLVMInstruction
+import refrain::core::LLVMTerminator
+import refrain::core::LLVMBasicBlock
+import refrain::core::LLVMFunction
+import refrain::core::LLVMModule
+import refrain::core::llvm_context_new
+import refrain::core::llvm_module_new
+import refrain::core::llvm_param
+import refrain::core::llvm_add_instruction
+import refrain::core::llvm_sub_instruction
+import refrain::core::llvm_raw_binary_instruction
+import refrain::core::llvm_call_instruction
+import refrain::core::llvm_alloca_instruction
+import refrain::core::llvm_load_instruction
+import refrain::core::llvm_store_instruction
+import refrain::core::llvm_gep_instruction
+import refrain::core::llvm_bitcast_instruction
+import refrain::core::llvm_cast_instruction
+import refrain::core::llvm_insertvalue_instruction
+import refrain::core::llvm_extractvalue_instruction
+import refrain::core::llvm_ret_term
+import refrain::core::llvm_br_term
+import refrain::core::llvm_cbr_term
+import refrain::core::llvm_unreachable_term
+import refrain::core::llvm_basic_block
+import refrain::core::llvm_function
+import refrain::core::llvm_function_with_linkage
+import refrain::core::llvm_function_with_attributes
+import refrain::ir::emit_module_lines
+import refrain::ir::emit_module_text
+import refrain::ir::emit_module_to_file
+
+pub fn llvm_new(module_name: str, functions: Vec[LLVMFunction]) -> LLVMModule {
+    let context = llvm_context_new()
+    ret llvm_module_new(context, module_name, Vec[str]::new(), functions)
+}
+
+pub fn llvm_module_with_functions(module_name: str, functions: Vec[LLVMFunction]) -> LLVMModule {
+    let context = llvm_context_new()
+    ret llvm_module_new(context, module_name, Vec[str]::new(), functions)
+}
+
+pub fn llvm_module_with_types(module_name: str, type_declarations: Vec[str], functions: Vec[LLVMFunction]) -> LLVMModule {
+    let context = llvm_context_new()
+    ret llvm_module_new(context, module_name, type_declarations, functions)
+}
+
+pub fn llvm_make_param(name: str, typ: LLVMType) -> LLVMParam {
+    ret llvm_param(name, typ)
+}
+
+pub fn llvm_define_fn(
+    name: str,
+    ret_type: LLVMType,
+    params: Vec[LLVMParam],
+    blocks: Vec[LLVMBasicBlock]
+) -> LLVMFunction {
+    ret llvm_function(name, ret_type, params, blocks, false)
+}
+
+pub fn llvm_declare_fn(
+    name: str,
+    ret_type: LLVMType,
+    params: Vec[LLVMParam],
+    blocks: Vec[LLVMBasicBlock]
+) -> LLVMFunction {
+    ret llvm_function(name, ret_type, params, blocks, true)
+}
+
+pub fn llvm_with_linkage(function: LLVMFunction, linkage: str) -> LLVMFunction {
+    ret llvm_function_with_linkage(function, linkage)
+}
+
+pub fn llvm_with_attributes(function: LLVMFunction, attributes: str) -> LLVMFunction {
+    ret llvm_function_with_attributes(function, attributes)
+}
+
+pub fn llvm_block(name: str, instructions: Vec[LLVMInstruction], terminator: LLVMTerminator) -> LLVMBasicBlock {
+    ret llvm_basic_block(name, instructions, terminator)
+}
+
+pub fn llvm_inst_add(out: LLVMValue, lhs: LLVMValue, rhs: LLVMValue) -> LLVMInstruction {
+    ret llvm_add_instruction(out, lhs, rhs)
+}
+
+pub fn llvm_inst_sub(out: LLVMValue, lhs: LLVMValue, rhs: LLVMValue) -> LLVMInstruction {
+    ret llvm_sub_instruction(out, lhs, rhs)
+}
+
+pub fn llvm_inst_binary(op: str, out: LLVMValue, lhs: LLVMValue, rhs: LLVMValue) -> LLVMInstruction {
+    ret llvm_raw_binary_instruction(op, out, lhs, rhs)
+}
+
+pub fn llvm_inst_call(
+    out: Option[LLVMValue],
+    ret_type: LLVMType,
+    callee: str,
+    args: Vec[LLVMValue]
+) -> LLVMInstruction {
+    ret llvm_call_instruction(out, ret_type, callee, args)
+}
+
+pub fn llvm_inst_alloca(out: LLVMValue, alloc_type: LLVMType) -> LLVMInstruction {
+    ret llvm_alloca_instruction(out, alloc_type)
+}
+
+pub fn llvm_inst_load(out: LLVMValue, ptr: LLVMValue) -> LLVMInstruction {
+    ret llvm_load_instruction(out, ptr)
+}
+
+pub fn llvm_inst_store(value: LLVMValue, ptr: LLVMValue) -> LLVMInstruction {
+    ret llvm_store_instruction(value, ptr)
+}
+
+pub fn llvm_inst_gep(
+    out: LLVMValue,
+    element_type: LLVMType,
+    ptr: LLVMValue,
+    indices: Vec[LLVMValue],
+    inbounds: bool
+) -> LLVMInstruction {
+    ret llvm_gep_instruction(out, element_type, ptr, indices, inbounds)
+}
+
+pub fn llvm_inst_bitcast(out: LLVMValue, src: LLVMValue) -> LLVMInstruction {
+    ret llvm_bitcast_instruction(out, src)
+}
+
+pub fn llvm_inst_cast(op: str, out: LLVMValue, src: LLVMValue) -> LLVMInstruction {
+    ret llvm_cast_instruction(op, out, src)
+}
+
+pub fn llvm_inst_insertvalue(out: LLVMValue, aggregate: LLVMValue, value: LLVMValue, index: str) -> LLVMInstruction {
+    ret llvm_insertvalue_instruction(out, aggregate, value, index)
+}
+
+pub fn llvm_inst_extractvalue(out: LLVMValue, aggregate: LLVMValue, index: str) -> LLVMInstruction {
+    ret llvm_extractvalue_instruction(out, aggregate, index)
+}
+
+pub fn llvm_term_ret(value: Option[LLVMValue], ret_type: LLVMType) -> LLVMTerminator {
+    ret llvm_ret_term(value, ret_type)
+}
+
+pub fn llvm_term_unreachable() -> LLVMTerminator {
+    ret llvm_unreachable_term()
+}
+
+pub fn llvm_term_ret_void() -> LLVMTerminator {
+    ret llvm_ret_term(Option[LLVMValue]::None, void_type())
+}
+
+pub fn llvm_term_br(label: str) -> LLVMTerminator {
+    ret llvm_br_term(label)
+}
+
+pub fn llvm_term_cbr(cond: LLVMValue, true_label: str, false_label: str) -> LLVMTerminator {
+    ret llvm_cbr_term(cond, true_label, false_label)
+}
+
+pub fn llvm_to_lines(module: LLVMModule) -> Vec[str] {
+    ret emit_module_lines(module)
+}
+
+pub fn llvm_to_text(module: LLVMModule) -> str {
+    ret emit_module_text(module)
+}
+
+pub fn llvm_emit_to_file(module: LLVMModule, path: str) -> i32 {
+    ret emit_module_to_file(module, path)
+}

@@ -1,0 +1,124 @@
+import core::option::Option
+import core::testing::assert
+import core::vec::Vec
+
+pub struct Inspector {
+    title: str
+    fields: Vec[(str, str)]
+}
+
+impl for Inspector {
+    pub fn new(title: str) -> Self {
+        ret Self{title, Vec[(str, str)]::new()}
+    }
+
+    pub fn with_fields(title: str, fields: Vec[(str, str)]) -> Self {
+        let mut inspector = Self::new(title)
+        inspector.add_fields(fields)
+        ret inspector
+    }
+
+    pub fn add_field(self: mut Self, name: str, value: str) -> () {
+        self.fields.push((name, value))
+        ret ()
+    }
+
+    pub fn add_fields(self: mut Self, fields: Vec[(str, str)]) -> () {
+        let mut index = 0_usize
+        loop {
+            match fields.get(index) {
+                Option[(str, str)]::Some(field) => {
+                    self.add_field(field.0, field.1)
+                    index = index + 1_usize
+                }
+                Option[(str, str)]::None => {
+                    break
+                }
+            }
+        }
+        ret ()
+    }
+
+    pub fn add_kv(self: mut Self, name: str, value: str) -> () {
+        self.add_field(name, value)
+        ret ()
+    }
+
+    pub fn render(self) -> str {
+        let mut out = self.title
+        let mut index = 0_usize
+        loop {
+            match self.fields.get(index) {
+                Option[(str, str)]::Some(field) => {
+                    out += "\n - " + field.0 + ": " + field.1
+                    index = index + 1_usize
+                }
+                Option[(str, str)]::None => {
+                    break
+                }
+            }
+        }
+        ret out
+    }
+}
+
+pub fn inspect_value(title: str, value: str) -> str {
+    let mut inspector = Inspector::new(title)
+    inspector.add_field("value", value)
+    ret inspector.render()
+}
+
+pub fn inspect_fields(title: str, fields: Vec[(str, str)]) -> str {
+    ret Inspector::with_fields(title, fields).render()
+}
+
+pub fn inspect_pairs(title: str, fields: Vec[(str, str)]) -> str {
+    ret Inspector::with_fields(title, fields).render()
+}
+
+pub fn inspect_compiler_state(phase: str, module_name: str, symbol_count: usize, note: str) -> str {
+    let mut inspector = Inspector::new("Compiler State")
+    inspector.add_field("phase", phase)
+    inspector.add_field("module", module_name)
+    inspector.add_field("symbols", usize_to_str(symbol_count))
+    inspector.add_field("note", note)
+    ret inspector.render()
+}
+
+#attr(test)
+fn inspector_renders_fields() -> bool {
+    let mut fields = Vec[(str, str)]::new()
+    fields.push(("name", "bootstrap"))
+    fields.push(("modules", "3"))
+    let rendered = inspect_fields("Project", fields)
+    let compiler = inspect_compiler_state("parse", "frontend", 4_usize, "collecting imports")
+    ret assert(str_contains(rendered, "Project"))
+        && assert(str_contains(rendered, "name"))
+        && assert(str_contains(rendered, "bootstrap"))
+        && assert(str_contains(compiler, "Compiler State"))
+        && assert(str_contains(compiler, "symbols"))
+        && assert(str_contains(compiler, "collecting imports"))
+}
+
+fn usize_to_str(value: usize) -> str {
+    ret value.fmt()
+}
+
+fn str_contains(value: str, needle: str) -> bool {
+    let needle_len = needle.char_len()
+    let value_len = value.char_len()
+    if needle_len == 0_usize {
+        ret true
+    }
+    if needle_len > value_len {
+        ret false
+    }
+    let mut start = 0_usize
+    while start + needle_len <= value_len {
+        if value.slice(start, needle_len) == needle {
+            ret true
+        }
+        start = start + 1_usize
+    }
+    ret false
+}

@@ -1,0 +1,82 @@
+import core::option::Option
+import core::testing::*
+import std::dict::{Dict, Hashable}
+
+fn main() -> u32 {
+    let mut dict = Dict[str, u32]::new()
+    if !assert(dict.is_empty()) {
+        ret 1_u32
+    }
+
+    let mut zero_cap = Dict[str, u32]::with_capacity(0_usize)
+    zero_cap = zero_cap.insert("usable", 5_u32)
+    if !assert(zero_cap.len() == 1_usize) {
+        ret 1_u32
+    }
+
+    dict = dict.insert("alpha", 1_u32)
+    dict = dict.insert("beta", 2_u32)
+    dict = dict.insert("gamma", 3_u32)
+    dict = dict.insert("alpha", 10_u32)
+
+    if !assert(dict.len() == 3_usize) {
+        ret 1_u32
+    }
+    if !assert(dict.contains_key("alpha")) {
+        ret 1_u32
+    }
+    if !assert(!dict.contains_key("missing")) {
+        ret 1_u32
+    }
+
+    match dict.get("alpha") {
+        Option[u32]::Some(value) => {
+            if !assert(value == 10_u32) {
+                ret 1_u32
+            }
+        }
+        Option[u32]::None => {
+            ret 1_u32
+        }
+    }
+
+    let removed = dict.remove("beta")
+    dict = removed.0
+    match removed.1 {
+        Option[u32]::Some(value) => {
+            if !assert(value == 2_u32) {
+                ret 1_u32
+            }
+        }
+        Option[u32]::None => {
+            ret 1_u32
+        }
+    }
+    if !assert(dict.len() == 2_usize) {
+        ret 1_u32
+    }
+    if !assert(!dict.contains_key("beta")) {
+        ret 1_u32
+    }
+
+    dict.clear()
+    if !assert(dict.is_empty()) {
+        ret 1_u32
+    }
+
+    let mut by_id = Dict[u32, str]::with_capacity(4_usize)
+    by_id = by_id.insert(7_u32, "seven")
+    by_id = by_id.insert(9_u32, "nine")
+    match by_id.get(9_u32) {
+        Option[str]::Some(value) => {
+            if !assert(value == "nine") {
+                ret 1_u32
+            }
+        }
+        Option[str]::None => {
+            ret 1_u32
+        }
+    }
+
+    ret 0_u32
+}

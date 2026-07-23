@@ -1,0 +1,71 @@
+//! Provides verified synchronous TLS client streams.
+
+import core::result::Result
+
+extern fn encore_tls_client_connect(host: str, port: usize, ca_file: str, timeout_ms: usize) -> usize
+extern fn encore_tls_read(handle: usize, max: usize) -> str
+extern fn encore_tls_read_failed(handle: usize) -> bool
+extern fn encore_tls_write(handle: usize, data: str) -> i32
+extern fn encore_tls_close(handle: usize) -> i32
+extern fn encore_net_last_error() -> str
+
+/// Configures certificate verification for a TLS client connection.
+pub struct TlsClientConfig {
+    ca_file: str
+    timeout_ms: usize
+}
+
+/// Owns a blocking, certificate-verified TLS connection.
+pub struct TlsStream {
+    handle: usize
+}
+
+impl for TlsClientConfig {
+    /// Uses the operating system's default certificate authorities.
+    pub fn system() -> Self { ret Self{"", 30000_usize} }
+
+    /// Uses `path` as an additional test/application CA bundle.
+    pub fn with_ca_file(self: Self, path: str) -> Self { ret Self{path, self.timeout_ms} }
+
+    /// Bounds connect, handshake, read and write waits. Zero is rejected.
+    pub fn with_timeout_ms(self: Self, value: usize) -> Self { ret Self{self.ca_file, value} }
+}
+
+impl for TlsStream {
+    /// Connects to `host:port`, sends SNI and verifies the certificate hostname.
+    pub fn connect(host: str, port: usize, config: TlsClientConfig) -> Result[TlsStream, str] {
+        unsafe {
+            if config.timeout_ms == 0_usize { ret Result::Err("TLS timeout must be greater than zero") }
+            let handle = encore_tls_client_connect(host, port, config.ca_file, config.timeout_ms)
+            if handle != 0_usize { ret Result::Ok(TlsStream{handle}) }
+            ret Result::Err(encore_net_last_error())
+        }
+    }
+
+    /// Reads at most `max` decrypted bytes. Empty data denotes a clean EOF.
+    pub fn read(self: Self, max: usize) -> Result[str, str] {
+        if max == 0_usize { ret Result::Ok("") }
+        unsafe {
+            let data = encore_tls_read(self.handle, max)
+            if encore_tls_read_failed(self.handle) { ret Result::Err(encore_net_last_error()) }
+            ret Result::Ok(data)
+        }
+    }
+
+    /// Writes the complete byte string or returns a TLS transport error.
+    pub fn write_all(self: Self, data: str) -> Result[usize, str] {
+        unsafe {
+            let written = encore_tls_write(self.handle, data)
+            if written >= 0_i32 { ret Result::Ok(written as usize) }
+            ret Result::Err(encore_net_last_error())
+        }
+    }
+
+    /// Sends TLS close-notify and releases the native connection.
+    pub fn close(self: Self) -> Result[bool, str] {
+        unsafe {
+            if encore_tls_close(self.handle) == 0_i32 { ret Result::Ok(true) }
+            ret Result::Err(encore_net_last_error())
+        }
+    }
+}

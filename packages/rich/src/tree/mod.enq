@@ -1,0 +1,97 @@
+import core::option::Option
+import core::testing::assert
+import core::vec::Vec
+
+pub struct TreeNode {
+    label: str
+    children: Vec[TreeNode]
+}
+
+impl for TreeNode {
+    pub fn new(label: str) -> Self {
+        ret Self{label, Vec[TreeNode]::new()}
+    }
+
+    pub fn add_child(self: mut Self, child: TreeNode) -> () {
+        self.children.push(child)
+        ret ()
+    }
+
+    pub fn branch(self: mut Self, label: str) -> () {
+        self.add_child(TreeNode::new(label))
+        ret ()
+    }
+
+    pub fn render(self: Self) -> str {
+        ret render_node(self, "", true)
+    }
+}
+
+fn render_node(node: TreeNode, prefix: str, is_last: bool) -> str {
+    let mut out = ""
+    if prefix == "" {
+        out = node.label
+    }
+    else {
+        let connector = if is_last { "└── " } else { "├── " }
+        out = prefix + connector + node.label
+    }
+
+    let next_prefix = if prefix == "" {
+        ""
+    }
+    elif is_last {
+        prefix + "    "
+    }
+    else {
+        prefix + "│   "
+    }
+
+    let total = node.children.len()
+    let mut index = 0_usize
+    loop {
+        match node.children.get(index) {
+            Option[TreeNode]::Some(child) => {
+                out += "\n" + render_node(child, next_prefix, index + 1_usize == total)
+                index = index + 1_usize
+            }
+            Option[TreeNode]::None => {
+                break
+            }
+        }
+    }
+
+    ret out
+}
+
+#attr(test)
+fn tree_renders_nested_nodes() -> bool {
+    let mut root = TreeNode::new("root")
+    let mut frontend = TreeNode::new("frontend")
+    frontend.branch("lexer")
+    root.add_child(frontend)
+    let rendered = root.render()
+    ret assert(str_contains(rendered, "root"))
+        && assert(str_contains(rendered, "frontend"))
+        && assert(str_contains(rendered, "lexer"))
+}
+
+fn str_contains(value: str, needle: str) -> bool {
+    let needle_len = needle.char_len()
+    let value_len = value.char_len()
+    if needle_len == 0_usize {
+        ret true
+    }
+    if needle_len > value_len {
+        ret false
+    }
+
+    let mut start = 0_usize
+    while start + needle_len <= value_len {
+        if value.slice(start, needle_len) == needle {
+            ret true
+        }
+        start = start + 1_usize
+    }
+    ret false
+}

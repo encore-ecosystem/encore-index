@@ -1,0 +1,45 @@
+import core::option::Option
+import core::testing::assert
+
+import ehirlib::{Directive, Variable, parse_module_text, analyze_await_liveness}
+
+fn contains_value(values: Vec[Variable], name: str) -> bool {
+    for value in values { if value.name == name { ret true } }
+    ret false
+}
+
+fn main() -> u32 {
+    let source = "async fn flow(first: FirstFuture, second: SecondFuture, keep: u32) -> u32 {\n  $entry:\n    a: u32 = await first\n    partial: u32 = add keep, a\n    b: u32 = await second\n    total: u32 = add partial, b\n    ret total\n}\n"
+    let module = parse_module_text("coroutine_liveness", source)
+    match module.directives.get(0_usize) {
+        Option::Some(directive) => {
+            match directive {
+                Directive::Function(function) => {
+                    let sites = analyze_await_liveness(function)
+                    if !assert(sites.len() == 2_usize) { ret 1_u32 }
+                    match sites.get(0_usize) {
+                        Some(first) => {
+                            if !assert(first.block == "entry") { ret 2_u32 }
+                            if !assert(first.instruction == 0_usize) { ret 3_u32 }
+                            if !assert(first.values.len() == 2_usize) { ret 4_u32 }
+                            if !assert(contains_value(first.values, "keep")) { ret 5_u32 }
+                            if !assert(contains_value(first.values, "second")) { ret 6_u32 }
+                        }
+                        None => { ret 7_u32 }
+                    }
+                    match sites.get(1_usize) {
+                        Some(second) => {
+                            if !assert(second.instruction == 2_usize) { ret 8_u32 }
+                            if !assert(second.values.len() == 1_usize) { ret 9_u32 }
+                            if !assert(contains_value(second.values, "partial")) { ret 10_u32 }
+                        }
+                        None => { ret 11_u32 }
+                    }
+                }
+                _ => { ret 12_u32 }
+            }
+        }
+        _ => { ret 12_u32 }
+    }
+    ret 0_u32
+}

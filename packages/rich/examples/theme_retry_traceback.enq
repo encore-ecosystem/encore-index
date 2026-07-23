@@ -1,0 +1,33 @@
+import core::vec::Vec
+import rich::{Console, ProgressView, Prompt, RetryPolicy, Table, Theme, TraceFrame, Traceback}
+
+fn main() -> u32 {
+    let console = Console::new()
+    let theme = Theme::compiler()
+    let policy = RetryPolicy::three("module name must be an identifier")
+
+    let module_name = console.prompt_identifier_retry_with_policy(Prompt::with_default("Module", "frontend"), "frontend", policy)
+    console.theme_info(theme, "module: " + module_name)
+
+    let mut progress = ProgressView::new("Compiler", 12_usize)
+    progress.add_task("parse", 3_usize, 3_usize)
+    progress.add_task("translate", 1_usize, 4_usize)
+    console.themed_progress_view(theme, progress)
+    console.themed_panel(theme, "Summary", "parse done\ntranslate running")
+
+    let mut headers = Vec[str]::new()
+    headers.push("module")
+    headers.push("state")
+    let mut table = Table::with_headers(headers)
+    table.set_title("Stages")
+    let mut row = Vec[str]::new()
+    row.push("frontend")
+    row.push("ok")
+    table.add_row(row)
+    console.themed_table(theme, table)
+
+    let mut tb = Traceback::new("CompileError", "missing import")
+    tb.push_frame(TraceFrame::with_context("frontend/imports.enq", "resolve_import", 8_usize, 8_usize, "import std::fs", "import foo::bar", "ret module"))
+    console.traceback(tb)
+    ret 0_u32
+}

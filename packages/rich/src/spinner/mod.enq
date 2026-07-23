@@ -1,0 +1,97 @@
+extern fn encore_rich_spinner_frame_count(style: usize) -> usize
+extern fn encore_rich_spinner_frame(style: usize, index: usize) -> str
+
+pub enum SpinnerStyle {
+    Dots,
+    Line,
+    Arc,
+}
+
+pub enum DotsStyle {
+    Dots,
+    Dots2,
+    Dots3,
+    Dots4,
+    Dots5,
+    Dots6,
+    Dots7,
+    Dots8,
+    Dots8Bit,
+    Dots9,
+    Dots10,
+    Dots11,
+    Dots12,
+    Dots13,
+    Dots14,
+    DotsCircle,
+}
+
+pub struct Spinner {
+    preset: usize
+    interval_ms: usize
+}
+
+impl for Spinner {
+    pub fn with_style(style: SpinnerStyle) -> Self {
+        ret Self::with_interval(style, 80_usize)
+    }
+
+    pub fn with_interval(style: SpinnerStyle, interval_ms: usize) -> Self {
+        match style {
+            SpinnerStyle::Dots => { ret Self::with_preset(0_usize, interval_ms) }
+            SpinnerStyle::Line => { ret Self::with_preset(16_usize, interval_ms) }
+            SpinnerStyle::Arc => { ret Self::with_preset(17_usize, interval_ms) }
+        }
+    }
+
+    pub fn with_preset(preset: usize, interval_ms: usize) -> Self { ret Self {preset, interval_ms} }
+    pub fn dots() -> Self { ret Self::with_preset(0_usize, 80_usize) }
+    pub fn dots_style(style: DotsStyle) -> Self { ret Self::dots_style_with_interval(style, 80_usize) }
+    pub fn dots_style_with_interval(style: DotsStyle, interval_ms: usize) -> Self {
+        ret Self::with_preset(dots_style_id(style), interval_ms)
+    }
+    pub fn line() -> Self { ret Self::with_preset(16_usize, 80_usize) }
+    pub fn arc() -> Self { ret Self::with_preset(17_usize, 80_usize) }
+
+    pub fn interval(self) -> usize { ret self.interval_ms }
+
+    pub fn frame_count(self) -> usize {
+        unsafe { ret encore_rich_spinner_frame_count(self.preset) }
+    }
+
+    pub fn frame(self, index: usize) -> str {
+        unsafe { ret encore_rich_spinner_frame(self.preset, index) }
+    }
+
+    pub fn encoded_frames(self) -> str {
+        let mut out = ""
+        let mut index = 0_usize
+        while index < self.frame_count() {
+            if index > 0_usize { out += "\n" }
+            out += self.frame(index)
+            index += 1_usize
+        }
+        ret out
+    }
+}
+
+fn dots_style_id(style: DotsStyle) -> usize {
+    match style {
+        DotsStyle::Dots => { ret 0_usize }
+        DotsStyle::Dots2 => { ret 1_usize }
+        DotsStyle::Dots3 => { ret 2_usize }
+        DotsStyle::Dots4 => { ret 3_usize }
+        DotsStyle::Dots5 => { ret 4_usize }
+        DotsStyle::Dots6 => { ret 5_usize }
+        DotsStyle::Dots7 => { ret 6_usize }
+        DotsStyle::Dots8 => { ret 7_usize }
+        DotsStyle::Dots8Bit => { ret 8_usize }
+        DotsStyle::Dots9 => { ret 9_usize }
+        DotsStyle::Dots10 => { ret 10_usize }
+        DotsStyle::Dots11 => { ret 11_usize }
+        DotsStyle::Dots12 => { ret 12_usize }
+        DotsStyle::Dots13 => { ret 13_usize }
+        DotsStyle::Dots14 => { ret 14_usize }
+        DotsStyle::DotsCircle => { ret 15_usize }
+    }
+}

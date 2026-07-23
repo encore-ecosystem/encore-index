@@ -1,0 +1,7 @@
+[project]
+name = "toml"
+version = "1.0.0"
+description = "TOML lib"
+readme = "README.md"
+licence = "MIT"
+dependencies = []

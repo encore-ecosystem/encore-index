@@ -1,0 +1,48 @@
+import refrain::level::{LogLevel, level_label, level_label_colored}
+
+pub struct Formatter {
+    colorize: bool
+    include_target: bool
+    include_newline: bool
+}
+
+impl for Formatter {
+    pub fn plain() -> Self {
+        ret Self{false, true, true}
+    }
+
+    pub fn colored() -> Self {
+        ret Self{true, true, true}
+    }
+
+    pub fn with_color(self: Self, enabled: bool) -> Self {
+        ret Self{enabled, self.include_target, self.include_newline}
+    }
+
+    pub fn with_target(self: Self, enabled: bool) -> Self {
+        ret Self{self.colorize, enabled, self.include_newline}
+    }
+
+    pub fn with_newline(self: Self, enabled: bool) -> Self {
+        ret Self{self.colorize, self.include_target, enabled}
+    }
+
+    pub fn format(self: Self, level: LogLevel, target: str, message: str) -> str {
+        let mut out = if self.colorize {
+            level_label_colored(level)
+        }
+        else {
+            level_label(level)
+        }
+
+        if self.include_target && target != "" {
+            out += " [" + target + "]"
+        }
+
+        out += " " + message
+        if self.include_newline {
+            out += "\n"
+        }
+        ret out
+    }
+}

@@ -1,0 +1,426 @@
+import core::fmt::Debug
+import core::option::Option
+import core::result::Result
+import core::testing::assert
+import core::vec::Vec
+
+import refrain::style::{accent, success_text}
+import refrain::theme::Theme
+
+pub struct ProgressBar {
+    width: usize
+    complete: str
+    pending: str
+}
+
+pub struct ProgressTask {
+    id: str
+    label: str
+    current: usize
+    total: usize
+}
+
+pub struct ProgressView {
+    title: str
+    width: usize
+    tasks: Vec[ProgressTask]
+}
+
+pub struct StageProgress {
+    id: str
+    label: str
+    body: str
+    current: usize
+    total: usize
+    footer: str
+}
+
+impl for ProgressBar {
+    pub fn new(width: usize) -> Self {
+        ret Self{width, "=", "-"}
+    }
+
+    pub fn with_chars(width: usize, complete: str, pending: str) -> Self {
+        ret Self{width, complete, pending}
+    }
+
+    pub fn render(self, current: usize, total: usize) -> str {
+        if total == 0_usize {
+            ret "[" + repeat(self.pending, self.width) + "] 0%"
+        }
+
+        let clamped = if current > total { total } else { current }
+        let filled = clamped * self.width / total
+        let percent = clamped * 100_usize / total
+        ret "[" + repeat(self.complete, filled) + repeat(self.pending, self.width - filled) + "] " + Debug::fmt(percent) + "%"
+    }
+
+    pub fn render_with_label(self, current: usize, total: usize, label: str) -> str {
+        ret accent(label) + " " + self.render(current, total)
+    }
+
+    pub fn done(self, label: str) -> str {
+        ret success_text("[done]") + " " + label + " " + self.render(self.width, self.width)
+    }
+}
+
+impl for ProgressTask {
+    pub fn new(label: str, current: usize, total: usize) -> Self {
+        ret Self{label, label, current, total}
+    }
+
+    pub fn with_id(id: str, label: str, current: usize, total: usize) -> Self {
+        ret Self{id, label, current, total}
+    }
+
+    pub fn set_current(self: mut Self, current: usize) -> () {
+        self.current = current
+        ret ()
+    }
+
+    pub fn set_total(self: mut Self, total: usize) -> () {
+        self.total = total
+        ret ()
+    }
+
+    pub fn advance(self: mut Self, step: usize) -> () {
+        self.current = self.current + step
+        ret ()
+    }
+
+    pub fn render(self, width: usize) -> str {
+        let bar = ProgressBar::new(width)
+        ret bar.render_with_label(self.current, self.total, self.label)
+    }
+
+    pub fn is_done(self) -> bool {
+        if self.total == 0_usize {
+            ret false
+        }
+        ret self.current >= self.total
+    }
+
+    pub fn label(self) -> str {
+        ret self.label
+    }
+
+    pub fn id(self) -> str {
+        ret self.id
+    }
+}
+
+impl for ProgressView {
+    pub fn new(title: str, width: usize) -> Self {
+        ret Self{title, width, Vec[ProgressTask]::new()}
+    }
+
+    pub fn add_task(self: mut Self, label: str, current: usize, total: usize) -> () {
+        self.tasks.push(ProgressTask::new(label, current, total))
+        ret ()
+    }
+
+    pub fn add_task_with_id(self: mut Self, id: str, label: str, current: usize, total: usize) -> () {
+        self.tasks.push(ProgressTask::with_id(id, label, current, total))
+        ret ()
+    }
+
+    pub fn add_stage(self: mut Self, stage: StageProgress) -> () {
+        self.add_task_with_id(stage.id(), stage.label(), stage.current(), stage.total())
+        ret ()
+    }
+
+    pub fn update_task(self: mut Self, index: usize, current: usize, total: usize) -> Result[bool, str] {
+        match self.tasks.get(index) {
+            Option[ProgressTask]::Some(task) => {
+                let mut next = task
+                next.set_current(current)
+                next.set_total(total)
+                self.tasks.set(index, next)
+                ret Result[bool, str]::Ok(true)
+            }
+            Option[ProgressTask]::None => {
+                ret Result[bool, str]::Err("task index out of range")
+            }
+        }
+    }
+
+    pub fn advance_task(self: mut Self, index: usize, step: usize) -> Result[bool, str] {
+        match self.tasks.get(index) {
+            Option[ProgressTask]::Some(task) => {
+                let mut next = task
+                next.advance(step)
+                self.tasks.set(index, next)
+                ret Result[bool, str]::Ok(true)
+            }
+            Option[ProgressTask]::None => {
+                ret Result[bool, str]::Err("task index out of range")
+            }
+        }
+    }
+
+    pub fn update_task_by_label(self: mut Self, label: str, current: usize, total: usize) -> Result[bool, str] {
+        let mut index = 0_usize
+        loop {
+            match self.tasks.get(index) {
+                Option[ProgressTask]::Some(task) => {
+                    if task.label() == label {
+                        ret self.update_task(index, current, total)
+                    }
+                    index = index + 1_usize
+                }
+                Option[ProgressTask]::None => {
+                    break
+                }
+            }
+        }
+        ret Result[bool, str]::Err("task label not found")
+    }
+
+    pub fn advance_task_by_label(self: mut Self, label: str, step: usize) -> Result[bool, str] {
+        let mut index = 0_usize
+        loop {
+            match self.tasks.get(index) {
+                Option[ProgressTask]::Some(task) => {
+                    if task.label() == label {
+                        ret self.advance_task(index, step)
+                    }
+                    index = index + 1_usize
+                }
+                Option[ProgressTask]::None => {
+                    break
+                }
+            }
+        }
+        ret Result[bool, str]::Err("task label not found")
+    }
+
+    pub fn update_task_by_id(self: mut Self, id: str, current: usize, total: usize) -> Result[bool, str] {
+        let mut index = 0_usize
+        loop {
+            match self.tasks.get(index) {
+                Option[ProgressTask]::Some(task) => {
+                    if task.id() == id {
+                        ret self.update_task(index, current, total)
+                    }
+                    index = index + 1_usize
+                }
+                Option[ProgressTask]::None => {
+                    break
+                }
+            }
+        }
+        ret Result[bool, str]::Err("task id not found")
+    }
+
+    pub fn advance_task_by_id(self: mut Self, id: str, step: usize) -> Result[bool, str] {
+        let mut index = 0_usize
+        loop {
+            match self.tasks.get(index) {
+                Option[ProgressTask]::Some(task) => {
+                    if task.id() == id {
+                        ret self.advance_task(index, step)
+                    }
+                    index = index + 1_usize
+                }
+                Option[ProgressTask]::None => {
+                    break
+                }
+            }
+        }
+        ret Result[bool, str]::Err("task id not found")
+    }
+
+    pub fn render(self) -> str {
+        let mut out = self.title
+        let mut index = 0_usize
+        loop {
+            match self.tasks.get(index) {
+                Option[ProgressTask]::Some(task) => {
+                    out += "\n" + task.render(self.width)
+                    index = index + 1_usize
+                }
+                Option[ProgressTask]::None => {
+                    break
+                }
+            }
+        }
+        ret out
+    }
+
+    pub fn summary(self) -> str {
+        let mut done = 0_usize
+        let total = self.tasks.len()
+        let mut index = 0_usize
+        loop {
+            match self.tasks.get(index) {
+                Option[ProgressTask]::Some(task) => {
+                    if task.is_done() {
+                        done = done + 1_usize
+                    }
+                    index = index + 1_usize
+                }
+                Option[ProgressTask]::None => {
+                    break
+                }
+            }
+        }
+        ret self.title + ": " + Debug::fmt(done) + "/" + Debug::fmt(total) + " done"
+    }
+
+    pub fn themed_render(self, theme: Theme) -> str {
+        ret theme.live_title(self.summary()) + "\n" + self.render()
+    }
+}
+
+impl for StageProgress {
+    pub fn new(id: str, label: str, body: str, current: usize, total: usize) -> Self {
+        ret Self{id, label, body, current, total, ""}
+    }
+
+    pub fn with_footer(id: str, label: str, body: str, current: usize, total: usize, footer: str) -> Self {
+        ret Self{id, label, body, current, total, footer}
+    }
+
+    pub fn id(self) -> str {
+        ret self.id
+    }
+
+    pub fn label(self) -> str {
+        ret self.label
+    }
+
+    pub fn body(self) -> str {
+        ret self.body
+    }
+
+    pub fn current(self) -> usize {
+        ret self.current
+    }
+
+    pub fn total(self) -> usize {
+        ret self.total
+    }
+
+    pub fn footer(self) -> str {
+        ret self.footer
+    }
+
+    pub fn set_current(self: mut Self, current: usize) -> () {
+        self.current = current
+        ret ()
+    }
+
+    pub fn set_total(self: mut Self, total: usize) -> () {
+        self.total = total
+        ret ()
+    }
+
+    pub fn set_body(self: mut Self, body: str) -> () {
+        self.body = body
+        ret ()
+    }
+
+    pub fn set_footer(self: mut Self, footer: str) -> () {
+        self.footer = footer
+        ret ()
+    }
+
+    pub fn advance(self: mut Self, step: usize) -> () {
+        self.current = self.current + step
+        ret ()
+    }
+
+    pub fn is_done(self) -> bool {
+        if self.total == 0_usize {
+            ret false
+        }
+        ret self.current >= self.total
+    }
+
+    pub fn progress_line(self, width: usize) -> str {
+        ret ProgressTask::with_id(self.id, self.label, self.current, self.total).render(width)
+    }
+}
+
+pub fn stage_summary(stages: Vec[StageProgress]) -> str {
+    let mut done = 0_usize
+    let total = stages.len()
+    let mut index = 0_usize
+    loop {
+        match stages.get(index) {
+            Option[StageProgress]::Some(stage) => {
+                if stage.is_done() {
+                    done = done + 1_usize
+                }
+                index = index + 1_usize
+            }
+            Option[StageProgress]::None => {
+                break
+            }
+        }
+    }
+    ret "stages: " + Debug::fmt(done) + "/" + Debug::fmt(total) + " done"
+}
+
+fn repeat(ch: str, count: usize) -> str {
+    let mut out = ""
+    let mut index = 0_usize
+    while index < count {
+        out += ch
+        index = index + 1_usize
+    }
+    ret out
+}
+
+#attr(test)
+fn progress_bar_renders_percentages() -> bool {
+    let bar = ProgressBar::new(10_usize)
+    let half = bar.render(5_usize, 10_usize)
+    let over = bar.render(12_usize, 10_usize)
+    ret assert(str_contains(half, "50%"))
+        && assert(str_contains(over, "100%"))
+        && assert(str_contains(bar.render_with_label(2_usize, 4_usize, "compile"), "compile"))
+}
+
+#attr(test)
+fn progress_view_renders_tasks_and_summary() -> bool {
+    let mut view = ProgressView::new("Build", 10_usize)
+    view.add_task_with_id("frontend-stage", "frontend", 3_usize, 5_usize)
+    view.add_task_with_id("backend-stage", "backend", 2_usize, 2_usize)
+    let mut stage = StageProgress::with_footer("link-stage", "link", "linking runtime", 0_usize, 1_usize, "pending")
+    stage.advance(1_usize)
+    view.add_stage(stage)
+    view.advance_task_by_id("frontend-stage", 2_usize)
+    view.update_task_by_id("backend-stage", 2_usize, 2_usize)
+    let rendered = view.render()
+    let summary = view.summary()
+    let themed = view.themed_render(Theme::compiler())
+    let mut stages = Vec[StageProgress]::new()
+    stages.push(StageProgress::new("frontend-stage", "frontend", "parse", 5_usize, 5_usize))
+    stages.push(StageProgress::new("backend-stage", "backend", "link", 1_usize, 1_usize))
+    ret assert(str_contains(rendered, "frontend"))
+        && assert(str_contains(rendered, "backend"))
+        && assert(str_contains(rendered, "link"))
+        && assert(str_contains(summary, "3/3 done"))
+        && assert(str_contains(themed, "Build"))
+        && assert(str_contains(stage_summary(stages), "2/2 done"))
+}
+
+fn str_contains(value: str, needle: str) -> bool {
+    let needle_len = needle.char_len()
+    let value_len = value.char_len()
+    if needle_len == 0_usize {
+        ret true
+    }
+    if needle_len > value_len {
+        ret false
+    }
+    let mut start = 0_usize
+    while start + needle_len <= value_len {
+        if value.slice(start, needle_len) == needle {
+            ret true
+        }
+        start = start + 1_usize
+    }
+    ret false
+}

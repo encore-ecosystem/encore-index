@@ -1,0 +1,56 @@
+//! Provides process execution and termination operations.
+
+import core::vec::Vec
+
+extern fn encore_proc_exit(code: i32) -> i32
+extern fn encore_proc_run(command: str) -> i32
+extern fn encore_proc_run_args_parts(program: str, data: usize, len: usize) -> i32
+extern fn encore_proc_run_args_capture_parts(program: str, data: usize, len: usize, output_path: str) -> i32
+
+/// Performs the `exit` operation.
+pub fn exit(code: i32) -> i32 {
+    unsafe {
+        ret encore_proc_exit(code)
+    }
+}
+
+/// Performs the `run` operation.
+pub fn run(command: str) -> i32 {
+    unsafe {
+        ret encore_proc_run(command)
+    }
+}
+
+/// Performs the `run_args` operation.
+pub fn run_args(program: str, args: Vec[str]) -> i32 {
+    let len = args.len()
+    let data = if len == 0_usize { 0_usize } else { unsafe { args.get_handle(0_usize) } }
+    unsafe { ret encore_proc_run_args_parts(program, data, len) }
+}
+
+/// Performs the `run_args_capture` operation.
+pub fn run_args_capture(program: str, args: Vec[str], output_path: str) -> i32 {
+    let len = args.len()
+    let data = if len == 0_usize { 0_usize } else { unsafe { args.get_handle(0_usize) } }
+    unsafe { ret encore_proc_run_args_capture_parts(program, data, len, output_path) }
+}
+
+/// Performs the `success_code` operation.
+pub fn success_code() -> i32 {
+    ret 0_i32
+}
+
+/// Performs the `failure_code` operation.
+pub fn failure_code() -> i32 {
+    ret 1_i32
+}
+
+/// Performs the `exit_success` operation.
+pub fn exit_success() -> i32 {
+    ret exit(success_code())
+}
+
+/// Performs the `exit_failure` operation.
+pub fn exit_failure() -> i32 {
+    ret exit(failure_code())
+}

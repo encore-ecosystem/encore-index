@@ -1,0 +1,184 @@
+//! Provides hashable keys and hash maps.
+
+import std::option::Option
+import std::ops::Eq
+import std::vec::Vec
+
+/// Defines the behavior required by `Hashable` implementations.
+pub trait Hashable {
+    fn hash(self: Self) -> u64
+}
+
+impl Hashable for str {
+    /// Performs the `hash` operation.
+    pub fn hash(self: str) -> u64 {
+        let mut h = 1469598103934665603_u64
+        let prime = 1099511628211_u64
+        for i in 0..self.len() {
+            match self.get_byte(i) {
+                Option::Some(b) => {
+                    h = h ^ (b as u64)
+                    h = h * prime
+                }
+                Option::None => {
+                    break
+                }
+            }
+        }
+        ret h
+    }
+}
+
+impl Hashable for bool {
+    /// Performs the `hash` operation.
+    pub fn hash(self: bool) -> u64 {
+        if self {
+            ret 1_u64
+        }
+        ret 0_u64
+    }
+}
+
+impl Hashable for u8 { pub fn hash(self: u8) -> u64 { ret self as u64 } }
+impl Hashable for u16 { pub fn hash(self: u16) -> u64 { ret self as u64 } }
+impl Hashable for u32 { pub fn hash(self: u32) -> u64 { ret self as u64 } }
+impl Hashable for u64 { pub fn hash(self: u64) -> u64 { ret self } }
+impl Hashable for usize { pub fn hash(self: usize) -> u64 { ret self as u64 } }
+impl Hashable for i8 { pub fn hash(self: i8) -> u64 { ret self as u64 } }
+impl Hashable for i16 { pub fn hash(self: i16) -> u64 { ret self as u64 } }
+impl Hashable for i32 { pub fn hash(self: i32) -> u64 { ret self as u64 } }
+impl Hashable for i64 { pub fn hash(self: i64) -> u64 { ret self as u64 } }
+impl Hashable for isize { pub fn hash(self: isize) -> u64 { ret self as u64 } }
+
+/// Stores the state of a `Dict` value.
+pub struct Dict[K, V] {
+    entries: Vec[(K, V)]
+    len: usize
+}
+
+impl[K:Hashable+Eq, V] for Dict[K, V] {
+    /// Creates a new value with its default initial state.
+    pub fn new() -> Dict[K, V] {
+        ret Dict[K, V]::with_capacity(16_usize)
+    }
+
+    /// Creates a value configured with capacity.
+    pub fn with_capacity(capacity: usize) -> Dict[K, V] {
+        let mut actual = capacity
+        if actual == 0_usize {
+            actual = 1_usize
+        }
+        let entries = Vec[(K, V)]::with_capacity(actual)
+        ret Dict[K, V]{entries, 0_usize}
+    }
+
+    /// Returns the len of this value.
+    pub fn len(self: Dict[K, V]) -> usize {
+        ret self.len
+    }
+
+    /// Returns whether empty.
+    pub fn is_empty(self: Dict[K, V]) -> bool {
+        ret self.len == 0_usize
+    }
+
+    /// Returns the capacity of this value.
+    pub fn capacity(self: Dict[K, V]) -> usize {
+        ret self.entries.capacity()
+    }
+
+    /// Performs the `clear` operation.
+    pub fn clear(self: mut Dict[K, V]) -> () {
+        self.entries.clear()
+        self.len = 0_usize
+        ret ()
+    }
+
+    fn find_entry(self: Dict[K, V], key: K) -> Option[usize] {
+        let mut i = 0_usize
+        loop {
+            match self.entries.get(i) {
+                Option::Some(entry) => {
+                    if entry.0 == key {
+                        ret Option[usize]::Some(i)
+                    }
+                    i = i + 1_usize
+                }
+                Option::None => {
+                    ret Option[usize]::None
+                }
+            }
+        }
+    }
+
+    /// Returns get when it is available.
+    pub fn get(self: Dict[K, V], key: K) -> Option[V] {
+        match self.find_entry(key) {
+            Option::Some(pos) => {
+                match self.entries.get(pos) {
+                    Option::Some(entry) => {
+                        ret Option[V]::Some(entry.1)
+                    }
+                    Option::None => {
+                        ret Option[V]::None
+                    }
+                }
+            }
+            Option::None => {
+                ret Option[V]::None
+            }
+        }
+    }
+
+    /// Returns whether contains key.
+    pub fn contains_key(self: Dict[K, V], key: K) -> bool {
+        ret self.get(key).is_some()
+    }
+
+    /// Performs the `insert` operation.
+    pub fn insert(self: Dict[K, V], key: K, value: V) -> Dict[K, V] {
+        let mut next_entries = self.entries
+        match self.find_entry(key) {
+            Option::Some(pos) => {
+                next_entries.set(pos, (key, value))
+                ret Dict[K, V]{next_entries, self.len}
+            }
+            Option::None => {
+                next_entries.push((key, value))
+                ret Dict[K, V]{next_entries, self.len + 1_usize}
+            }
+        }
+    }
+
+    /// Removes the selected value.
+    pub fn remove(self: Dict[K, V], key: K) -> (Dict[K, V], Option[V]) {
+        match self.find_entry(key) {
+            Option::Some(pos) => {
+                let mut out = Vec[(K, V)]::with_capacity(self.entries.capacity())
+                let mut i = 0_usize
+                let mut removed = Option[V]::None
+                loop {
+                    let entry_opt: Option[(K, V)] = self.entries.get(i)
+                    match entry_opt {
+                        Option::Some(entry) => {
+                            if i == pos {
+                                removed = Option[V]::Some(entry.1)
+                            }
+                            else {
+                                out.push(entry)
+                            }
+                            i = i + 1_usize
+                        }
+                        Option::None => {
+                            break
+                        }
+                    }
+                }
+                ret (Dict[K, V]{out, self.len - 1_usize}, removed)
+            }
+            Option::None => {
+                ret (self, Option[V]::None)
+            }
+        }
+    }
+}

@@ -1,0 +1,64 @@
+import core::os::{file_exists, read_file, write_file}
+import core::testing::assert
+
+import refrain::formatter::Formatter
+import refrain::level::LogLevel
+import refrain::sink::LogSink
+
+pub struct FileSink {
+    path: str
+    formatter: Formatter
+}
+
+impl for FileSink {
+    pub fn new(path: str) -> Self {
+        ret Self{path, Formatter::plain()}
+    }
+
+    pub fn with_formatter(path: str, formatter: Formatter) -> Self {
+        ret Self{path, formatter}
+    }
+}
+
+impl LogSink for FileSink {
+    fn write(self: FileSink, level: LogLevel, target: str, message: str) -> i32 {
+        let rendered = self.formatter.format(level, target, message)
+        let mut current = ""
+        if file_exists(self.path) {
+            current = read_file(self.path)
+        }
+        ret write_file(self.path, current + rendered)
+    }
+}
+
+#attr(test)
+fn file_sink_appends_records() -> bool {
+    let path = "target/log_file_sink_contract.txt"
+    write_file(path, "")
+    let sink = FileSink::new(path)
+    sink.write(LogLevel::Info, "file", "first")
+    sink.write(LogLevel::Error, "file", "second")
+    let text = read_file(path)
+    ret assert(str_contains(text, "[INFO] [file] first"))
+        && assert(str_contains(text, "[ERROR] [file] second"))
+}
+
+fn str_contains(value: str, needle: str) -> bool {
+    let needle_len = needle.char_len()
+    let value_len = value.char_len()
+    if needle_len == 0_usize {
+        ret true
+    }
+    if needle_len > value_len {
+        ret false
+    }
+
+    let mut start = 0_usize
+    while start + needle_len <= value_len {
+        if value.slice(start, needle_len) == needle {
+            ret true
+        }
+        start = start + 1_usize
+    }
+    ret false
+}

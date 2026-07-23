@@ -1,0 +1,33 @@
+//! Provides the `random` module.
+
+/// Stores the state of a `Random` value.
+pub struct Random {
+    state: u64
+}
+
+impl for Random {
+    /// Creates a new value with its default initial state.
+    pub fn new(seed: u64) -> Self {
+        ret Random{seed}
+    }
+
+    /// Performs the `seed` operation.
+    pub fn seed(self: Self) -> u64 {
+        ret self.state
+    }
+
+    /// Performs the `next_u64` operation.
+    pub fn next_u64(self: Self) -> (Random, u64) {
+        let next = self.state * 6364136223846793005_u64 + 1442695040888963407_u64
+        ret (Random{next}, next)
+    }
+
+    /// Performs the `next_range` operation.
+    pub fn next_range(self: Self, upper: u64) -> (Random, u64) {
+        let pair = self.next_u64()
+        if upper == 0_u64 {
+            ret (pair.0, 0_u64)
+        }
+        ret (pair.0, pair.1 % upper)
+    }
+}

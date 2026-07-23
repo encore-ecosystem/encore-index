@@ -1,0 +1,51 @@
+import colorterm::{styled, Color, Style}
+
+pub enum LogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+    Fatal,
+}
+
+pub fn level_name(level: LogLevel) -> str {
+    match level {
+        LogLevel::Trace => { ret "TRACE" }
+        LogLevel::Debug => { ret "DEBUG" }
+        LogLevel::Info => { ret "INFO" }
+        LogLevel::Warn => { ret "WARN" }
+        LogLevel::Error => { ret "ERROR" }
+        LogLevel::Fatal => { ret "FATAL" }
+    }
+}
+
+pub fn level_weight(level: LogLevel) -> usize {
+    match level {
+        LogLevel::Trace => { ret 10_usize }
+        LogLevel::Debug => { ret 20_usize }
+        LogLevel::Info => { ret 30_usize }
+        LogLevel::Warn => { ret 40_usize }
+        LogLevel::Error => { ret 50_usize }
+        LogLevel::Fatal => { ret 60_usize }
+    }
+}
+
+pub fn level_enabled(level: LogLevel, minimum: LogLevel) -> bool {
+    ret level_weight(level) >= level_weight(minimum)
+}
+
+pub fn level_label(level: LogLevel) -> str {
+    ret "[" + level_name(level) + "]"
+}
+
+pub fn level_label_colored(level: LogLevel) -> str {
+    match level {
+        LogLevel::Trace => { ret styled(level_label(level), Color::White, Style::Dim) }
+        LogLevel::Debug => { ret styled(level_label(level), Color::Blue, Style::Normal) }
+        LogLevel::Info => { ret styled(level_label(level), Color::Cyan, Style::Normal) }
+        LogLevel::Warn => { ret styled(level_label(level), Color::Yellow, Style::Bold) }
+        LogLevel::Error => { ret styled(level_label(level), Color::Red, Style::Bold) }
+        LogLevel::Fatal => { ret styled(level_label(level), Color::Magenta, Style::Bold) }
+    }
+}

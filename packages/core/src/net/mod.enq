@@ -1,0 +1,149 @@
+//! Provides synchronous network primitives.
+
+import core::result::Result
+import core::fmt::Debug
+import core::ops::ContextManager
+
+extern fn encore_net_tcp_connect(addr: str) -> i32
+extern fn encore_net_tcp_bind(addr: str) -> i32
+extern fn encore_net_tcp_accept(listener_fd: i32) -> i32
+extern fn encore_net_tcp_read(fd: i32, max: usize) -> str
+extern fn encore_net_tcp_write(fd: i32, data: str) -> i32
+extern fn encore_net_tcp_close(fd: i32) -> i32
+extern fn encore_net_last_error() -> str
+
+/// Owns a blocking TCP connection.
+pub struct TcpStream {
+    fd: i32
+}
+
+/// Owns a blocking TCP listening socket.
+pub struct TcpListener {
+    fd: i32
+}
+
+fn last_error() -> str {
+    unsafe {
+        ret encore_net_last_error()
+    }
+}
+
+fn ok_fd(fd: i32) -> bool {
+    ret fd >= 0_i32
+}
+
+/// Formats a host and port as a socket address.
+pub fn socket_addr(host: str, port: usize) -> str {
+    ret host + ":" + Debug::fmt(port)
+}
+
+impl for TcpStream {
+    /// Opens a blocking TCP connection to `addr`.
+    ///
+    /// # Errors
+    /// Returns the platform networking error when connection fails.
+    pub fn connect(addr: str) -> Result[TcpStream, str] {
+        unsafe {
+            let fd = encore_net_tcp_connect(addr)
+            if ok_fd(fd) {
+                ret Result[TcpStream, str]::Ok(TcpStream{fd})
+            }
+            ret Result[TcpStream, str]::Err(last_error())
+        }
+    }
+
+    /// Reads at most `max` bytes from the connection.
+    pub fn read(self: TcpStream, max: usize) -> Result[str, str] {
+        if max == 0_usize {
+            ret Result[str, str]::Ok("")
+        }
+        unsafe {
+            let data = encore_net_tcp_read(self.fd, max)
+            ret Result[str, str]::Ok(data)
+        }
+    }
+
+    /// Writes `data` and returns the number of bytes accepted.
+    pub fn write(self: TcpStream, data: str) -> Result[i32, str] {
+        unsafe {
+            let n = encore_net_tcp_write(self.fd, data)
+            if n >= 0_i32 {
+                ret Result[i32, str]::Ok(n)
+            }
+            ret Result[i32, str]::Err(last_error())
+        }
+    }
+
+    /// Closes the underlying socket.
+    pub fn close(self: TcpStream) -> Result[bool, str] {
+        unsafe {
+            let code = encore_net_tcp_close(self.fd)
+            if code == 0_i32 {
+                ret Result[bool, str]::Ok(true)
+            }
+            ret Result[bool, str]::Err(last_error())
+        }
+    }
+}
+
+impl for TcpListener {
+    /// Binds a blocking TCP listener to `addr`.
+    ///
+    /// # Errors
+    /// Returns the platform networking error when binding fails.
+    pub fn bind(addr: str) -> Result[TcpListener, str] {
+        unsafe {
+            let fd = encore_net_tcp_bind(addr)
+            if ok_fd(fd) {
+                ret Result[TcpListener, str]::Ok(TcpListener{fd})
+            }
+            ret Result[TcpListener, str]::Err(last_error())
+        }
+    }
+
+    /// Blocks until the next incoming connection is accepted.
+    pub fn accept(self: TcpListener) -> Result[TcpStream, str] {
+        unsafe {
+            let fd = encore_net_tcp_accept(self.fd)
+            if ok_fd(fd) {
+                ret Result[TcpStream, str]::Ok(TcpStream{fd})
+            }
+            ret Result[TcpStream, str]::Err(last_error())
+        }
+    }
+
+    /// Closes the listening socket.
+    pub fn close(self: TcpListener) -> Result[bool, str] {
+        unsafe {
+            let code = encore_net_tcp_close(self.fd)
+            if code == 0_i32 {
+                ret Result[bool, str]::Ok(true)
+            }
+            ret Result[bool, str]::Err(last_error())
+        }
+    }
+}
+
+impl ContextManager for TcpStream {
+    /// Enters a context-managed stream without changing it.
+    pub fn with_enter(self: TcpStream) -> TcpStream {
+        ret self
+    }
+
+    /// Leaves the context and closes the stream.
+    pub fn with_exit(self: TcpStream) -> bool {
+        ret self.close().unwrap_or(false)
+    }
+}
+
+impl ContextManager for TcpListener {
+    /// Enters a context-managed listener without changing it.
+    pub fn with_enter(self: TcpListener) -> TcpListener {
+        ret self
+    }
+
+    /// Leaves the context and closes the listener.
+    pub fn with_exit(self: TcpListener) -> bool {
+        ret self.close().unwrap_or(false)
+    }
+}

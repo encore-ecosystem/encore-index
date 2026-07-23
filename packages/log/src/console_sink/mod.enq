@@ -1,0 +1,42 @@
+import core::io::{print, eprint}
+
+import refrain::formatter::Formatter
+import refrain::level::LogLevel
+import refrain::sink::LogSink
+
+pub struct ConsoleSink {
+    formatter: Formatter
+    use_stderr: bool
+}
+
+impl for ConsoleSink {
+    pub fn stdout() -> Self {
+        ret Self{Formatter::colored(), false}
+    }
+
+    pub fn stderr() -> Self {
+        ret Self{Formatter::colored(), true}
+    }
+
+    pub fn plain_stdout() -> Self {
+        ret Self{Formatter::plain(), false}
+    }
+
+    pub fn plain_stderr() -> Self {
+        ret Self{Formatter::plain(), true}
+    }
+
+    pub fn new(formatter: Formatter, use_stderr: bool) -> Self {
+        ret Self{formatter, use_stderr}
+    }
+}
+
+impl LogSink for ConsoleSink {
+    fn write(self: ConsoleSink, level: LogLevel, target: str, message: str) -> i32 {
+        let rendered = self.formatter.format(level, target, message)
+        if self.use_stderr {
+            ret eprint(rendered)
+        }
+        ret print(rendered)
+    }
+}

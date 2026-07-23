@@ -1,0 +1,359 @@
+import core::option::Option
+import std::vec::Vec
+import std::vec::vec_singleton
+
+fn concat_lines(left: Vec[str], right: Vec[str]) -> Vec[str] {
+    let mut out = Vec[str]::new()
+    out.extend(left)
+    out.extend(right)
+    ret out
+}
+
+import std::os::write_file
+import refrain::types::LLVMType
+import refrain::types::type_text
+import refrain::types::void_type
+import refrain::types::i32_type
+import refrain::value::LLVMValue
+import refrain::value::value_text
+import refrain::value::value_type
+import refrain::value::const_text
+import refrain::core::LLVMModule
+import refrain::core::LLVMFunction
+import refrain::core::LLVMParam
+import refrain::core::LLVMBasicBlock
+import refrain::core::LLVMInstruction
+import refrain::core::LLVMTerminator
+import refrain::core::llvm_store_instruction
+import refrain::core::llvm_br_term
+import refrain::core::llvm_basic_block
+import refrain::core::llvm_param
+
+extern fn encore_str_join_lines_parts(data: usize, len: usize) -> str
+extern fn encore_text_builder_new() -> usize
+extern fn encore_text_builder_append(builder: usize, value: str) -> ()
+extern fn encore_text_builder_finish(builder: usize) -> str
+
+pub fn emit_module_lines(module: LLVMModule) -> Vec[str] {
+    let header = "; ModuleID = '" + module.name + "'"
+    let with_types = concat_lines(single_line(header), module.type_declarations)
+    let with_header = concat_lines(with_types, single_line(""))
+    ret concat_lines(with_header, emit_functions(module.functions))
+}
+
+pub fn emit_module_text(module: LLVMModule) -> str {
+    let builder = unsafe { encore_text_builder_new() }
+    append_builder_line(builder, "; ModuleID = '" + module.name + "'")
+    for declaration in module.type_declarations { append_builder_line(builder, declaration) }
+    append_builder_line(builder, "")
+    let function_count = module.functions.len()
+    let mut function_index = 0_usize
+    for function in module.functions {
+        append_function_to_builder(builder, function)
+        if function_index + 1_usize < function_count { append_builder_line(builder, "") }
+        function_index = function_index + 1_usize
+    }
+    ret unsafe { encore_text_builder_finish(builder) }
+}
+
+pub fn emit_module_to_file(module: LLVMModule, path: str) -> i32 {
+    ret write_file(path, emit_module_text(module))
+}
+
+fn emit_functions(functions: Vec[LLVMFunction]) -> Vec[str] {
+    let mut acc = Vec[str]::new()
+    for current in functions {
+        acc.extend(emit_function_lines(current))
+        acc.push("")
+    }
+    ret acc
+}
+
+pub fn append_function_to_builder(builder: usize, function: LLVMFunction) -> () {
+    if function.is_extern {
+        append_builder_line(builder, render_function_signature(function, true))
+        ret ()
+    }
+
+    append_builder_line(builder, render_function_signature(function, false) + " {")
+    for block_item in function.blocks {
+        append_builder_line(builder, block_item.name + ":")
+        for instruction in block_item.instructions {
+            append_builder_line(builder, render_instruction_line(instruction))
+        }
+        append_builder_line(builder, render_terminator_line(block_item.terminator))
+    }
+    append_builder_line(builder, "}")
+    ret ()
+}
+
+pub fn append_builder_line(builder: usize, value: str) -> () {
+    unsafe {
+        encore_text_builder_append(builder, value)
+        encore_text_builder_append(builder, "\n")
+    }
+    ret ()
+}
+
+fn emit_function_lines(func: LLVMFunction) -> Vec[str] {
+    if (func.is_extern) {
+        ret single_line(render_function_signature(func, true))
+    }
+
+    let header = render_function_signature(func, false) + " {"
+    let with_header = concat_lines(single_line(header), emit_blocks_lines(func.blocks))
+    ret concat_lines(with_header, single_line("}"))
+}
+
+fn emit_blocks_lines(blocks: Vec[LLVMBasicBlock]) -> Vec[str] {
+    let mut acc = Vec[str]::new()
+    for current in blocks { acc.extend(emit_block_lines(current)) }
+    ret acc
+}
+
+fn emit_block_lines(block: LLVMBasicBlock) -> Vec[str] {
+    let label = block.name + ":"
+    let with_body = concat_lines(single_line(label), emit_instruction_lines(block.instructions))
+    ret concat_lines(with_body, single_line(render_terminator_line(block.terminator)))
+}
+
+fn emit_instruction_lines(instructions: Vec[LLVMInstruction]) -> Vec[str] {
+    let mut acc = Vec[str]::new()
+    for current in instructions { acc.push(render_instruction_line(current)) }
+    ret acc
+}
+
+fn single_line(line: str) -> Vec[str] {
+    ret vec_singleton(line)
+}
+
+fn render_function_signature(func: LLVMFunction, as_declare: bool) -> str {
+    let prefix = signature_prefix(as_declare) + if as_declare || func.linkage == "" { "" } else { func.linkage + " " }
+    let typed_prefix = prefix + type_text(func.ret_type)
+    let with_name = typed_prefix + " @" + func.name
+    let with_open = with_name + "("
+    let with_params = with_open + render_params(func.params)
+    let suffix = if func.attributes == "" { "" } else { " " + func.attributes }
+    ret with_params + ")" + suffix
+}
+
+fn signature_prefix(as_declare: bool) -> str {
+    if (as_declare) {
+        ret "declare "
+    }
+    ret "define "
+}
+
+fn render_params(params: Vec[LLVMParam]) -> str {
+    let mut out = ""
+    let mut first = true
+    for param in params {
+        if !first { out = out + ", " }
+        out = out + render_param(param)
+        first = false
+    }
+    ret out
+}
+
+fn render_param(param: LLVMParam) -> str {
+    let typed = type_text(param.typ) + " %"
+    ret typed + param.name
+}
+
+fn render_instruction_line(instr: LLVMInstruction) -> str {
+    match instr {
+        Add(add_data) => {
+            ret render_binary_instruction("add", add_data.out, add_data.lhs, add_data.rhs)
+        }
+        Sub(sub_data) => {
+            ret render_binary_instruction("sub", sub_data.out, sub_data.lhs, sub_data.rhs)
+        }
+        RawBinary(binary_data) => {
+            ret render_raw_binary_instruction(binary_data.op, binary_data.out, binary_data.lhs, binary_data.rhs)
+        }
+        Call(call_data) => {
+            ret render_call_instruction(call_data.out, call_data.ret_type, call_data.callee, call_data.args)
+        }
+        Alloca(alloca_data) => {
+            let begin = "  " + value_text(alloca_data.out)
+            let with_eq = begin + " = alloca "
+            ret with_eq + type_text(alloca_data.alloc_type)
+        }
+        Load(load_data) => {
+            let begin = "  " + value_text(load_data.out)
+            let with_eq = begin + " = load "
+            let typed_out = with_eq + type_text(value_type(load_data.out))
+            let with_ptr_type = typed_out + ", " + type_text(value_type(load_data.ptr))
+            let with_ptr_sep = with_ptr_type + " "
+            ret with_ptr_sep + value_text(load_data.ptr)
+        }
+        Store(store_data) => {
+            let begin = "  store " + type_text(value_type(store_data.value))
+            let with_value = begin + " " + value_text(store_data.value)
+            let with_ptr_type = with_value + ", " + type_text(value_type(store_data.ptr))
+            let with_ptr_sep = with_ptr_type + " "
+            ret with_ptr_sep + value_text(store_data.ptr)
+        }
+        Gep(gep_data) => {
+            let begin = "  " + value_text(gep_data.out)
+            let with_eq = begin + " = "
+            let op = gep_op(gep_data.inbounds)
+
+            let base = with_eq + op + type_text(gep_data.element_type)
+            let with_ptr_type = base + ", " + type_text(value_type(gep_data.ptr))
+            let with_ptr_value = with_ptr_type + " " + value_text(gep_data.ptr)
+            let rendered_indices = render_typed_values(gep_data.indices)
+
+            if (rendered_indices == "") {
+                ret with_ptr_value
+            }
+            ret with_ptr_value + ", " + rendered_indices
+        }
+        Bitcast(bitcast_data) => {
+            let out = "  " + value_text(bitcast_data.out) + " = select i1 true, "
+            let source = type_text(value_type(bitcast_data.src)) + " " + value_text(bitcast_data.src)
+            ret out + source + ", " + source
+        }
+        Cast(cast_data) => {
+            let out = "  " + value_text(cast_data.out) + " = " + cast_data.op + " "
+            let source = type_text(value_type(cast_data.src)) + " " + value_text(cast_data.src)
+            ret out + source + " to " + type_text(value_type(cast_data.out))
+        }
+        InsertValue(insert_data) => {
+            let out = "  " + value_text(insert_data.out) + " = insertvalue "
+            let aggregate = type_text(value_type(insert_data.aggregate)) + " " + value_text(insert_data.aggregate)
+            let value = type_text(value_type(insert_data.value)) + " " + value_text(insert_data.value)
+            ret out + aggregate + ", " + value + ", " + insert_data.index
+        }
+        ExtractValue(extract_data) => {
+            let out = "  " + value_text(extract_data.out) + " = extractvalue "
+            let aggregate = type_text(value_type(extract_data.aggregate)) + " " + value_text(extract_data.aggregate)
+            ret out + aggregate + ", " + extract_data.index
+        }
+    }
+}
+
+fn gep_op(inbounds: bool) -> str {
+    if (inbounds) {
+        ret "getelementptr inbounds "
+    }
+    ret "getelementptr "
+}
+
+fn render_binary_instruction(op: str, out: LLVMValue, lhs: LLVMValue, rhs: LLVMValue) -> str {
+    let begin = "  " + value_text(out)
+    let with_eq = begin + " = "
+    let with_op = with_eq + op
+    let with_type = with_op + " " + type_text(out.typ)
+    let with_lhs = with_type + " " + value_text(lhs)
+    ret with_lhs + ", " + value_text(rhs)
+}
+
+fn render_raw_binary_instruction(op: str, out: LLVMValue, lhs: LLVMValue, rhs: LLVMValue) -> str {
+    let begin = "  " + value_text(out) + " = " + op
+    let with_type = begin + " " + type_text(value_type(lhs))
+    ret with_type + " " + value_text(lhs) + ", " + value_text(rhs)
+}
+
+fn render_call_instruction(
+    out: Option[LLVMValue],
+    ret_type: LLVMType,
+    callee: str,
+    args: Vec[LLVMValue]
+) -> str {
+    let with_ret = "call " + type_text(ret_type)
+    let with_name = with_ret + " @" + callee
+    let with_open = with_name + "("
+    let with_args = with_open + render_typed_values(args)
+    let call_expr = with_args + ")"
+
+    match out {
+        Some(var_out) => {
+            let begin = "  " + value_text(var_out)
+            ret begin + " = " + call_expr
+        }
+        None => {
+            ret "  " + call_expr
+        }
+    }
+}
+
+fn render_typed_values(values: Vec[LLVMValue]) -> str {
+    let mut out = ""
+    let mut first = true
+    for value in values {
+        if !first { out = out + ", " }
+        out = out + render_typed_value(value)
+        first = false
+    }
+    ret out
+}
+
+fn render_typed_value(value: LLVMValue) -> str {
+    let with_type = type_text(value.typ) + " "
+    ret with_type + value_text(value)
+}
+
+fn render_terminator_line(term: LLVMTerminator) -> str {
+    match term {
+        Unreachable => { ret "  unreachable" }
+        Ret(ret_data) => {
+            ret render_ret_terminator(ret_data.value, ret_data.ret_type)
+        }
+        Br(br_data) => {
+            ret "  br label %" + br_data.label
+        }
+        Cbr(cbr_data) => {
+            let begin = "  br " + type_text(value_type(cbr_data.cond)) + " "
+            let with_cond = begin + value_text(cbr_data.cond)
+            let with_true = with_cond + ", label %" + cbr_data.true_label
+            ret with_true + ", label %" + cbr_data.false_label
+        }
+    }
+}
+
+fn render_ret_terminator(value: Option[LLVMValue], ret_type: LLVMType) -> str {
+    match value {
+        Some(result) => {
+            let begin = "  ret " + type_text(value_type(result))
+            ret begin + " " + value_text(result)
+        }
+        None => {
+            ret "  ret " + type_text(ret_type)
+        }
+    }
+}
+
+fn join_lines(lines: Vec[str]) -> str {
+    let len = lines.len()
+    let data = if len == 0_usize { 0_usize } else { unsafe { lines.get_handle(0_usize) } }
+    ret unsafe { encore_str_join_lines_parts(data, len) }
+}
+
+fn concat_with_sep(acc: str, piece: str, is_first: bool, sep: str) -> str {
+    if (is_first) {
+        ret acc + piece
+    }
+    ret acc + sep + piece
+}
+
+fn default_function() -> LLVMFunction {
+    ret LLVMFunction{"", void_type(), Vec[LLVMParam]::new(), Vec[LLVMBasicBlock]::new(), true, "", ""}
+}
+
+fn default_param() -> LLVMParam {
+    ret llvm_param("", void_type())
+}
+
+fn default_value() -> LLVMValue {
+    ret const_text("0", i32_type())
+}
+
+fn default_instruction() -> LLVMInstruction {
+    let value = default_value()
+    ret llvm_store_instruction(value, value)
+}
+
+fn default_block() -> LLVMBasicBlock {
+    ret llvm_basic_block("", Vec[LLVMInstruction]::new(), llvm_br_term(""))
+}

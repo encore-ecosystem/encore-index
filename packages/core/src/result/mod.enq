@@ -1,0 +1,87 @@
+//! Provides success-or-error result values.
+
+import core::fmt::Debug
+
+
+/// Represents either a successful value or an error value.
+pub enum Result[T, E] {
+    Ok(T)
+    Err(E)
+}
+
+impl[T, E] for Result[T, E] {
+    /// Returns whether this result is successful.
+    pub fn is_ok(self: Result[T, E]) -> bool {
+        ret is_ok[T, E](self)
+    }
+
+    /// Returns whether this result contains an error.
+    pub fn is_err(self: Result[T, E]) -> bool {
+        ret is_err[T, E](self)
+    }
+
+    /// Returns the success value or `default` when this result is an error.
+    pub fn unwrap_or(self: Result[T, E], default: T) -> T {
+        ret unwrap_or[T, E](self, default)
+    }
+
+    /// Returns the error value or `default` when this result is successful.
+    pub fn unwrap_err_or(self: Result[T, E], default: E) -> E {
+        ret unwrap_err_or[T, E](self, default)
+    }
+}
+
+/// Returns whether `res` is successful.
+pub fn is_ok[T, E](res: Result[T, E]) -> bool {
+    ret match res {
+        Ok(value) => true
+        Err(err) => false
+    }
+}
+
+/// Returns whether `res` contains an error.
+pub fn is_err[T, E](res: Result[T, E]) -> bool {
+    ret match res {
+        Ok(value) => false
+        Err(err) => true
+    }
+}
+
+/// Returns the success value from `res`, falling back to `default`.
+pub fn unwrap_or[T, E](res: Result[T, E], default: T) -> T {
+    ret match res {
+        Ok(value) => value
+        Err(err) => default
+    }
+}
+
+/// Returns the error value from `res`, falling back to `default`.
+pub fn unwrap_err_or[T, E](res: Result[T, E], default: E) -> E {
+    ret match res {
+        Ok(value) => default
+        Err(err) => err
+    }
+}
+
+impl[T:Debug, E:Debug] Debug for Result[T, E] {
+    /// Formats the value as text.
+    pub fn fmt(self: Result[T, E]) -> str {
+        ret match self {
+            Ok(value) => "Ok(" + Debug::fmt(value) + ")"
+            Err(err) => "Err(" + Debug::fmt(err) + ")"
+        }
+    }
+}
+
+#attr(test)
+fn result_contract() -> bool {
+    let ok = Result[u32, u32]::Ok(11_u32)
+    let err = Result[u32, u32]::Err(7_u32)
+    ret ok.is_ok()
+        && !ok.is_err()
+        && err.is_err()
+        && !err.is_ok()
+        && ok.unwrap_or(0_u32) == 11_u32
+        && err.unwrap_or(0_u32) == 0_u32
+        && err.unwrap_err_or(1_u32) == 7_u32
+}

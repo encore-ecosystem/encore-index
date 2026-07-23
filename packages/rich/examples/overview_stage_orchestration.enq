@@ -1,0 +1,37 @@
+import core::vec::Vec
+import rich::{Console, Layout, LiveView, ProgressView, StageProgress, Theme, stage_summary}
+
+fn main() -> u32 {
+    let console = Console::new()
+    let theme = Theme::compiler()
+
+    let mut stages = Vec[StageProgress]::new()
+    stages.push(StageProgress::with_footer("parse", "Parse", "collecting modules", 3_usize, 3_usize, "done"))
+    stages.push(StageProgress::with_footer("translate", "Translate", "lowering eHIR", 2_usize, 4_usize, "running"))
+    stages.push(StageProgress::with_footer("link", "Link", "writing runtime image", 0_usize, 1_usize, "pending"))
+
+    let mut progress = ProgressView::new("Compiler stages", 16_usize)
+    let mut live = LiveView::new()
+
+    let mut index = 0_usize
+    loop {
+        match stages.get(index) {
+            Some(stage) => {
+                console.sync_stage(progress, live, stage)
+                index = index + 1_usize
+            }
+            None => {
+                break
+            }
+        }
+    }
+
+    console.theme_info(theme, stage_summary(stages))
+    console.themed_progress_view(theme, progress)
+    console.live_view(live)
+
+    let mut layout = Layout::themed(theme, "Pipeline")
+    layout.add_columns_section("flow", "frontend", "backend", " -> ")
+    console.layout(layout)
+    ret 0_u32
+}

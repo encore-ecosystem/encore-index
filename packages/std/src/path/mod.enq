@@ -1,0 +1,549 @@
+//! Provides normalized filesystem path manipulation.
+
+import core::option::Option
+import std::os::cwd
+import std::os::home_dir
+import std::os::mkdir
+import std::os::mkdir_all
+import std::os::path_separator
+import std::os::read_file
+import std::os::remove_file
+import std::os::write_file
+import std::os::file_exists
+import std::vec::Vec
+import std::ops::Div
+
+/// Stores a platform-aware filesystem path as a root and normalized parts.
+pub struct Path {
+    root: str
+    parts: Vec[str]
+}
+
+impl for Path {
+    /// Parses `raw` using the platform path separator.
+    pub fn new(raw: str) -> Self {
+        let raw_parts = split_path_parts(raw)
+        let mut parts = Vec[str]::new()
+        let mut index = 0_usize
+        if has_drive_prefix(raw) {
+            index = 1_usize
+        }
+        loop {
+            match raw_parts.get(index) {
+                Option[str]::Some(part) => {
+                    if part != "" {
+                        parts.push(part)
+                    }
+                    index = index + 1_usize
+                }
+                Option[str]::None => {
+                    break
+                }
+            }
+        }
+
+        let mut root = ""
+        if has_drive_prefix(raw) {
+            root = raw.slice(0_usize, 2_usize) + path_separator()
+        }
+        else {
+            match raw.get(0_usize) {
+                Option[str]::Some(v) => {
+                    if is_separator(v.byte_at(0_usize)) {
+                        root = path_separator()
+                    }
+                }
+                Option[str]::None => {
+                }
+            }
+        }
+
+        ret Path {root, parts}
+    }
+
+    /// Returns the process working directory.
+    pub fn cwd() -> Self {
+        ret Path::new(cwd())
+    }
+
+    /// Returns the current user's home directory.
+    pub fn home() -> Self {
+        ret Path::new(home_dir())
+    }
+
+    /// Renders this path using the platform separator.
+    pub fn as_str(self: Self) -> str {
+        let mut out = self.root
+        let mut index = 0_usize
+        loop {
+            match self.parts.get(index) {
+                Option[str]::Some(part) => {
+                    if out == "" {
+                        out = part
+                    }
+                    elif ends_with_separator(out) {
+                        out = out + part
+                    }
+                    else {
+                        out = out + path_separator() + part
+                    }
+                    index = index + 1_usize
+                }
+                Option[str]::None => {
+                    break
+                }
+            }
+        }
+        ret out
+    }
+
+    /// Returns whether the path has an absolute root.
+    pub fn is_absolute(self: Self) -> bool {
+        ret self.root != ""
+    }
+
+    /// Returns whether the path is relative to another directory.
+    pub fn is_relative(self: Self) -> bool {
+        ret !self.is_absolute()
+    }
+
+    /// Appends `part`, replacing this path when `part` is absolute.
+    pub fn join(self: Self, part: str) -> Self {
+        let base = self.as_str()
+        if base.len() == 0_usize {
+            ret Path::new(part)
+        }
+
+        if part.len() == 0_usize {
+            ret self
+        }
+
+        if is_separator(part.byte_at(0_usize)) {
+            ret Path::new(part)
+        }
+
+        if ends_with_separator(base) {
+            ret Path::new(base + part)
+        }
+
+        ret Path::new(base + path_separator() + part)
+    }
+
+    /// Appends another path using the same rules as `join`.
+    pub fn join_path(self: Self, part: Path) -> Self {
+        ret self.join(part.as_str())
+    }
+
+    /// Expands an initial `~` component to the user's home directory.
+    pub fn expanduser(self: Self) -> Self {
+        if self.root == "~" {
+            let mut out = Path::new(home_dir())
+            let mut idx = 0_usize
+            loop {
+                match self.parts.get(idx) {
+                    Some(part) => {
+                        out = out.join(part)
+                        idx = idx + 1_usize
+                    }
+                    None => {
+                        break
+                    }
+                }
+            }
+            ret out
+        }
+
+        match self.parts.get(0_usize) {
+            Some(part) => {
+                if part == "~" {
+                    let mut out = Path::new(home_dir())
+                    let mut idx = 1_usize
+                    loop {
+                        match self.parts.get(idx) {
+                            Some(next_part) => {
+                                out = out.join(next_part)
+                                idx = idx + 1_usize
+                            }
+                            None => {
+                                break
+                            }
+                        }
+                    }
+                    ret out
+                }
+            }
+            None => {
+            }
+        }
+        ret self
+    }
+
+    /// Removes redundant `.` components and resolves safe `..` components.
+    pub fn normalize(self: Self) -> Self {
+        let mut out_parts = Vec[str]::new()
+        let mut idx = 0_usize
+        loop {
+            match self.parts.get(idx) {
+                Some(part) => {
+                    let curr = part
+                    if curr == "" || curr == "." {
+                        idx = idx + 1_usize
+                        continue
+                    }
+                    if curr == ".." {
+                        let popped = out_parts.pop()
+                        match popped {
+                            Some(_) => {
+                            }
+                            None => {
+                                if self.root == "" {
+                                    out_parts.push("..")
+                                }
+                            }
+                        }
+                        idx = idx + 1_usize
+                        continue
+                    }
+                    out_parts.push(part)
+                    idx = idx + 1_usize
+                }
+                None => {
+                    break
+                }
+            }
+        }
+        ret Path{self.root, out_parts}
+    }
+
+    /// Makes this path absolute without normalizing its components.
+    pub fn absolute(self: Self) -> Self {
+        let expanded = self.expanduser()
+        if expanded.is_absolute() {
+            ret expanded
+        }
+        ret Path::cwd().join_path(expanded)
+    }
+
+    /// Expands, absolutizes, and lexically normalizes this path.
+    pub fn resolve(self: Self) -> Self {
+        ret self.expanduser().absolute().normalize()
+    }
+
+    /// Returns the final path component when one exists.
+    pub fn name(self: Self) -> Option[str] {
+        ret path_name(self.as_str())
+    }
+
+    /// Returns the final path component when one exists.
+    pub fn file_name(self: Self) -> Option[str] {
+        ret self.name()
+    }
+
+    /// Returns the final component without its last suffix.
+    pub fn stem(self: Self) -> Option[str] {
+        ret path_stem(self.as_str())
+    }
+
+    /// Returns the final component's suffix including the leading dot.
+    pub fn suffix(self: Self) -> Option[str] {
+        ret path_suffix(self.as_str())
+    }
+
+    /// Returns the final component's extension without the leading dot.
+    pub fn extension(self: Self) -> Option[str] {
+        match self.suffix() {
+            Some(suffix) => {
+                if suffix.len() <= 1_usize {
+                    ret Option[str]::None
+                }
+                ret Option[str]::Some(suffix.slice(1_usize, suffix.len() - 1_usize))
+            }
+            None => {
+                ret Option[str]::None
+            }
+        }
+    }
+
+    /// Returns the lexical parent path when one exists.
+    pub fn parent(self: Self) -> Option[Path] {
+        match path_parent_str(self.as_str()) {
+            Some(parent) => {
+                ret Option[Path]::Some(Path::new(parent))
+            }
+            None => {
+                ret Option[Path]::None
+            }
+        }
+    }
+
+    /// Replaces the final component's suffix.
+    pub fn with_suffix(self: Self, suffix: str) -> Self {
+        let value = self.as_str()
+        match path_name(value) {
+            Some(name) => {
+                match path_parent_str(value) {
+                    Some(parent) => {
+                        let next_name = replace_name_suffix(name, suffix)
+                        if parent.len() == 0_usize {
+                            ret Path::new(next_name)
+                        }
+                        if ends_with_separator(parent) {
+                            ret Path::new(parent + next_name)
+                        }
+                        ret Path::new(parent + path_separator() + next_name)
+                    }
+                    None => {
+                        ret Path::new(replace_name_suffix(name, suffix))
+                    }
+                }
+            }
+            None => {
+                ret self
+            }
+        }
+    }
+
+    /// Replaces the final path component with `name`.
+    pub fn with_name(self: Self, name: str) -> Self {
+        match path_parent_str(self.as_str()) {
+            Some(parent) => {
+                if parent.len() == 0_usize {
+                    ret Path::new(name)
+                }
+                if ends_with_separator(parent) {
+                    ret Path::new(parent + name)
+                }
+                ret Path::new(parent + path_separator() + name)
+            }
+            None => {
+                ret Path::new(name)
+            }
+        }
+    }
+
+    /// Returns whether this path exists.
+    pub fn exists(self: Self) -> bool {
+        ret file_exists(self.as_str())
+    }
+
+    /// Creates this directory and returns the platform status code.
+    pub fn mkdir(self: Self) -> i32 {
+        ret mkdir(self.as_str())
+    }
+
+    /// Creates this directory and any missing parents.
+    pub fn mkdir_all(self: Self) -> i32 { ret mkdir_all(self.as_str()) }
+
+    /// Removes the file at this path.
+    pub fn remove_file(self: Self) -> i32 {
+        ret remove_file(self.as_str())
+    }
+
+    /// Reads the file at this path as UTF-8 text.
+    pub fn read_text(self: Self) -> str {
+        ret read_file(self.as_str())
+    }
+
+    /// Replaces the file at this path with `contents`.
+    pub fn write_text(self: Self, contents: str) -> i32 {
+        ret write_file(self.as_str(), contents)
+    }
+}
+
+impl Div[str] for Path {
+    /// Joins a path component using the `/` operator.
+    pub fn op(self: Path, other: str) -> Path {
+        ret self.join(other)
+    }
+}
+
+
+fn path_name(value: str) -> Option[str] {
+    let end = trim_trailing_separators_end(value, value.len())
+    if end == 0_usize {
+        ret Option[str]::None
+    }
+
+    let start = basename_start(value, end)
+    if start >= end {
+        ret Option[str]::None
+    }
+
+    ret Option[str]::Some(value.slice(start, end - start))
+}
+
+fn path_stem(value: str) -> Option[str] {
+    match path_name(value) {
+        Some(name) => {
+            match last_dot_index(name, name.len()) {
+                Some(dot) => {
+                    if dot == 0_usize {
+                        ret Option[str]::Some(name)
+                    }
+                    ret Option[str]::Some(name.slice(0_usize, dot))
+                }
+                None => {
+                    ret Option[str]::Some(name)
+                }
+            }
+        }
+        None => {
+            ret Option[str]::None
+        }
+    }
+}
+
+fn path_suffix(value: str) -> Option[str] {
+    match path_name(value) {
+        Some(name) => {
+            match last_dot_index(name, name.len()) {
+                Some(dot) => {
+                    if dot == 0_usize {
+                        ret Option[str]::None
+                    }
+                    ret Option[str]::Some(name.slice(dot, name.len() - dot))
+                }
+                None => {
+                    ret Option[str]::None
+                }
+            }
+        }
+        None => {
+            ret Option[str]::None
+        }
+    }
+}
+
+fn path_parent_str(value: str) -> Option[str] {
+    let end = trim_trailing_separators_end(value, value.len())
+    if end == 0_usize {
+        ret Option[str]::None
+    }
+
+    let start = basename_start(value, end)
+    if start == 0_usize {
+        ret Option[str]::None
+    }
+
+    let parent_end = trim_trailing_separators_end(value, start)
+    if parent_end == 0_usize {
+        if is_separator(value.byte_at(0_usize)) {
+            ret Option[str]::Some(path_separator())
+        }
+    }
+    ret Option[str]::Some(value.slice(0_usize, parent_end))
+}
+
+fn replace_name_suffix(name: str, suffix: str) -> str {
+    match last_dot_index(name, name.len()) {
+        Some(dot) => {
+            if dot == 0_usize {
+                ret name + suffix
+            }
+            ret name.slice(0_usize, dot) + suffix
+        }
+        None => {
+            ret name + suffix
+        }
+    }
+    ret name + suffix
+}
+
+fn basename_start(value: str, end: usize) -> usize {
+    match last_separator_index(value, end) {
+        Some(index) => {
+            ret index + 1_usize
+        }
+        None => {
+            ret 0_usize
+        }
+    }
+    ret 0_usize
+}
+
+fn trim_trailing_separators_end(value: str, end: usize) -> usize {
+    if end == 0_usize {
+        ret 0_usize
+    }
+
+    let index = end - 1_usize
+    if is_separator(value.byte_at(index)) {
+        ret trim_trailing_separators_end(value, index)
+    }
+
+    ret end
+}
+
+fn last_separator_index(value: str, end: usize) -> Option[usize] {
+    if end == 0_usize {
+        ret Option[usize]::None
+    }
+
+    let index = end - 1_usize
+    if is_separator(value.byte_at(index)) {
+        ret Option[usize]::Some(index)
+    }
+
+    ret last_separator_index(value, index)
+}
+
+fn last_dot_index(value: str, end: usize) -> Option[usize] {
+    if end == 0_usize {
+        ret Option[usize]::None
+    }
+
+    let index = end - 1_usize
+    if value.byte_at(index) == 46_u8 {
+        ret Option[usize]::Some(index)
+    }
+
+    ret last_dot_index(value, index)
+}
+
+fn split_path_parts(value: str) -> Vec[str] {
+    let mut out = Vec[str]::new()
+    let mut curr = ""
+    let mut index = 0_usize
+    loop {
+        match value.get(index) {
+            Option[str]::Some(ch) => {
+                if is_separator(ch.byte_at(0_usize)) {
+                    if curr != "" {
+                        out.push(curr)
+                        curr = ""
+                    }
+                }
+                else {
+                    curr = curr + ch
+                }
+                index = index + 1_usize
+            }
+            Option[str]::None => {
+                break
+            }
+        }
+    }
+    if curr != "" {
+        out.push(curr)
+    }
+    ret out
+}
+
+fn has_drive_prefix(value: str) -> bool {
+    if value.len() < 2_usize {
+        ret false
+    }
+    ret value.byte_at(1_usize) == 58_u8
+}
+
+fn ends_with_separator(value: str) -> bool {
+    if value.len() == 0_usize {
+        ret false
+    }
+
+    ret is_separator(value.byte_at(value.len() - 1_usize))
+}
+
+fn is_separator(ch: u8) -> bool {
+    ret ch == 47_u8 || ch == 92_u8
+}

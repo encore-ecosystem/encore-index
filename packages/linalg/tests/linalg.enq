@@ -1,0 +1,51 @@
+import core::option::Option
+import linalg::{Mat4, Vec3}
+
+fn near(lhs: f32, rhs: f32) -> bool {
+    let difference = lhs - rhs
+    ret difference > -0.001_f32 && difference < 0.001_f32
+}
+
+fn near_loose(lhs: f32, rhs: f32) -> bool {
+    let difference = lhs - rhs
+    ret difference > -0.02_f32 && difference < 0.02_f32
+}
+
+fn main() -> u32 {
+    let x = Vec3::new(1.0_f32, 0.0_f32, 0.0_f32)
+    let y = Vec3::new(0.0_f32, 1.0_f32, 0.0_f32)
+    let z = x.cross(y)
+    if !near(z.z(), 1.0_f32) || !near(Vec3::new(3.0_f32, 4.0_f32, 0.0_f32).length(), 5.0_f32) { ret 1_u32 }
+    let matrix = Mat4::translation(Vec3::new(2.0_f32, 3.0_f32, 4.0_f32)).mul(Mat4::identity()).values()
+    match matrix.get(12_usize) { Option::Some(value) => { if !near(value, 2.0_f32) { ret 2_u32 } } Option::None => { ret 3_u32 } }
+    match matrix.get(13_usize) { Option::Some(value) => { if !near(value, 3.0_f32) { ret 4_u32 } } Option::None => { ret 5_u32 } }
+    let translated = Mat4::translation(Vec3::new(2.0_f32, 3.0_f32, 4.0_f32)).transform_point(Vec3::new(1.0_f32, 1.0_f32, 1.0_f32))
+    if !near(translated.x(), 3.0_f32) || !near(translated.y(), 4.0_f32) || !near(translated.z(), 5.0_f32) { ret 8_u32 }
+    let periodic = Mat4::rotation_y(6.2831855_f32).transform_point(x)
+    if !near(periodic.x(), 1.0_f32) || !near(periodic.z(), 0.0_f32) { ret 9_u32 }
+    let transform = Mat4::trs(Vec3::new(3.0_f32, -2.0_f32, 5.0_f32), Vec3::new(0.3_f32, -0.7_f32, 0.2_f32),
+        Vec3::new(2.0_f32, 0.5_f32, 3.0_f32))
+    let local = Vec3::new(1.25_f32, -0.75_f32, 2.5_f32)
+    match transform.inverse_affine() {
+        Option::Some(inverse) => {
+            let restored = inverse.transform_point(transform.transform_point(local))
+            if !near(restored.x(), local.x()) || !near(restored.y(), local.y()) || !near(restored.z(), local.z()) { ret 11_u32 }
+        }
+        Option::None => { ret 12_u32 }
+    }
+    if Mat4::scale(Vec3::new(1.0_f32, 0.0_f32, 1.0_f32)).inverse_affine().is_some() { ret 13_u32 }
+    match transform.decompose_trs() {
+        Option::Some(parts) => {
+            let rebuilt = Mat4::trs(parts.0, parts.1, parts.2).transform_point(local)
+            let expected = transform.transform_point(local)
+            if !near_loose(rebuilt.x(), expected.x()) || !near_loose(rebuilt.y(), expected.y()) || !near_loose(rebuilt.z(), expected.z()) { ret 14_u32 }
+        }
+        Option::None => { ret 15_u32 }
+    }
+    let shear = Mat4::scale(Vec3::new(2.0_f32, 1.0_f32, 0.5_f32)).mul(Mat4::rotation_y(0.7_f32))
+    if shear.decompose_trs().is_some() { ret 16_u32 }
+    if !near(Vec3::from_spherical(1.2_f32, 0.4_f32).length(), 1.0_f32) { ret 10_u32 }
+    let view = Mat4::look_at(Vec3::new(0.0_f32, 0.0_f32, 3.0_f32), Vec3::zero(), y).values()
+    match view.get(14_usize) { Option::Some(value) => { if !near(value, -3.0_f32) { ret 6_u32 } } Option::None => { ret 7_u32 } }
+    ret 0_u32
+}

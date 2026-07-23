@@ -1,0 +1,120 @@
+import core::testing::assert
+
+import refrain::style::{accent, error_text, muted, success_text, warn_text}
+
+pub struct Theme {
+    name: str
+}
+
+impl for Theme {
+    pub fn new(name: str) -> Self {
+        ret Self{name}
+    }
+
+    pub fn default() -> Self {
+        ret Self::new("default")
+    }
+
+    pub fn compiler() -> Self {
+        ret Self::new("compiler")
+    }
+
+    pub fn info(self, message: str) -> str {
+        if self.name == "compiler" {
+            ret accent("[compile]") + " " + message
+        }
+        ret accent("[info]") + " " + message
+    }
+
+    pub fn ok(self, message: str) -> str {
+        if self.name == "compiler" {
+            ret success_text("[linked]") + " " + message
+        }
+        ret success_text("[ok]") + " " + message
+    }
+
+    pub fn warn(self, message: str) -> str {
+        if self.name == "compiler" {
+            ret warn_text("[lint]") + " " + message
+        }
+        ret warn_text("[warn]") + " " + message
+    }
+
+    pub fn error(self, message: str) -> str {
+        if self.name == "compiler" {
+            ret error_text("[compile-error]") + " " + message
+        }
+        ret error_text("[error]") + " " + message
+    }
+
+    pub fn note(self, message: str) -> str {
+        ret muted(message)
+    }
+
+    pub fn panel_title(self, title: str) -> str {
+        if self.name == "compiler" {
+            ret accent("Build: " + title)
+        }
+        ret accent(title)
+    }
+
+    pub fn table_title(self, title: str) -> str {
+        if self.name == "compiler" {
+            ret success_text("Table: " + title)
+        }
+        ret success_text(title)
+    }
+
+    pub fn layout_title(self, title: str) -> str {
+        if self.name == "compiler" {
+            ret accent("Layout: " + title)
+        }
+        ret accent(title)
+    }
+
+    pub fn section_label(self, title: str) -> str {
+        if self.name == "compiler" {
+            ret warn_text("Section: " + title)
+        }
+        ret warn_text(title)
+    }
+
+    pub fn live_title(self, title: str) -> str {
+        if self.name == "compiler" {
+            ret warn_text("Live: " + title)
+        }
+        ret warn_text(title)
+    }
+}
+
+#attr(test)
+fn theme_renders_named_variants() -> bool {
+    let default_theme = Theme::default()
+    let compiler_theme = Theme::compiler()
+    ret assert(str_contains(default_theme.info("hello"), "hello"))
+        && assert(str_contains(compiler_theme.ok("linked"), "linked"))
+        && assert(str_contains(compiler_theme.warn("unused"), "unused"))
+        && assert(str_contains(compiler_theme.error("broken"), "broken"))
+        && assert(str_contains(compiler_theme.panel_title("Summary"), "Summary"))
+        && assert(str_contains(compiler_theme.layout_title("Dashboard"), "Dashboard"))
+        && assert(str_contains(compiler_theme.section_label("Frontend"), "Frontend"))
+}
+
+fn str_contains(value: str, needle: str) -> bool {
+    let needle_len = needle.char_len()
+    let value_len = value.char_len()
+    if needle_len == 0_usize {
+        ret true
+    }
+    if needle_len > value_len {
+        ret false
+    }
+    let mut start = 0_usize
+    while start + needle_len <= value_len {
+        if value.slice(start, needle_len) == needle {
+            ret true
+        }
+        start = start + 1_usize
+    }
+    ret false
+}

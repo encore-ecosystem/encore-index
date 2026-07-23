@@ -1,0 +1,34 @@
+//! Exercises a verified TLS connection against the local integration server.
+
+import core::os::env
+import core::io::println
+import core::result::Result
+import core::testing::assert
+import std::http::{HttpClient, HttpClientConfig}
+
+fn environment(name: str) -> str {
+    match env(name) {
+        Some(value) => { ret value }
+        None => { ret "" }
+    }
+    ret ""
+}
+
+fn main() -> u32 {
+    let base = environment("ENCORE_HTTPS_TEST_URL")
+    let mismatch_base = environment("ENCORE_HTTPS_TEST_MISMATCH_URL")
+    let ca_file = environment("ENCORE_HTTPS_TEST_CA")
+    if base == "" || ca_file == "" { ret 0_u32 }
+    let client = HttpClient::with_config(HttpClientConfig::default().with_ca_file(ca_file).with_max_redirects(2_usize).with_max_body_size(64_usize))
+
+    let fixed = match client.get(base + "/index.html") {
+        Result::Ok(value) => value
+        Result::Err(error) => { let _printed = println("fixed HTTPS request failed: " + error) ret 1_u32 }
+    }
+    if !assert(fixed.status() == 200_u16 && fixed.body().contains("secure")) { ret 2_u32 }
+
+    let untrusted = HttpClient::with_config(HttpClientConfig::default())
+    if !assert(untrusted.get(base + "/index.html").is_err()) { ret 7_u32 }
+    if !assert(client.get(mismatch_base + "/index.html").is_err()) { ret 8_u32 }
+    ret 0_u32
+}

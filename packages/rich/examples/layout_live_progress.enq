@@ -1,0 +1,27 @@
+import rich::{Console, Layout, LiveFrame, LiveView, ProgressView}
+
+fn main() -> u32 {
+    let console = Console::new()
+
+    let mut layout = Layout::new("Compiler")
+    layout.add_section("frontend", "lexer\nparser\nsema")
+    layout.add_section("backend", "translator\nllvm")
+    console.layout(layout)
+
+    let mut progress = ProgressView::new("Build tasks", 14_usize)
+    progress.add_task_with_id("parse-stage", "parse", 4_usize, 4_usize)
+    progress.add_task_with_id("translate-stage", "translate", 2_usize, 5_usize)
+    progress.add_task_with_id("link-stage", "link", 0_usize, 1_usize)
+    progress.advance_task_by_id("translate-stage", 1_usize)
+    progress.update_task_by_id("link-stage", 1_usize, 1_usize)
+    console.progress_view(progress)
+
+    let mut live = LiveView::new()
+    live.push(LiveFrame::with_id("collect-stage", "Frame 1", "collecting modules", ""))
+    let mut frame2 = LiveFrame::with_footer("Frame 2", "emitting object files", "running")
+    frame2.set_body("emitting object files\nwriting metadata")
+    live.push(frame2)
+    live.replace_by_id("collect-stage", LiveFrame::with_id("collect-stage", "Frame 1", "collecting modules", "done"))
+    console.live_view(live)
+    ret 0_u32
+}

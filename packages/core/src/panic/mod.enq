@@ -1,0 +1,13 @@
+//! Provides the `panic` module.
+
+import core::io::eprint
+import core::io::eprintln
+import core::process::exit
+
+/// Performs the `panic` operation.
+pub fn panic(message: str) -> () {
+    eprint("panic: ")
+    eprintln(message)
+    exit(1_i32)
+    ret ()
+}

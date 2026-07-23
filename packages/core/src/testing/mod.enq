@@ -1,0 +1,16 @@
+//! Provides assertions for Encore tests.
+
+/// Performs the `assert` operation.
+pub fn assert(condition: bool) -> bool {
+    ret condition
+}
+
+/// Performs the `fail` operation.
+pub fn fail() -> bool {
+    ret false
+}
+
+#attr(test)
+fn assert_contract() -> bool {
+    ret assert(true) && !fail()
+}

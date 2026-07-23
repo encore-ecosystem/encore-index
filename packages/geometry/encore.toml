@@ -1,0 +1,7 @@
+[project]
+name = "geometry"
+version = "0.1.0"
+description = "Two-dimensional geometry primitives for Encore applications"
+readme = "README.md"
+licence = "MIT"
+dependencies = []

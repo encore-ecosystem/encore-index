@@ -1,0 +1,10 @@
+import core::testing::*
+import std::net::socket_addr
+
+fn main() -> u32 {
+    let addr = socket_addr("127.0.0.1", 8080_usize)
+    if !assert(addr == "127.0.0.1:8080") {
+        ret 1_u32
+    }
+    ret 0_u32
+}

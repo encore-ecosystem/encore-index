@@ -1,0 +1,5 @@
+import std::os::write_file
+
+pub fn link_payload(payload: str, output_path: str) -> i32 {
+    ret write_file(output_path, payload)
+}

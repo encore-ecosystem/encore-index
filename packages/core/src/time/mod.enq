@@ -1,0 +1,35 @@
+//! Provides clocks, counters, and sleeping.
+
+extern fn encore_clock_ms(kind: u8) -> u64
+extern fn encore_sleep_ms(ms: u64) -> bool
+
+/// Performs the `time` operation.
+pub fn time() -> u64 {
+    ret time_ms()
+}
+
+/// Performs the `time_ms` operation.
+pub fn time_ms() -> u64 {
+    unsafe {
+        ret encore_clock_ms(0_u8)
+    }
+}
+
+/// Performs the `perf_counter` operation.
+pub fn perf_counter() -> u64 {
+    ret perf_counter_ms()
+}
+
+/// Performs the `sleep_ms` operation.
+pub fn sleep_ms(ms: u64) -> bool {
+    unsafe {
+        ret encore_sleep_ms(ms)
+    }
+}
+
+/// Performs the `perf_counter_ms` operation.
+pub fn perf_counter_ms() -> u64 {
+    unsafe {
+        ret encore_clock_ms(1_u8)
+    }
+}

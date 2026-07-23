@@ -1,0 +1,17 @@
+import refrain::level::LogLevel
+
+pub struct LogRecord {
+    level: LogLevel
+    target: str
+    message: str
+}
+
+impl for LogRecord {
+    pub fn new(level: LogLevel, target: str, message: str) -> Self {
+        ret Self {level, target, message}
+    }
+
+    pub fn with_target(level: LogLevel, target: str, message: str) -> Self {
+        ret Self::new(level, target, message)
+    }
+}

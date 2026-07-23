@@ -1,0 +1,21 @@
+extern fn encore_rich_is_terminal(fd: i32) -> bool
+extern fn encore_rich_terminal_spinner_start(message: str, frames: str, interval_ms: usize) -> bool
+extern fn encore_rich_terminal_spinner_update(message: str) -> bool
+extern fn encore_rich_terminal_spinner_stop() -> ()
+
+pub fn is_terminal(fd: i32) -> bool {
+    unsafe { ret encore_rich_is_terminal(fd) }
+}
+
+pub fn terminal_spinner_start(message: str, frames: str, interval_ms: usize) -> bool {
+    unsafe { ret encore_rich_terminal_spinner_start(message, frames, interval_ms) }
+}
+
+pub fn terminal_spinner_update(message: str) -> bool {
+    unsafe { ret encore_rich_terminal_spinner_update(message) }
+}
+
+pub fn terminal_spinner_stop() -> () {
+    unsafe { encore_rich_terminal_spinner_stop() }
+    ret ()
+}

@@ -1,0 +1,3 @@
+//! Provides verified synchronous TLS client streams.
+
+pub import core::tls::*

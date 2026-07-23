@@ -1,0 +1,10 @@
+//! Verifies the native portable SHA-256 implementation against a known vector.
+
+import core::os::file_sha256
+import core::testing::assert
+
+fn main() -> u32 {
+    let digest = file_sha256("tests/sha256_fixture.txt")
+    if !assert(digest == "edeaaff3f1774ad2888673770c6d64097e391bc362d7d6fb34982ddf0efd18cb") { ret 1_u32 }
+    ret 0_u32
+}

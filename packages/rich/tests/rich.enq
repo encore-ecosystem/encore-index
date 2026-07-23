@@ -1,0 +1,80 @@
+import core::testing::*
+import core::vec::Vec
+import rich::{DotsStyle, Panel, Spinner, Table, Text, TreeNode, status, status_ok, status_fail}
+
+fn main() -> u32 {
+    if !assert(Spinner::line().frame(0_usize) == "-") {
+        ret 1_u32
+    }
+    if !assert(status(Spinner::dots(), 2_usize, "loading").contains("loading")) {
+        ret 1_u32
+    }
+    if !assert(Spinner::dots().frame_count() == 10_usize && Spinner::dots().frame(0_usize) == "⠋" && Spinner::dots().frame(10_usize) == "⠋") { ret 1_u32 }
+    if !assert(Spinner::dots_style(DotsStyle::Dots2).frame_count() == 8_usize && Spinner::dots_style(DotsStyle::Dots2).frame(0_usize) == "⣾") { ret 1_u32 }
+    if !assert(Spinner::dots_style(DotsStyle::Dots3).frame_count() == 10_usize) { ret 1_u32 }
+    if !assert(Spinner::dots_style(DotsStyle::Dots4).frame_count() == 14_usize) { ret 1_u32 }
+    if !assert(Spinner::dots_style(DotsStyle::Dots5).frame_count() == 17_usize) { ret 1_u32 }
+    if !assert(Spinner::dots_style(DotsStyle::Dots6).frame_count() == 24_usize) { ret 1_u32 }
+    if !assert(Spinner::dots_style(DotsStyle::Dots7).frame_count() == 24_usize) { ret 1_u32 }
+    if !assert(Spinner::dots_style(DotsStyle::Dots8).frame_count() == 29_usize) { ret 1_u32 }
+    if !assert(Spinner::dots_style(DotsStyle::Dots8Bit).frame_count() == 256_usize && Spinner::dots_style(DotsStyle::Dots8Bit).frame(255_usize) == "⣿") { ret 1_u32 }
+    if !assert(Spinner::dots_style(DotsStyle::Dots9).frame_count() == 8_usize) { ret 1_u32 }
+    if !assert(Spinner::dots_style(DotsStyle::Dots10).frame_count() == 7_usize) { ret 1_u32 }
+    if !assert(Spinner::dots_style(DotsStyle::Dots11).frame_count() == 8_usize) { ret 1_u32 }
+    if !assert(Spinner::dots_style(DotsStyle::Dots12).frame(0_usize) == "⢀⠀") { ret 1_u32 }
+    if !assert(Spinner::dots_style(DotsStyle::Dots13).frame(0_usize) == "⣼") { ret 1_u32 }
+    if !assert(Spinner::dots_style(DotsStyle::Dots14).frame(0_usize) == "⠉⠉") { ret 1_u32 }
+    if !assert(Spinner::dots_style(DotsStyle::DotsCircle).frame(0_usize) == "⢎ ") { ret 1_u32 }
+    if !assert(status_ok("done").contains("done")) {
+        ret 1_u32
+    }
+    if !assert(status_fail("broken").contains("broken")) {
+        ret 1_u32
+    }
+
+    let panel = Panel::titled("Title", "line1\nline2")
+    let rendered_panel = panel.render()
+    if !assert(rendered_panel.contains("Title")) {
+        ret 1_u32
+    }
+    if !assert(rendered_panel.contains("line2")) {
+        ret 1_u32
+    }
+
+    let mut table = Table::with_headers(Vec[str]::new())
+    table.set_title("Items")
+    let mut headers = Vec[str]::new()
+    headers.push("name")
+    headers.push("kind")
+    table = Table::with_headers(headers)
+    table.set_title("Items")
+    let mut row = Vec[str]::new()
+    row.push("parser")
+    row.push("module")
+    table.add_row(row)
+    let rendered_table = table.render()
+    if !assert(rendered_table.contains("parser")) {
+        ret 1_u32
+    }
+    if !assert(rendered_table.contains("kind")) {
+        ret 1_u32
+    }
+
+    let mut tree = TreeNode::new("root")
+    let mut child = TreeNode::new("frontend")
+    child.branch("lexer")
+    tree.add_child(child)
+    let rendered_tree = tree.render()
+    if !assert(rendered_tree.contains("root")) {
+        ret 1_u32
+    }
+    if !assert(rendered_tree.contains("lexer")) {
+        ret 1_u32
+    }
+
+    if !assert(Text::new("warn").yellow().contains("warn")) {
+        ret 1_u32
+    }
+
+    ret 0_u32
+}

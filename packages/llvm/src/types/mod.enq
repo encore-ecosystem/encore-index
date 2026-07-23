@@ -1,0 +1,72 @@
+
+pub enum LLVMTypeKind {
+    VOID
+    INTEGER
+    FLOAT
+    POINTER
+    STRUCT
+    ARRAY
+}
+
+pub struct LLVMType {
+    kind: LLVMTypeKind
+    text: str
+}
+
+pub fn type_text(typ: LLVMType) -> str {
+    ret typ.text
+}
+
+pub fn llvm_raw_type(kind: LLVMTypeKind, text: str) -> LLVMType {
+    ret LLVMType{kind, text}
+}
+
+pub fn void_type() -> LLVMType {
+    ret LLVMType{LLVMTypeKind::VOID, "void"}
+}
+
+pub fn i1_type() -> LLVMType {
+    ret LLVMType{LLVMTypeKind::INTEGER, "i1"}
+}
+
+pub fn i8_type() -> LLVMType {
+    ret LLVMType{LLVMTypeKind::INTEGER, "i8"}
+}
+
+pub fn i16_type() -> LLVMType {
+    ret LLVMType{LLVMTypeKind::INTEGER, "i16"}
+}
+
+pub fn i32_type() -> LLVMType {
+    ret LLVMType{LLVMTypeKind::INTEGER, "i32"}
+}
+
+pub fn i64_type() -> LLVMType {
+    ret LLVMType{LLVMTypeKind::INTEGER, "i64"}
+}
+
+pub fn f16_type() -> LLVMType {
+    ret LLVMType{LLVMTypeKind::FLOAT, "half"}
+}
+
+pub fn f32_type() -> LLVMType {
+    ret LLVMType{LLVMTypeKind::FLOAT, "float"}
+}
+
+pub fn f64_type() -> LLVMType {
+    ret LLVMType{LLVMTypeKind::FLOAT, "double"}
+}
+
+pub fn ptr_type(inner: LLVMType) -> LLVMType {
+    ret LLVMType{LLVMTypeKind::POINTER, inner.text + "*"}
+}
+
+pub fn named_struct_type(name: str) -> LLVMType {
+    ret LLVMType{LLVMTypeKind::STRUCT, "%" + name}
+}
+
+pub fn array_type(len_text: str, element: LLVMType) -> LLVMType {
+    let prefix = "[" + len_text
+    let middle = prefix + " x " + element.text
+    ret LLVMType{LLVMTypeKind::ARRAY, middle + "]"}
+}

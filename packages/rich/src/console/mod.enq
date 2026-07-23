@@ -1,0 +1,290 @@
+import core::io::{print, println}
+import core::result::Result
+import core::vec::Vec
+
+import refrain::inspect::{inspect_compiler_state, inspect_fields, inspect_value}
+import refrain::json_render::{render_json, render_json_source}
+import refrain::layout::Layout
+import refrain::live::{LiveFrame, LiveView}
+import refrain::markup::render_markup
+import refrain::panel::Panel
+import refrain::pretty::pretty
+import refrain::progress::{ProgressBar, ProgressView, StageProgress}
+import refrain::prompt::{Prompt, RetryPolicy, SelectPrompt, ask_identifier, ask_identifier_result, ask_identifier_with_policy, ask_non_empty, ask_non_empty_result, ask_non_empty_with_policy, ask_select_result, ask_usize, ask_usize_result, ask_usize_with_policy, confirm, parse_identifier, parse_non_empty, parse_usize_or}
+import refrain::report::CompilerReport
+import refrain::spinner::Spinner
+import refrain::status::{status, status_info, status_ok, status_warn, status_fail}
+import refrain::style::{info_label, success_label, warn_label, error_label}
+import refrain::table::Table
+import refrain::theme::Theme
+import refrain::traceback::{Traceback, compiler_traceback}
+import refrain::tree::TreeNode
+import json::Json
+
+pub struct Console {}
+
+impl for Console {
+    pub fn new() -> Console {
+        ret Console {}
+    }
+
+    pub fn print(self, message: str) -> () {
+        print(message)
+        ret ()
+    }
+
+    pub fn println(self, message: str) -> () {
+        println(message)
+        ret ()
+    }
+
+    pub fn info(self, message: str) -> () {
+        ret self.println(info_label() + " " + message)
+    }
+
+    pub fn success(self, message: str) -> () {
+        ret self.println(success_label() + " " + message)
+    }
+
+    pub fn warn(self, message: str) -> () {
+        ret self.println(warn_label() + " " + message)
+    }
+
+    pub fn error(self, message: str) -> () {
+        ret self.println(error_label() + " " + message)
+    }
+
+    pub fn status(self, spinner: Spinner, index: usize, message: str) -> () {
+        ret self.println(status(spinner, index, message))
+    }
+
+    pub fn rule(self, label: str) -> () {
+        ret self.println("== " + label + " ==")
+    }
+
+    pub fn panel(self, panel: Panel) -> () {
+        ret self.println(panel.render())
+    }
+
+    pub fn themed_panel(self, theme: Theme, title: str, body: str) -> () {
+        ret self.println(Panel::themed(theme, title, body).render())
+    }
+
+    pub fn pretty(self, value: str) -> () {
+        ret self.println(pretty(value))
+    }
+
+    pub fn theme_info(self, theme: Theme, message: str) -> () {
+        ret self.println(theme.info(message))
+    }
+
+    pub fn theme_ok(self, theme: Theme, message: str) -> () {
+        ret self.println(theme.ok(message))
+    }
+
+    pub fn theme_warn(self, theme: Theme, message: str) -> () {
+        ret self.println(theme.warn(message))
+    }
+
+    pub fn theme_error(self, theme: Theme, message: str) -> () {
+        ret self.println(theme.error(message))
+    }
+
+    pub fn markup(self, source: str) -> () {
+        ret self.println(render_markup(source))
+    }
+
+    pub fn inspect_value(self, title: str, value: str) -> () {
+        ret self.println(inspect_value(title, value))
+    }
+
+    pub fn inspect_fields(self, title: str, fields: Vec[(str, str)]) -> () {
+        ret self.println(inspect_fields(title, fields))
+    }
+
+    pub fn inspect_compiler_state(self, phase: str, module_name: str, symbol_count: usize, note: str) -> () {
+        ret self.println(inspect_compiler_state(phase, module_name, symbol_count, note))
+    }
+
+    pub fn json(self, value: Json) -> () {
+        ret self.println(render_json(value))
+    }
+
+    pub fn json_source(self, source: str) -> () {
+        match render_json_source(source) {
+            Ok(rendered) => {
+                self.println(rendered)
+            }
+            Err(message) => {
+                self.error(message)
+            }
+        }
+        ret ()
+    }
+
+    pub fn progress(self, bar: ProgressBar, current: usize, total: usize, label: str) -> () {
+        ret self.println(bar.render_with_label(current, total, label))
+    }
+
+    pub fn progress_view(self, view: ProgressView) -> () {
+        ret self.println(view.render())
+    }
+
+    pub fn themed_progress_view(self, theme: Theme, view: ProgressView) -> () {
+        ret self.println(view.themed_render(theme))
+    }
+
+    pub fn progress_advance_by_label(self, view: mut ProgressView, label: str, step: usize) -> Result[bool, str] {
+        ret view.advance_task_by_label(label, step)
+    }
+
+    pub fn progress_advance_by_id(self, view: mut ProgressView, id: str, step: usize) -> Result[bool, str] {
+        ret view.advance_task_by_id(id, step)
+    }
+
+    pub fn layout(self, layout: Layout) -> () {
+        ret self.println(layout.render())
+    }
+
+    pub fn themed_layout(self, theme: Theme, title: str, left: str, right: str) -> () {
+        let mut layout = Layout::themed(theme, title)
+        layout.add_themed_section(theme, "left", left)
+        layout.add_themed_section(theme, "right", right)
+        ret self.println(layout.render())
+    }
+
+    pub fn live_frame(self, frame: LiveFrame) -> () {
+        ret self.println(frame.render())
+    }
+
+    pub fn live_view(self, view: LiveView) -> () {
+        ret self.println(view.render())
+    }
+
+    pub fn stage_snapshot(self, stage: StageProgress, width: usize) -> () {
+        self.println(stage.progress_line(width))
+        ret self.println(LiveFrame::with_id(stage.id(), stage.label(), stage.body(), stage.footer()).render())
+    }
+
+    pub fn sync_stage(self, progress: mut ProgressView, live: mut LiveView, stage: StageProgress) -> () {
+        if progress.update_task_by_id(stage.id(), stage.current(), stage.total()).is_err() {
+            progress.add_stage(stage)
+        }
+        if !live.replace_by_id(stage.id(), LiveFrame::with_id(stage.id(), stage.label(), stage.body(), stage.footer())) {
+            live.push(LiveFrame::with_id(stage.id(), stage.label(), stage.body(), stage.footer()))
+        }
+        ret ()
+    }
+
+    pub fn live_replace_by_title(self, view: mut LiveView, title: str, frame: LiveFrame) -> bool {
+        ret view.replace_by_title(title, frame)
+    }
+
+    pub fn live_replace_by_id(self, view: mut LiveView, id: str, frame: LiveFrame) -> bool {
+        ret view.replace_by_id(id, frame)
+    }
+
+    pub fn traceback(self, traceback: Traceback) -> () {
+        ret self.println(traceback.render())
+    }
+
+    pub fn compiler_traceback(self, message: str, module: str, function_name: str, line: usize, column: usize, before_source: str, source: str, after_source: str) -> () {
+        ret self.println(compiler_traceback(message, module, function_name, line, column, before_source, source, after_source).render())
+    }
+
+    pub fn compiler_report(self, theme: Theme, report: CompilerReport) -> () {
+        ret self.println(report.render(theme))
+    }
+
+    pub fn table(self, table: Table) -> () {
+        ret self.println(table.render())
+    }
+
+    pub fn themed_table(self, theme: Theme, table: Table) -> () {
+        ret self.println(table.themed_render(theme))
+    }
+
+    pub fn tree(self, tree: TreeNode) -> () {
+        ret self.println(tree.render())
+    }
+
+    pub fn status_info(self, message: str) -> () {
+        ret self.println(status_info(message))
+    }
+
+    pub fn status_ok(self, message: str) -> () {
+        ret self.println(status_ok(message))
+    }
+
+    pub fn status_warn(self, message: str) -> () {
+        ret self.println(status_warn(message))
+    }
+
+    pub fn status_fail(self, message: str) -> () {
+        ret self.println(status_fail(message))
+    }
+
+    pub fn prompt(self, prompt: Prompt) -> str {
+        ret prompt.ask()
+    }
+
+    pub fn select(self, prompt: SelectPrompt) -> str {
+        ret prompt.ask()
+    }
+
+    pub fn select_result(self, prompt: SelectPrompt, max_attempts: usize) -> Result[str, str] {
+        ret ask_select_result(prompt, max_attempts)
+    }
+
+    pub fn prompt_non_empty(self, prompt: Prompt, fallback: str) -> str {
+        ret parse_non_empty(prompt.ask(), fallback)
+    }
+
+    pub fn prompt_identifier(self, prompt: Prompt, fallback: str) -> str {
+        ret parse_identifier(prompt.ask(), fallback)
+    }
+
+    pub fn prompt_usize(self, prompt: Prompt, fallback: usize) -> usize {
+        ret parse_usize_or(prompt.ask(), fallback)
+    }
+
+    pub fn prompt_non_empty_retry(self, prompt: Prompt, fallback: str, max_attempts: usize) -> str {
+        ret ask_non_empty(prompt, fallback, max_attempts)
+    }
+
+    pub fn prompt_non_empty_retry_with_policy(self, prompt: Prompt, fallback: str, policy: RetryPolicy) -> str {
+        ret ask_non_empty_with_policy(prompt, fallback, policy)
+    }
+
+    pub fn prompt_non_empty_result(self, prompt: Prompt, max_attempts: usize) -> Result[str, str] {
+        ret ask_non_empty_result(prompt, max_attempts)
+    }
+
+    pub fn prompt_identifier_retry(self, prompt: Prompt, fallback: str, max_attempts: usize) -> str {
+        ret ask_identifier(prompt, fallback, max_attempts)
+    }
+
+    pub fn prompt_identifier_retry_with_policy(self, prompt: Prompt, fallback: str, policy: RetryPolicy) -> str {
+        ret ask_identifier_with_policy(prompt, fallback, policy)
+    }
+
+    pub fn prompt_identifier_result(self, prompt: Prompt, max_attempts: usize) -> Result[str, str] {
+        ret ask_identifier_result(prompt, max_attempts)
+    }
+
+    pub fn prompt_usize_retry(self, prompt: Prompt, fallback: usize, max_attempts: usize) -> usize {
+        ret ask_usize(prompt, fallback, max_attempts)
+    }
+
+    pub fn prompt_usize_retry_with_policy(self, prompt: Prompt, fallback: usize, policy: RetryPolicy) -> usize {
+        ret ask_usize_with_policy(prompt, fallback, policy)
+    }
+
+    pub fn prompt_usize_result(self, prompt: Prompt, max_attempts: usize) -> Result[usize, str] {
+        ret ask_usize_result(prompt, max_attempts)
+    }
+
+    pub fn confirm(self, message: str, default_yes: bool) -> bool {
+        ret confirm(message, default_yes)
+    }
+}

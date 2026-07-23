@@ -1,0 +1,127 @@
+import core::option::Option
+import core::result::Result
+import core::testing::assert
+import core::vec::Vec
+import json::{Json, ParseError, parse}
+
+pub fn render_json(value: Json) -> str {
+    ret render_json_level(value, 0_usize)
+}
+
+pub fn render_json_source(source: str) -> Result[str, str] {
+    match parse(source) {
+        Result[Json, ParseError]::Ok(value) => {
+            ret Result[str, str]::Ok(render_json(value))
+        }
+        Result[Json, ParseError]::Err(err) => {
+            ret Result[str, str]::Err(err.message())
+        }
+    }
+}
+
+fn render_json_level(value: Json, indent: usize) -> str {
+    match value {
+        Json::Null => { ret "null" }
+        Json::Bool(flag) => {
+            if flag { ret "true" }
+            ret "false"
+        }
+        Json::Number(text) => { ret text }
+        Json::String(text) => { ret "\"" + text + "\"" }
+        Json::Array(values) => { ret render_array(values, indent) }
+        Json::Object(fields) => { ret render_object(fields, indent) }
+    }
+}
+
+fn render_array(values: Vec[Json], indent: usize) -> str {
+    if values.len() == 0_usize {
+        ret "[]"
+    }
+    let mut out = "[\n"
+    let mut index = 0_usize
+    loop {
+        match values.get(index) {
+            Option[Json]::Some(value) => {
+                out += spaces(indent + 2_usize) + render_json_level(value, indent + 2_usize)
+                index = index + 1_usize
+                if index < values.len() {
+                    out += ","
+                }
+                out += "\n"
+            }
+            Option[Json]::None => {
+                break
+            }
+        }
+    }
+    out += spaces(indent) + "]"
+    ret out
+}
+
+fn render_object(fields: Vec[(str, Json)], indent: usize) -> str {
+    if fields.len() == 0_usize {
+        ret "{}"
+    }
+    let mut out = "{\n"
+    let mut index = 0_usize
+    loop {
+        match fields.get(index) {
+            Option[(str, Json)]::Some(field) => {
+                out += spaces(indent + 2_usize) + "\"" + field.0 + "\": " + render_json_level(field.1, indent + 2_usize)
+                index = index + 1_usize
+                if index < fields.len() {
+                    out += ","
+                }
+                out += "\n"
+            }
+            Option[(str, Json)]::None => {
+                break
+            }
+        }
+    }
+    out += spaces(indent) + "}"
+    ret out
+}
+
+fn spaces(count: usize) -> str {
+    let mut out = ""
+    let mut index = 0_usize
+    while index < count {
+        out += " "
+        index = index + 1_usize
+    }
+    ret out
+}
+
+#attr(test)
+fn json_render_formats_objects_and_arrays() -> bool {
+    match render_json_source("{\"name\":\"encore\",\"items\":[1,true]}") {
+        Result[str, str]::Ok(rendered) => {
+            ret assert(str_contains(rendered, "\"name\": \"encore\""))
+                && assert(str_contains(rendered, "\"items\": ["))
+                && assert(str_contains(rendered, "true"))
+        }
+        Result[str, str]::Err(err) => {
+            ret false
+        }
+    }
+}
+
+fn str_contains(value: str, needle: str) -> bool {
+    let needle_len = needle.char_len()
+    let value_len = value.char_len()
+    if needle_len == 0_usize {
+        ret true
+    }
+    if needle_len > value_len {
+        ret false
+    }
+    let mut start = 0_usize
+    while start + needle_len <= value_len {
+        if value.slice(start, needle_len) == needle {
+            ret true
+        }
+        start = start + 1_usize
+    }
+    ret false
+}

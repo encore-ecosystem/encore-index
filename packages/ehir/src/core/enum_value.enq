@@ -1,0 +1,17 @@
+import core::option::Option
+import std::vec::Vec
+
+import refrain::core::types::Type
+import refrain::core::variable::Variable
+
+
+pub struct EnumValue {
+    name: str
+    generics: Vec[Type]
+    variant: str
+    payload: Option[Variable]
+}
+
+pub fn enum_value(name: str, generics: Vec[Type], variant: str, payload: Option[Variable]) -> EnumValue {
+    ret EnumValue{name, generics, variant, payload}
+}

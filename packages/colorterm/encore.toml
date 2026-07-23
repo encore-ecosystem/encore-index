@@ -1,0 +1,7 @@
+[project]
+name = "colorterm"
+version = "1.0.0"
+description = "ANSI color and style output helpers for Encore"
+readme = "README.md"
+licence = "MIT"
+dependencies = []

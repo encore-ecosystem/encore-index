@@ -1,0 +1,193 @@
+import core::option::Option
+import std::string::String
+import std::vec::Vec
+
+import core::fmt::Debug
+import core::panic::panic
+
+import refrain::core::Block
+import refrain::core::Directive
+import refrain::core::FnDirective
+import refrain::core::Instruction
+import refrain::core::Module
+import refrain::core::Parameter
+import refrain::core::Terminator
+import refrain::core::Type
+import refrain::core::Variable
+import refrain::core::block
+import refrain::core::fn_item
+import refrain::core::extern_fn_item
+import refrain::core::make_module
+import refrain::core::var
+
+
+pub struct ModuleBuilder {
+    name: str
+    directives: Vec[Directive]
+}
+
+pub struct FunctionBuilder {
+    name: str
+    generics: Vec[Type]
+    params: Vec[Parameter]
+    ret_type: Type
+    blocks: Vec[Block]
+    current_block_name: String
+    current_instructions: Vec[Instruction]
+    current_terminator: Option[Terminator]
+    has_open_block: bool
+    next_temp_index: usize
+    is_extern: bool
+}
+
+impl for ModuleBuilder {
+    pub fn new(name: str) -> ModuleBuilder {
+        ret ModuleBuilder{name, Vec[Directive]::new()}
+    }
+
+    pub fn push(mut self, directive: Directive) -> () {
+        self.directives.push(directive)
+        ret ()
+    }
+
+    pub fn push_function(mut self, function: FnDirective) -> () {
+        self.push(Directive::Function(function))
+        ret ()
+    }
+
+    pub fn finish(self: ModuleBuilder) -> Module {
+        ret make_module(self.name, self.directives)
+    }
+}
+
+impl for FunctionBuilder {
+    pub fn new(name: str, generics: Vec[Type], params: Vec[Parameter], ret_type: Type) -> FunctionBuilder {
+        ret FunctionBuilder{
+            name,
+            generics,
+            params,
+            ret_type,
+            Vec[Block]::new(),
+            String::new(),
+            Vec[Instruction]::new(),
+            Option[Terminator]::None,
+            false,
+            0_usize,
+            false
+        }
+    }
+
+    pub fn new_extern(name: str, generics: Vec[Type], params: Vec[Parameter], ret_type: Type) -> FunctionBuilder {
+        ret FunctionBuilder{
+            name,
+            generics,
+            params,
+            ret_type,
+            Vec[Block]::new(),
+            String::new(),
+            Vec[Instruction]::new(),
+            Option[Terminator]::None,
+            false,
+            0_usize,
+            true
+        }
+    }
+
+    fn ensure_active_block(self) -> () {
+        if !self.has_open_block {
+            panic("FunctionBuilder has no active block")
+        }
+        ret ()
+    }
+
+    fn flush_current_block(mut self) -> () {
+        if !self.has_open_block {
+            ret ()
+        }
+
+        match self.current_terminator {
+            Some(term) => {
+                let block_name: str = self.current_block_name.as_str()
+                let next_block: Block = block(block_name, self.current_instructions, term)
+                self.blocks.push(next_block)
+            }
+            None => {
+                panic("FunctionBuilder block must be terminated before leaving it")
+            }
+        }
+
+        self.current_block_name = String::new()
+        self.current_instructions = Vec[Instruction]::new()
+        self.current_terminator = Option[Terminator]::None
+        self.has_open_block = false
+        ret ()
+    }
+
+    pub fn start_block(mut self, name: str) -> () {
+        if self.is_extern {
+            panic("Extern function can not own blocks")
+        }
+
+        if self.has_open_block {
+            self.flush_current_block()
+        }
+
+        self.current_block_name = String::from_str(name)
+        self.current_instructions = Vec[Instruction]::new()
+        self.current_terminator = Option[Terminator]::None
+        self.has_open_block = true
+        ret ()
+    }
+
+    pub fn emit(mut self, instruction: Instruction) -> () {
+        self.ensure_active_block()
+        self.current_instructions.push(instruction)
+        ret ()
+    }
+
+    pub fn terminate(mut self, terminator: Terminator) -> () {
+        self.ensure_active_block()
+
+        match self.current_terminator {
+            Some(_) => {
+                panic("FunctionBuilder block is already terminated")
+            }
+            None => {
+                self.current_terminator = Option[Terminator]::Some(terminator)
+            }
+        }
+
+        ret ()
+    }
+
+    pub fn fresh_temp(mut self, typ: Type) -> Variable {
+        let suffix: str = Debug::fmt(self.next_temp_index)
+        self.next_temp_index = self.next_temp_index + 1_usize
+
+        let mut name: str = "_"
+        name = name + suffix
+        ret var(name, typ)
+    }
+
+    pub fn fresh_named(mut self, prefix: str, typ: Type) -> Variable {
+        let suffix: str = Debug::fmt(self.next_temp_index)
+        self.next_temp_index = self.next_temp_index + 1_usize
+
+        let mut name: str = prefix
+        name = name + "_"
+        name = name + suffix
+        ret var(name, typ)
+    }
+
+    pub fn finish(mut self) -> FnDirective {
+        if self.has_open_block {
+            self.flush_current_block()
+        }
+
+        if self.is_extern {
+            ret extern_fn_item(self.name, self.generics, self.params, self.ret_type)
+        }
+
+        ret fn_item(self.name, self.generics, self.params, self.ret_type, self.blocks)
+    }
+}

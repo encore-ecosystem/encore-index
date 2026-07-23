@@ -1,0 +1,286 @@
+//! Provides owned string utilities.
+
+import core::option::Option
+import core::fmt::Debug
+
+import refrain::vec::Vec
+
+/// Stores the state of a `String` value.
+pub struct String {
+    value: str
+}
+
+impl for String {
+    /// Creates a new value with its default initial state.
+    pub fn new() -> String {
+        ret String{""}
+    }
+
+    /// Creates a value from str.
+    pub fn from_str(s: str) -> String {
+        ret String{s}
+    }
+
+    /// Returns this value as str.
+    pub fn as_str(self: String) -> str {
+        ret self.value
+    }
+
+    /// Returns the len of this value.
+    pub fn len(self: String) -> usize {
+        ret self.value.char_len()
+    }
+
+    /// Returns whether empty.
+    pub fn is_empty(self: String) -> bool {
+        ret self.len() == 0_usize
+    }
+
+    /// Performs the `byte_at` operation.
+    pub fn byte_at(self: String, index: usize) -> Option[u8] {
+        ret self.value.get_byte_at(index)
+    }
+
+    /// Performs the `char_at` operation.
+    pub fn char_at(self: String, index: usize) -> Option[str] {
+        ret self.value.get(index)
+    }
+
+    /// Returns the byte len of this value.
+    pub fn byte_len(self: String) -> usize {
+        ret self.value.byte_len()
+    }
+
+    /// Performs the `concat` operation.
+    pub fn concat(self: String, rhs: str) -> String {
+        ret String::from_str(self.value + rhs)
+    }
+
+    /// Performs the `push_str` operation.
+    pub fn push_str(self: String, rhs: str) -> String {
+        ret self.concat(rhs)
+    }
+
+    /// Performs the `slice` operation.
+    pub fn slice(self: String, start: usize, slice_len: usize) -> String {
+        ret String::from_str(self.value.slice(start, slice_len))
+    }
+
+    /// Performs the `slice_bytes` operation.
+    pub fn slice_bytes(self: String, start: usize, slice_len: usize) -> String {
+        ret String::from_str(self.value.slice_bytes(start, slice_len))
+    }
+
+    /// Performs the `starts_with` operation.
+    pub fn starts_with(self: String, prefix: str) -> bool {
+        ret str_starts_at(self.value, prefix, 0_usize)
+    }
+
+    /// Performs the `ends_with` operation.
+    pub fn ends_with(self: String, suffix: str) -> bool {
+        if suffix.len() > self.len() {
+            ret false
+        }
+        ret str_starts_at(self.value, suffix, self.len() - suffix.len())
+    }
+
+    /// Returns whether contains.
+    pub fn contains(self: String, needle: str) -> bool {
+        if needle.len() == 0_usize {
+            ret true
+        }
+        if needle.len() > self.len() {
+            ret false
+        }
+
+        let limit = self.len() - needle.len()
+        let mut index = 0_usize
+        loop {
+            if str_starts_at(self.value, needle, index) {
+                ret true
+            }
+            if index >= limit {
+                break
+            }
+            index = index + 1_usize
+        }
+        ret false
+    }
+
+    /// Performs the `trim_start` operation.
+    pub fn trim_start(self: String) -> String {
+        let start = trim_start_index(self.value)
+        ret String::from_str(self.value.slice(start, self.len() - start))
+    }
+
+    /// Performs the `trim_end` operation.
+    pub fn trim_end(self: String) -> String {
+        let end = trim_end_index(self.value)
+        ret String::from_str(self.value.slice(0_usize, end))
+    }
+
+    /// Performs the `trim` operation.
+    pub fn trim(self: String) -> String {
+        ret self.trim_start().trim_end()
+    }
+
+    /// Performs the `split_char` operation.
+    pub fn split_char(self: String, char: str) -> Vec[String] {
+        let mut parts = Vec[String]::new()
+
+        let mut curr_part = ""
+        let mut i = 0_usize
+        while i < self.len() {
+            match self.char_at(i) {
+                Option[str]::Some(c) => {
+                    if c == char {
+                        parts.push(String::from_str(curr_part))
+                        curr_part = ""
+                    }
+                    else {
+                        curr_part = curr_part + c
+                    }
+                }
+                Option[str]::None => {
+                    break
+                }
+            }
+            i = i + 1_usize
+        }
+        parts.push(String::from_str(curr_part))
+        ret parts
+    }
+
+    /// Performs the `split_whitespace` operation.
+    pub fn split_whitespace(self: String) -> Vec[String] {
+        let mut parts = Vec[String]::new()
+        let mut start = 0_usize
+        let mut index = 0_usize
+        let mut in_part = false
+
+        loop {
+            match self.char_at(index) {
+                Option[str]::Some(ch) => {
+                    if is_ascii_whitespace(ch) {
+                        if in_part {
+                            parts.push(self.slice(start, index - start))
+                            in_part = false
+                        }
+                    }
+                    else {
+                        if !in_part {
+                            start = index
+                            in_part = true
+                        }
+                    }
+                    index = index + 1_usize
+                }
+                Option[str]::None => {
+                    break
+                }
+            }
+        }
+
+        if in_part {
+            parts.push(self.slice(start, self.len() - start))
+        }
+        ret parts
+    }
+}
+
+impl Debug for String {
+    /// Formats the value as text.
+    pub fn fmt(self: String) -> str {
+        ret self.value
+    }
+}
+
+fn str_starts_at(value: str, needle: str, offset: usize) -> bool {
+    let needle_len = needle.char_len()
+    let value_len = value.char_len()
+    if needle_len == 0_usize {
+        ret true
+    }
+    if offset + needle_len > value_len {
+        ret false
+    }
+
+    let mut index = 0_usize
+    while index < needle_len {
+        match value.get(offset + index) {
+            Option[str]::Some(left) => {
+                match needle.get(index) {
+                    Option[str]::Some(right) => {
+                        if left != right {
+                            ret false
+                        }
+                    }
+                    Option[str]::None => {
+                        ret false
+                    }
+                }
+            }
+            Option[str]::None => {
+                ret false
+            }
+        }
+        index = index + 1_usize
+    }
+    ret true
+}
+
+fn trim_start_index(value: str) -> usize {
+    let mut index = 0_usize
+    loop {
+        match value.get(index) {
+            Option[str]::Some(ch) => {
+                if !is_ascii_whitespace(ch) {
+                    ret index
+                }
+                index = index + 1_usize
+            }
+            Option[str]::None => {
+                ret value.char_len()
+            }
+        }
+    }
+    ret index
+}
+
+fn trim_end_index(value: str) -> usize {
+    let mut end = value.char_len()
+    loop {
+        if end == 0_usize {
+            ret 0_usize
+        }
+
+        match value.get(end - 1_usize) {
+            Option[str]::Some(ch) => {
+                if !is_ascii_whitespace(ch) {
+                    ret end
+                }
+                end = end - 1_usize
+            }
+            Option[str]::None => {
+                ret end
+            }
+        }
+    }
+    ret end
+}
+
+fn is_ascii_whitespace(ch: str) -> bool {
+    if ch == " " {
+        ret true
+    }
+    if ch == "\n" {
+        ret true
+    }
+    if ch == "\t" {
+        ret true
+    }
+    if ch == "\r" {
+        ret true
+    }
+    ret false
+}

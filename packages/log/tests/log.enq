@@ -1,0 +1,60 @@
+import core::os::{file_exists, read_file, remove_file, write_file}
+import core::testing::*
+import log::{Formatter, LogLevel, Logger, Writable, WriterSink}
+
+struct CaptureFile {
+    path: str
+}
+
+impl Writable for CaptureFile {
+    fn write(self: CaptureFile, value: str) -> i32 {
+        let mut current = ""
+        if file_exists(self.path) {
+            current = read_file(self.path)
+        }
+        ret write_file(self.path, current + value)
+    }
+}
+
+fn cleanup(path: str) -> () {
+    if file_exists(path) {
+        remove_file(path)
+    }
+    ret ()
+}
+
+fn main() -> u32 {
+    let file_path = "target/log_file_sink.txt"
+    let writer_path = "target/log_writer_sink.txt"
+    cleanup(file_path)
+    cleanup(writer_path)
+
+    let mut file_logger = Logger::new("file")
+    file_logger.add_file_sink(file_path)
+    file_logger.info("first")
+    file_logger.error("second")
+    let file_text = read_file(file_path)
+    if !assert(file_text.contains("[INFO] [file] first")) {
+        ret 1_u32
+    }
+    if !assert(file_text.contains("[ERROR] [file] second")) {
+        ret 1_u32
+    }
+
+    let mut writer_logger = Logger::new("writer")
+    writer_logger.add_writer_sink(CaptureFile{writer_path} as dyn Writable)
+    writer_logger.warn("custom sink")
+    let writer_text = read_file(writer_path)
+    if !assert(writer_text.contains("[WARN] [writer] custom sink")) {
+        ret 1_u32
+    }
+
+    let formatted = Formatter::colored().with_newline(false).format(LogLevel::Info, "fmt", "message")
+    if !assert(formatted.contains("[fmt] message")) {
+        ret 1_u32
+    }
+
+    cleanup(file_path)
+    cleanup(writer_path)
+    ret 0_u32
+}

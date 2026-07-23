@@ -1,0 +1,548 @@
+//! Defines Encore operator traits and primitive implementations.
+
+import core::option::Option
+pub import core::iter::*
+
+/// Defines the behavior required by `Add` implementations.
+pub trait Add[Rhs] {
+    fn op(self: Self, other: Rhs) -> Self
+}
+
+/// Defines the behavior required by `Sub` implementations.
+pub trait Sub[Rhs] {
+    fn op(self: Self, other: Rhs) -> Self
+}
+
+/// Defines the behavior required by `Mul` implementations.
+pub trait Mul[Rhs] {
+    fn op(self: Self, other: Rhs) -> Self
+}
+
+/// Defines the behavior required by `Div` implementations.
+pub trait Div[Rhs] {
+    fn op(self: Self, other: Rhs) -> Self
+}
+
+/// Defines the behavior required by `Rem` implementations.
+pub trait Rem[Rhs] {
+    fn op(self: Self, other: Rhs) -> Self
+}
+
+/// Defines the behavior required by `Pow` implementations.
+pub trait Pow[Rhs] {
+    fn op(self: Self, other: Rhs) -> Self
+}
+
+/// Defines the behavior required by `BitAnd` implementations.
+pub trait BitAnd[Rhs] {
+    fn op(self: Self, other: Rhs) -> Self
+}
+
+/// Defines the behavior required by `BitOr` implementations.
+pub trait BitOr[Rhs] {
+    fn op(self: Self, other: Rhs) -> Self
+}
+
+/// Defines the behavior required by `BitXor` implementations.
+pub trait BitXor[Rhs] {
+    fn op(self: Self, other: Rhs) -> Self
+}
+
+/// Defines the behavior required by `Shl` implementations.
+pub trait Shl[Rhs] {
+    fn op(self: Self, other: Rhs) -> Self
+}
+
+/// Defines the behavior required by `Shr` implementations.
+pub trait Shr[Rhs] {
+    fn op(self: Self, other: Rhs) -> Self
+}
+
+/// Defines the behavior required by `Eq` implementations.
+pub trait Eq[Rhs] {
+    fn op(self: Self, other: Rhs) -> bool
+}
+
+/// Defines the behavior required by `Ne` implementations.
+pub trait Ne[Rhs] {
+    fn op(self: Self, other: Rhs) -> bool
+}
+
+/// Defines the behavior required by `Lt` implementations.
+pub trait Lt[Rhs] {
+    fn op(self: Self, other: Rhs) -> bool
+}
+
+/// Defines the behavior required by `Le` implementations.
+pub trait Le[Rhs] {
+    fn op(self: Self, other: Rhs) -> bool
+}
+
+/// Defines the behavior required by `Gt` implementations.
+pub trait Gt[Rhs] {
+    fn op(self: Self, other: Rhs) -> bool
+}
+
+/// Defines the behavior required by `Ge` implementations.
+pub trait Ge[Rhs] {
+    fn op(self: Self, other: Rhs) -> bool
+}
+
+/// Defines the behavior required by `ContextManager` implementations.
+pub trait ContextManager {
+    fn with_enter(self: Self) -> Self
+    fn with_exit(self: Self) -> bool
+}
+
+extern fn encore_str_len(value: str) -> usize
+extern fn encore_str_byte_at(value: str, index: usize) -> u8
+extern fn encore_str_concat(lhs: str, rhs: str) -> str
+extern fn encore_str_slice(value: str, start: usize, slice_len: usize) -> str
+extern fn encore_str_char_len(value: str) -> usize
+extern fn encore_str_char_at(value: str, index: usize) -> str
+extern fn encore_str_slice_chars(value: str, start: usize, char_len: usize) -> str
+
+impl Add[str] for str {
+    fn op(self: str, other: str) -> str {
+        unsafe {
+            ret encore_str_concat(self, other)
+        }
+    }
+}
+
+impl for str {
+    /// Returns the len of this value.
+    pub fn len(self: str) -> usize {
+        // Raw string length in bytes.
+        unsafe {
+            ret encore_str_len(self)
+        }
+    }
+
+    /// Returns the byte len of this value.
+    pub fn byte_len(self: str) -> usize {
+        ret self.len()
+    }
+
+    /// Returns the char len of this value.
+    pub fn char_len(self: str) -> usize {
+        unsafe {
+            ret encore_str_char_len(self)
+        }
+    }
+
+    /// Returns get when it is available.
+    pub fn get(self: str, n: usize) -> Option[str] {
+        if n >= self.char_len() {
+            ret Option[str]::None
+        }
+        unsafe {
+            ret Option[str]::Some(encore_str_char_at(self, n))
+        }
+    }
+
+    /// Returns get byte when it is available.
+    pub fn get_byte(self: str, n: usize) -> Option[u8] {
+        if n >= self.len() {
+            ret Option[u8]::None
+        }
+        unsafe {
+            ret Option[u8]::Some(encore_str_byte_at(self, n))
+        }
+    }
+
+    /// Returns get byte at when it is available.
+    pub fn get_byte_at(self: str, n: usize) -> Option[u8] {
+        ret self.get_byte(n)
+    }
+
+    /// Performs the `byte_at` operation.
+    pub fn byte_at(self: str, n: usize) -> u8 {
+        match self.get_byte(n) {
+            Option[u8]::Some(b) => {
+                ret b
+            }
+            Option[u8]::None => {
+                ret 0_u8
+            }
+        }
+    }
+
+    /// Performs the `slice` operation.
+    pub fn slice(self: str, start: usize, slice_len: usize) -> str {
+        // Character-based slice.
+        unsafe {
+            ret encore_str_slice_chars(self, start, slice_len)
+        }
+    }
+
+    /// Performs the `slice_bytes` operation.
+    pub fn slice_bytes(self: str, start: usize, slice_len: usize) -> str {
+        // Byte-based slice for raw-string use-cases.
+        unsafe {
+            ret encore_str_slice(self, start, slice_len)
+        }
+    }
+
+    /// Performs the `slice_chars` operation.
+    pub fn slice_chars(self: str, start: usize, slice_len: usize) -> str {
+        ret self.slice(start, slice_len)
+    }
+
+    /// Performs the `concat` operation.
+    pub fn concat(self: str, rhs: str) -> str {
+        ret self + rhs
+    }
+
+    /// Returns whether empty.
+    pub fn is_empty(self: str) -> bool {
+        ret self.len() == 0_usize
+    }
+
+    /// Returns whether contains.
+    pub fn contains(self: str, needle: str) -> bool {
+        let needle_len = needle.char_len()
+        if needle_len == 0_usize {
+            ret true
+        }
+
+        let self_len = self.char_len()
+        if needle_len > self_len {
+            ret false
+        }
+
+        let limit = self_len - needle_len
+        let mut index = 0_usize
+        loop {
+            if self.slice(index, needle_len) == needle {
+                ret true
+            }
+            if index >= limit {
+                break
+            }
+            index = index + 1_usize
+        }
+        ret false
+    }
+}
+
+impl Eq[str] for str {
+    /// Applies this operator implementation.
+    pub fn op(self: str, other: str) -> bool {
+        let lhs_len = self.len()
+        if lhs_len != other.len() {
+            ret false
+        }
+        let mut i = 0_usize
+        while i < lhs_len {
+            match self.get_byte(i) {
+                Option[u8]::Some(lhs_b) => {
+                    match other.get_byte(i) {
+                        Option[u8]::Some(rhs_b) => {
+                            if lhs_b != rhs_b {
+                                ret false
+                            }
+                        }
+                        Option[u8]::None => {
+                            ret false
+                        }
+                    }
+                }
+                Option[u8]::None => {
+                    ret false
+                }
+            }
+            i = i + 1_usize
+        }
+        ret true
+    }
+}
+
+impl Ne[str] for str {
+    /// Applies this operator implementation.
+    pub fn op(self: str, other: str) -> bool {
+        ret !(self == other)
+    }
+}
+
+impl Eq[bool] for bool {
+    /// Applies this operator implementation.
+    pub fn op(self: bool, other: bool) -> bool {
+        ehir {
+            result: bool = ieq self: bool, other: bool
+        }
+        ret result
+    }
+}
+
+impl Ne[bool] for bool {
+    /// Applies this operator implementation.
+    pub fn op(self: bool, other: bool) -> bool {
+        ehir {
+            result: bool = neq self: bool, other: bool
+        }
+        ret result
+    }
+}
+
+impl Add[u8] for u8 { pub fn op(self: u8, other: u8) -> u8 { ehir { result: u8 = add self: u8, other: u8 } ret result } }
+impl Sub[u8] for u8 { pub fn op(self: u8, other: u8) -> u8 { ehir { result: u8 = sub self: u8, other: u8 } ret result } }
+impl Mul[u8] for u8 { pub fn op(self: u8, other: u8) -> u8 { ehir { result: u8 = mul self: u8, other: u8 } ret result } }
+impl Div[u8] for u8 { pub fn op(self: u8, other: u8) -> u8 { ehir { result: u8 = div self: u8, other: u8 } ret result } }
+impl Rem[u8] for u8 { pub fn op(self: u8, other: u8) -> u8 { ehir { result: u8 = mod self: u8, other: u8 } ret result } }
+impl Pow[u8] for u8 { pub fn op(self: u8, other: u8) -> u8 { let mut result = 1_u8 let mut i = 0_u8 while i < other { result = result * self i = i + 1_u8 } ret result } }
+
+impl Add[u16] for u16 { pub fn op(self: u16, other: u16) -> u16 { ehir { result: u16 = add self: u16, other: u16 } ret result } }
+impl Sub[u16] for u16 { pub fn op(self: u16, other: u16) -> u16 { ehir { result: u16 = sub self: u16, other: u16 } ret result } }
+impl Mul[u16] for u16 { pub fn op(self: u16, other: u16) -> u16 { ehir { result: u16 = mul self: u16, other: u16 } ret result } }
+impl Div[u16] for u16 { pub fn op(self: u16, other: u16) -> u16 { ehir { result: u16 = div self: u16, other: u16 } ret result } }
+impl Rem[u16] for u16 { pub fn op(self: u16, other: u16) -> u16 { ehir { result: u16 = mod self: u16, other: u16 } ret result } }
+impl Pow[u16] for u16 { pub fn op(self: u16, other: u16) -> u16 { let mut result = 1_u16 let mut i = 0_u16 while i < other { result = result * self i = i + 1_u16 } ret result } }
+
+impl Add[u32] for u32 { pub fn op(self: u32, other: u32) -> u32 { ehir { result: u32 = add self: u32, other: u32 } ret result } }
+impl Sub[u32] for u32 { pub fn op(self: u32, other: u32) -> u32 { ehir { result: u32 = sub self: u32, other: u32 } ret result } }
+impl Mul[u32] for u32 { pub fn op(self: u32, other: u32) -> u32 { ehir { result: u32 = mul self: u32, other: u32 } ret result } }
+impl Div[u32] for u32 { pub fn op(self: u32, other: u32) -> u32 { ehir { result: u32 = div self: u32, other: u32 } ret result } }
+impl Rem[u32] for u32 { pub fn op(self: u32, other: u32) -> u32 { ehir { result: u32 = mod self: u32, other: u32 } ret result } }
+impl Pow[u32] for u32 { pub fn op(self: u32, other: u32) -> u32 { let mut result = 1_u32 let mut i = 0_u32 while i < other { result = result * self i = i + 1_u32 } ret result } }
+
+impl Add[u64] for u64 { pub fn op(self: u64, other: u64) -> u64 { ehir { result: u64 = add self: u64, other: u64 } ret result } }
+impl Sub[u64] for u64 { pub fn op(self: u64, other: u64) -> u64 { ehir { result: u64 = sub self: u64, other: u64 } ret result } }
+impl Mul[u64] for u64 { pub fn op(self: u64, other: u64) -> u64 { ehir { result: u64 = mul self: u64, other: u64 } ret result } }
+impl Div[u64] for u64 { pub fn op(self: u64, other: u64) -> u64 { ehir { result: u64 = div self: u64, other: u64 } ret result } }
+impl Rem[u64] for u64 { pub fn op(self: u64, other: u64) -> u64 { ehir { result: u64 = mod self: u64, other: u64 } ret result } }
+impl Pow[u64] for u64 { pub fn op(self: u64, other: u64) -> u64 { let mut result = 1_u64 let mut i = 0_u64 while i < other { result = result * self i = i + 1_u64 } ret result } }
+
+impl Add[usize] for usize { pub fn op(self: usize, other: usize) -> usize { ehir { result: usize = add self: usize, other: usize } ret result } }
+impl Sub[usize] for usize { pub fn op(self: usize, other: usize) -> usize { ehir { result: usize = sub self: usize, other: usize } ret result } }
+impl Mul[usize] for usize { pub fn op(self: usize, other: usize) -> usize { ehir { result: usize = mul self: usize, other: usize } ret result } }
+impl Div[usize] for usize { pub fn op(self: usize, other: usize) -> usize { ehir { result: usize = div self: usize, other: usize } ret result } }
+impl Rem[usize] for usize { pub fn op(self: usize, other: usize) -> usize { ehir { result: usize = mod self: usize, other: usize } ret result } }
+impl Pow[usize] for usize { pub fn op(self: usize, other: usize) -> usize { let mut result = 1_usize let mut i = 0_usize while i < other { result = result * self i = i + 1_usize } ret result } }
+
+impl Add[i8] for i8 { pub fn op(self: i8, other: i8) -> i8 { ehir { result: i8 = add self: i8, other: i8 } ret result } }
+impl Sub[i8] for i8 { pub fn op(self: i8, other: i8) -> i8 { ehir { result: i8 = sub self: i8, other: i8 } ret result } }
+impl Mul[i8] for i8 { pub fn op(self: i8, other: i8) -> i8 { ehir { result: i8 = mul self: i8, other: i8 } ret result } }
+impl Div[i8] for i8 { pub fn op(self: i8, other: i8) -> i8 { ehir { result: i8 = div self: i8, other: i8 } ret result } }
+impl Rem[i8] for i8 { pub fn op(self: i8, other: i8) -> i8 { ehir { result: i8 = mod self: i8, other: i8 } ret result } }
+impl Pow[i8] for i8 { pub fn op(self: i8, other: i8) -> i8 { let mut result = 1_i8 let mut i = 0_i8 while i < other { result = result * self i = i + 1_i8 } ret result } }
+
+impl Add[i16] for i16 { pub fn op(self: i16, other: i16) -> i16 { ehir { result: i16 = add self: i16, other: i16 } ret result } }
+impl Sub[i16] for i16 { pub fn op(self: i16, other: i16) -> i16 { ehir { result: i16 = sub self: i16, other: i16 } ret result } }
+impl Mul[i16] for i16 { pub fn op(self: i16, other: i16) -> i16 { ehir { result: i16 = mul self: i16, other: i16 } ret result } }
+impl Div[i16] for i16 { pub fn op(self: i16, other: i16) -> i16 { ehir { result: i16 = div self: i16, other: i16 } ret result } }
+impl Rem[i16] for i16 { pub fn op(self: i16, other: i16) -> i16 { ehir { result: i16 = mod self: i16, other: i16 } ret result } }
+impl Pow[i16] for i16 { pub fn op(self: i16, other: i16) -> i16 { let mut result = 1_i16 let mut i = 0_i16 while i < other { result = result * self i = i + 1_i16 } ret result } }
+
+impl Add[i32] for i32 { pub fn op(self: i32, other: i32) -> i32 { ehir { result: i32 = add self: i32, other: i32 } ret result } }
+impl Sub[i32] for i32 { pub fn op(self: i32, other: i32) -> i32 { ehir { result: i32 = sub self: i32, other: i32 } ret result } }
+impl Mul[i32] for i32 { pub fn op(self: i32, other: i32) -> i32 { ehir { result: i32 = mul self: i32, other: i32 } ret result } }
+impl Div[i32] for i32 { pub fn op(self: i32, other: i32) -> i32 { ehir { result: i32 = div self: i32, other: i32 } ret result } }
+impl Rem[i32] for i32 { pub fn op(self: i32, other: i32) -> i32 { ehir { result: i32 = mod self: i32, other: i32 } ret result } }
+impl Pow[i32] for i32 { pub fn op(self: i32, other: i32) -> i32 { let mut result = 1_i32 let mut i = 0_i32 while i < other { result = result * self i = i + 1_i32 } ret result } }
+
+impl Add[i64] for i64 { pub fn op(self: i64, other: i64) -> i64 { ehir { result: i64 = add self: i64, other: i64 } ret result } }
+impl Sub[i64] for i64 { pub fn op(self: i64, other: i64) -> i64 { ehir { result: i64 = sub self: i64, other: i64 } ret result } }
+impl Mul[i64] for i64 { pub fn op(self: i64, other: i64) -> i64 { ehir { result: i64 = mul self: i64, other: i64 } ret result } }
+impl Div[i64] for i64 { pub fn op(self: i64, other: i64) -> i64 { ehir { result: i64 = div self: i64, other: i64 } ret result } }
+impl Rem[i64] for i64 { pub fn op(self: i64, other: i64) -> i64 { ehir { result: i64 = mod self: i64, other: i64 } ret result } }
+impl Pow[i64] for i64 { pub fn op(self: i64, other: i64) -> i64 { let mut result = 1_i64 let mut i = 0_i64 while i < other { result = result * self i = i + 1_i64 } ret result } }
+
+impl Add[isize] for isize { pub fn op(self: isize, other: isize) -> isize { ehir { result: isize = add self: isize, other: isize } ret result } }
+impl Sub[isize] for isize { pub fn op(self: isize, other: isize) -> isize { ehir { result: isize = sub self: isize, other: isize } ret result } }
+impl Mul[isize] for isize { pub fn op(self: isize, other: isize) -> isize { ehir { result: isize = mul self: isize, other: isize } ret result } }
+impl Div[isize] for isize { pub fn op(self: isize, other: isize) -> isize { ehir { result: isize = div self: isize, other: isize } ret result } }
+impl Rem[isize] for isize { pub fn op(self: isize, other: isize) -> isize { ehir { result: isize = mod self: isize, other: isize } ret result } }
+impl Pow[isize] for isize { pub fn op(self: isize, other: isize) -> isize { let mut result = 1_isize let mut i = 0_isize while i < other { result = result * self i = i + 1_isize } ret result } }
+
+impl Add[f32] for f32 { pub fn op(self: f32, other: f32) -> f32 { ehir { result: f32 = add self: f32, other: f32 } ret result } }
+impl Sub[f32] for f32 { pub fn op(self: f32, other: f32) -> f32 { ehir { result: f32 = sub self: f32, other: f32 } ret result } }
+impl Mul[f32] for f32 { pub fn op(self: f32, other: f32) -> f32 { ehir { result: f32 = mul self: f32, other: f32 } ret result } }
+impl Div[f32] for f32 { pub fn op(self: f32, other: f32) -> f32 { ehir { result: f32 = div self: f32, other: f32 } ret result } }
+impl Pow[i32] for f32 {
+    /// Applies this operator implementation.
+    pub fn op(self: f32, other: i32) -> f32 {
+        let mut result = 1.0_f32
+        let mut i = 0_i32
+        let mut limit = other
+        if other < 0_i32 {
+            limit = 0_i32 - other
+        }
+        while i < limit {
+            result = result * self
+            i = i + 1_i32
+        }
+        if other < 0_i32 {
+            ret 1.0_f32 / result
+        }
+        ret result
+    }
+}
+
+impl Add[f64] for f64 { pub fn op(self: f64, other: f64) -> f64 { ehir { result: f64 = add self: f64, other: f64 } ret result } }
+impl Sub[f64] for f64 { pub fn op(self: f64, other: f64) -> f64 { ehir { result: f64 = sub self: f64, other: f64 } ret result } }
+impl Mul[f64] for f64 { pub fn op(self: f64, other: f64) -> f64 { ehir { result: f64 = mul self: f64, other: f64 } ret result } }
+impl Div[f64] for f64 { pub fn op(self: f64, other: f64) -> f64 { ehir { result: f64 = div self: f64, other: f64 } ret result } }
+impl Pow[i32] for f64 {
+    /// Applies this operator implementation.
+    pub fn op(self: f64, other: i32) -> f64 {
+        let mut result = 1.0_f64
+        let mut i = 0_i32
+        let mut limit = other
+        if other < 0_i32 {
+            limit = 0_i32 - other
+        }
+        while i < limit {
+            result = result * self
+            i = i + 1_i32
+        }
+        if other < 0_i32 {
+            ret 1.0_f64 / result
+        }
+        ret result
+    }
+}
+
+impl Shl[u8] for u8 { pub fn op(self: u8, other: u8) -> u8 { ehir { result: u8 = shl self: u8, other: u8 } ret result } }
+impl Shr[u8] for u8 { pub fn op(self: u8, other: u8) -> u8 { ehir { result: u8 = shr self: u8, other: u8 } ret result } }
+impl BitAnd[u8] for u8 { pub fn op(self: u8, other: u8) -> u8 { ehir { result: u8 = and self: u8, other: u8 } ret result } }
+impl BitOr[u8] for u8 { pub fn op(self: u8, other: u8) -> u8 { ehir { result: u8 = or self: u8, other: u8 } ret result } }
+impl BitXor[u8] for u8 { pub fn op(self: u8, other: u8) -> u8 { ehir { result: u8 = xor self: u8, other: u8 } ret result } }
+
+impl Shl[u16] for u16 { pub fn op(self: u16, other: u16) -> u16 { ehir { result: u16 = shl self: u16, other: u16 } ret result } }
+impl Shr[u16] for u16 { pub fn op(self: u16, other: u16) -> u16 { ehir { result: u16 = shr self: u16, other: u16 } ret result } }
+impl BitAnd[u16] for u16 { pub fn op(self: u16, other: u16) -> u16 { ehir { result: u16 = and self: u16, other: u16 } ret result } }
+impl BitOr[u16] for u16 { pub fn op(self: u16, other: u16) -> u16 { ehir { result: u16 = or self: u16, other: u16 } ret result } }
+impl BitXor[u16] for u16 { pub fn op(self: u16, other: u16) -> u16 { ehir { result: u16 = xor self: u16, other: u16 } ret result } }
+
+impl Shl[u32] for u32 { pub fn op(self: u32, other: u32) -> u32 { ehir { result: u32 = shl self: u32, other: u32 } ret result } }
+impl Shr[u32] for u32 { pub fn op(self: u32, other: u32) -> u32 { ehir { result: u32 = shr self: u32, other: u32 } ret result } }
+impl BitAnd[u32] for u32 { pub fn op(self: u32, other: u32) -> u32 { ehir { result: u32 = and self: u32, other: u32 } ret result } }
+impl BitOr[u32] for u32 { pub fn op(self: u32, other: u32) -> u32 { ehir { result: u32 = or self: u32, other: u32 } ret result } }
+impl BitXor[u32] for u32 { pub fn op(self: u32, other: u32) -> u32 { ehir { result: u32 = xor self: u32, other: u32 } ret result } }
+
+impl Shl[u64] for u64 { pub fn op(self: u64, other: u64) -> u64 { ehir { result: u64 = shl self: u64, other: u64 } ret result } }
+impl Shr[u64] for u64 { pub fn op(self: u64, other: u64) -> u64 { ehir { result: u64 = shr self: u64, other: u64 } ret result } }
+impl BitAnd[u64] for u64 { pub fn op(self: u64, other: u64) -> u64 { ehir { result: u64 = and self: u64, other: u64 } ret result } }
+impl BitOr[u64] for u64 { pub fn op(self: u64, other: u64) -> u64 { ehir { result: u64 = or self: u64, other: u64 } ret result } }
+impl BitXor[u64] for u64 { pub fn op(self: u64, other: u64) -> u64 { ehir { result: u64 = xor self: u64, other: u64 } ret result } }
+
+impl Shl[usize] for usize { pub fn op(self: usize, other: usize) -> usize { ehir { result: usize = shl self: usize, other: usize } ret result } }
+impl Shr[usize] for usize { pub fn op(self: usize, other: usize) -> usize { ehir { result: usize = shr self: usize, other: usize } ret result } }
+impl BitAnd[usize] for usize { pub fn op(self: usize, other: usize) -> usize { ehir { result: usize = and self: usize, other: usize } ret result } }
+impl BitOr[usize] for usize { pub fn op(self: usize, other: usize) -> usize { ehir { result: usize = or self: usize, other: usize } ret result } }
+impl BitXor[usize] for usize { pub fn op(self: usize, other: usize) -> usize { ehir { result: usize = xor self: usize, other: usize } ret result } }
+
+impl Shl[i8] for i8 { pub fn op(self: i8, other: i8) -> i8 { ehir { result: i8 = shl self: i8, other: i8 } ret result } }
+impl Shr[i8] for i8 { pub fn op(self: i8, other: i8) -> i8 { ehir { result: i8 = shr self: i8, other: i8 } ret result } }
+impl BitAnd[i8] for i8 { pub fn op(self: i8, other: i8) -> i8 { ehir { result: i8 = and self: i8, other: i8 } ret result } }
+impl BitOr[i8] for i8 { pub fn op(self: i8, other: i8) -> i8 { ehir { result: i8 = or self: i8, other: i8 } ret result } }
+impl BitXor[i8] for i8 { pub fn op(self: i8, other: i8) -> i8 { ehir { result: i8 = xor self: i8, other: i8 } ret result } }
+
+impl Shl[i16] for i16 { pub fn op(self: i16, other: i16) -> i16 { ehir { result: i16 = shl self: i16, other: i16 } ret result } }
+impl Shr[i16] for i16 { pub fn op(self: i16, other: i16) -> i16 { ehir { result: i16 = shr self: i16, other: i16 } ret result } }
+impl BitAnd[i16] for i16 { pub fn op(self: i16, other: i16) -> i16 { ehir { result: i16 = and self: i16, other: i16 } ret result } }
+impl BitOr[i16] for i16 { pub fn op(self: i16, other: i16) -> i16 { ehir { result: i16 = or self: i16, other: i16 } ret result } }
+impl BitXor[i16] for i16 { pub fn op(self: i16, other: i16) -> i16 { ehir { result: i16 = xor self: i16, other: i16 } ret result } }
+
+impl Shl[i32] for i32 { pub fn op(self: i32, other: i32) -> i32 { ehir { result: i32 = shl self: i32, other: i32 } ret result } }
+impl Shr[i32] for i32 { pub fn op(self: i32, other: i32) -> i32 { ehir { result: i32 = shr self: i32, other: i32 } ret result } }
+impl BitAnd[i32] for i32 { pub fn op(self: i32, other: i32) -> i32 { ehir { result: i32 = and self: i32, other: i32 } ret result } }
+impl BitOr[i32] for i32 { pub fn op(self: i32, other: i32) -> i32 { ehir { result: i32 = or self: i32, other: i32 } ret result } }
+impl BitXor[i32] for i32 { pub fn op(self: i32, other: i32) -> i32 { ehir { result: i32 = xor self: i32, other: i32 } ret result } }
+
+impl Shl[i64] for i64 { pub fn op(self: i64, other: i64) -> i64 { ehir { result: i64 = shl self: i64, other: i64 } ret result } }
+impl Shr[i64] for i64 { pub fn op(self: i64, other: i64) -> i64 { ehir { result: i64 = shr self: i64, other: i64 } ret result } }
+impl BitAnd[i64] for i64 { pub fn op(self: i64, other: i64) -> i64 { ehir { result: i64 = and self: i64, other: i64 } ret result } }
+impl BitOr[i64] for i64 { pub fn op(self: i64, other: i64) -> i64 { ehir { result: i64 = or self: i64, other: i64 } ret result } }
+impl BitXor[i64] for i64 { pub fn op(self: i64, other: i64) -> i64 { ehir { result: i64 = xor self: i64, other: i64 } ret result } }
+
+impl Shl[isize] for isize { pub fn op(self: isize, other: isize) -> isize { ehir { result: isize = shl self: isize, other: isize } ret result } }
+impl Shr[isize] for isize { pub fn op(self: isize, other: isize) -> isize { ehir { result: isize = shr self: isize, other: isize } ret result } }
+impl BitAnd[isize] for isize { pub fn op(self: isize, other: isize) -> isize { ehir { result: isize = and self: isize, other: isize } ret result } }
+impl BitOr[isize] for isize { pub fn op(self: isize, other: isize) -> isize { ehir { result: isize = or self: isize, other: isize } ret result } }
+impl BitXor[isize] for isize { pub fn op(self: isize, other: isize) -> isize { ehir { result: isize = xor self: isize, other: isize } ret result } }
+
+impl Eq[u8] for u8 { pub fn op(self: u8, other: u8) -> bool { ehir { result: bool = ieq self: u8, other: u8 } ret result } }
+impl Ne[u8] for u8 { pub fn op(self: u8, other: u8) -> bool { ehir { result: bool = neq self: u8, other: u8 } ret result } }
+impl Lt[u8] for u8 { pub fn op(self: u8, other: u8) -> bool { ehir { result: bool = les self: u8, other: u8 } ret result } }
+impl Le[u8] for u8 { pub fn op(self: u8, other: u8) -> bool { ehir { result: bool = leq self: u8, other: u8 } ret result } }
+impl Gt[u8] for u8 { pub fn op(self: u8, other: u8) -> bool { ehir { result: bool = grt self: u8, other: u8 } ret result } }
+impl Ge[u8] for u8 { pub fn op(self: u8, other: u8) -> bool { ehir { result: bool = geq self: u8, other: u8 } ret result } }
+
+impl Eq[u16] for u16 { pub fn op(self: u16, other: u16) -> bool { ehir { result: bool = ieq self: u16, other: u16 } ret result } }
+impl Ne[u16] for u16 { pub fn op(self: u16, other: u16) -> bool { ehir { result: bool = neq self: u16, other: u16 } ret result } }
+impl Lt[u16] for u16 { pub fn op(self: u16, other: u16) -> bool { ehir { result: bool = les self: u16, other: u16 } ret result } }
+impl Le[u16] for u16 { pub fn op(self: u16, other: u16) -> bool { ehir { result: bool = leq self: u16, other: u16 } ret result } }
+impl Gt[u16] for u16 { pub fn op(self: u16, other: u16) -> bool { ehir { result: bool = grt self: u16, other: u16 } ret result } }
+impl Ge[u16] for u16 { pub fn op(self: u16, other: u16) -> bool { ehir { result: bool = geq self: u16, other: u16 } ret result } }
+
+impl Eq[u32] for u32 { pub fn op(self: u32, other: u32) -> bool { ehir { result: bool = ieq self: u32, other: u32 } ret result } }
+impl Ne[u32] for u32 { pub fn op(self: u32, other: u32) -> bool { ehir { result: bool = neq self: u32, other: u32 } ret result } }
+impl Lt[u32] for u32 { pub fn op(self: u32, other: u32) -> bool { ehir { result: bool = les self: u32, other: u32 } ret result } }
+impl Le[u32] for u32 { pub fn op(self: u32, other: u32) -> bool { ehir { result: bool = leq self: u32, other: u32 } ret result } }
+impl Gt[u32] for u32 { pub fn op(self: u32, other: u32) -> bool { ehir { result: bool = grt self: u32, other: u32 } ret result } }
+impl Ge[u32] for u32 { pub fn op(self: u32, other: u32) -> bool { ehir { result: bool = geq self: u32, other: u32 } ret result } }
+
+impl Eq[u64] for u64 { pub fn op(self: u64, other: u64) -> bool { ehir { result: bool = ieq self: u64, other: u64 } ret result } }
+impl Ne[u64] for u64 { pub fn op(self: u64, other: u64) -> bool { ehir { result: bool = neq self: u64, other: u64 } ret result } }
+impl Lt[u64] for u64 { pub fn op(self: u64, other: u64) -> bool { ehir { result: bool = les self: u64, other: u64 } ret result } }
+impl Le[u64] for u64 { pub fn op(self: u64, other: u64) -> bool { ehir { result: bool = leq self: u64, other: u64 } ret result } }
+impl Gt[u64] for u64 { pub fn op(self: u64, other: u64) -> bool { ehir { result: bool = grt self: u64, other: u64 } ret result } }
+impl Ge[u64] for u64 { pub fn op(self: u64, other: u64) -> bool { ehir { result: bool = geq self: u64, other: u64 } ret result } }
+
+impl Eq[usize] for usize { pub fn op(self: usize, other: usize) -> bool { ehir { result: bool = ieq self: usize, other: usize } ret result } }
+impl Ne[usize] for usize { pub fn op(self: usize, other: usize) -> bool { ehir { result: bool = neq self: usize, other: usize } ret result } }
+impl Lt[usize] for usize { pub fn op(self: usize, other: usize) -> bool { ehir { result: bool = les self: usize, other: usize } ret result } }
+impl Le[usize] for usize { pub fn op(self: usize, other: usize) -> bool { ehir { result: bool = leq self: usize, other: usize } ret result } }
+impl Gt[usize] for usize { pub fn op(self: usize, other: usize) -> bool { ehir { result: bool = grt self: usize, other: usize } ret result } }
+impl Ge[usize] for usize { pub fn op(self: usize, other: usize) -> bool { ehir { result: bool = geq self: usize, other: usize } ret result } }
+
+impl Eq[i8] for i8 { pub fn op(self: i8, other: i8) -> bool { ehir { result: bool = ieq self: i8, other: i8 } ret result } }
+impl Ne[i8] for i8 { pub fn op(self: i8, other: i8) -> bool { ehir { result: bool = neq self: i8, other: i8 } ret result } }
+impl Lt[i8] for i8 { pub fn op(self: i8, other: i8) -> bool { ehir { result: bool = les self: i8, other: i8 } ret result } }
+impl Le[i8] for i8 { pub fn op(self: i8, other: i8) -> bool { ehir { result: bool = leq self: i8, other: i8 } ret result } }
+impl Gt[i8] for i8 { pub fn op(self: i8, other: i8) -> bool { ehir { result: bool = grt self: i8, other: i8 } ret result } }
+impl Ge[i8] for i8 { pub fn op(self: i8, other: i8) -> bool { ehir { result: bool = geq self: i8, other: i8 } ret result } }
+
+impl Eq[i16] for i16 { pub fn op(self: i16, other: i16) -> bool { ehir { result: bool = ieq self: i16, other: i16 } ret result } }
+impl Ne[i16] for i16 { pub fn op(self: i16, other: i16) -> bool { ehir { result: bool = neq self: i16, other: i16 } ret result } }
+impl Lt[i16] for i16 { pub fn op(self: i16, other: i16) -> bool { ehir { result: bool = les self: i16, other: i16 } ret result } }
+impl Le[i16] for i16 { pub fn op(self: i16, other: i16) -> bool { ehir { result: bool = leq self: i16, other: i16 } ret result } }
+impl Gt[i16] for i16 { pub fn op(self: i16, other: i16) -> bool { ehir { result: bool = grt self: i16, other: i16 } ret result } }
+impl Ge[i16] for i16 { pub fn op(self: i16, other: i16) -> bool { ehir { result: bool = geq self: i16, other: i16 } ret result } }
+
+impl Eq[i32] for i32 { pub fn op(self: i32, other: i32) -> bool { ehir { result: bool = ieq self: i32, other: i32 } ret result } }
+impl Ne[i32] for i32 { pub fn op(self: i32, other: i32) -> bool { ehir { result: bool = neq self: i32, other: i32 } ret result } }
+impl Lt[i32] for i32 { pub fn op(self: i32, other: i32) -> bool { ehir { result: bool = les self: i32, other: i32 } ret result } }
+impl Le[i32] for i32 { pub fn op(self: i32, other: i32) -> bool { ehir { result: bool = leq self: i32, other: i32 } ret result } }
+impl Gt[i32] for i32 { pub fn op(self: i32, other: i32) -> bool { ehir { result: bool = grt self: i32, other: i32 } ret result } }
+impl Ge[i32] for i32 { pub fn op(self: i32, other: i32) -> bool { ehir { result: bool = geq self: i32, other: i32 } ret result } }
+
+impl Eq[i64] for i64 { pub fn op(self: i64, other: i64) -> bool { ehir { result: bool = ieq self: i64, other: i64 } ret result } }
+impl Ne[i64] for i64 { pub fn op(self: i64, other: i64) -> bool { ehir { result: bool = neq self: i64, other: i64 } ret result } }
+impl Lt[i64] for i64 { pub fn op(self: i64, other: i64) -> bool { ehir { result: bool = les self: i64, other: i64 } ret result } }
+impl Le[i64] for i64 { pub fn op(self: i64, other: i64) -> bool { ehir { result: bool = leq self: i64, other: i64 } ret result } }
+impl Gt[i64] for i64 { pub fn op(self: i64, other: i64) -> bool { ehir { result: bool = grt self: i64, other: i64 } ret result } }
+impl Ge[i64] for i64 { pub fn op(self: i64, other: i64) -> bool { ehir { result: bool = geq self: i64, other: i64 } ret result } }
+
+impl Eq[isize] for isize { pub fn op(self: isize, other: isize) -> bool { ehir { result: bool = ieq self: isize, other: isize } ret result } }
+impl Ne[isize] for isize { pub fn op(self: isize, other: isize) -> bool { ehir { result: bool = neq self: isize, other: isize } ret result } }
+impl Lt[isize] for isize { pub fn op(self: isize, other: isize) -> bool { ehir { result: bool = les self: isize, other: isize } ret result } }
+impl Le[isize] for isize { pub fn op(self: isize, other: isize) -> bool { ehir { result: bool = leq self: isize, other: isize } ret result } }
+impl Gt[isize] for isize { pub fn op(self: isize, other: isize) -> bool { ehir { result: bool = grt self: isize, other: isize } ret result } }
+impl Ge[isize] for isize { pub fn op(self: isize, other: isize) -> bool { ehir { result: bool = geq self: isize, other: isize } ret result } }
+
+impl Eq[f32] for f32 { pub fn op(self: f32, other: f32) -> bool { ehir { result: bool = ieq self: f32, other: f32 } ret result } }
+impl Ne[f32] for f32 { pub fn op(self: f32, other: f32) -> bool { ehir { result: bool = neq self: f32, other: f32 } ret result } }
+impl Lt[f32] for f32 { pub fn op(self: f32, other: f32) -> bool { ehir { result: bool = les self: f32, other: f32 } ret result } }
+impl Le[f32] for f32 { pub fn op(self: f32, other: f32) -> bool { ehir { result: bool = leq self: f32, other: f32 } ret result } }
+impl Gt[f32] for f32 { pub fn op(self: f32, other: f32) -> bool { ehir { result: bool = grt self: f32, other: f32 } ret result } }
+impl Ge[f32] for f32 { pub fn op(self: f32, other: f32) -> bool { ehir { result: bool = geq self: f32, other: f32 } ret result } }
+
+impl Eq[f64] for f64 { pub fn op(self: f64, other: f64) -> bool { ehir { result: bool = ieq self: f64, other: f64 } ret result } }
+impl Ne[f64] for f64 { pub fn op(self: f64, other: f64) -> bool { ehir { result: bool = neq self: f64, other: f64 } ret result } }
+impl Lt[f64] for f64 { pub fn op(self: f64, other: f64) -> bool { ehir { result: bool = les self: f64, other: f64 } ret result } }
+impl Le[f64] for f64 { pub fn op(self: f64, other: f64) -> bool { ehir { result: bool = leq self: f64, other: f64 } ret result } }
+impl Gt[f64] for f64 { pub fn op(self: f64, other: f64) -> bool { ehir { result: bool = grt self: f64, other: f64 } ret result } }
+impl Ge[f64] for f64 { pub fn op(self: f64, other: f64) -> bool { ehir { result: bool = geq self: f64, other: f64 } ret result } }

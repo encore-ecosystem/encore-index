@@ -1,0 +1,32 @@
+pub struct Color {
+    red: u8
+    green: u8
+    blue: u8
+    alpha: u8
+}
+
+impl for Color {
+    pub fn rgb(red: u8, green: u8, blue: u8) -> Color {
+        ret Color { red, green, blue, 255_u8 }
+    }
+
+    pub fn rgba(red: u8, green: u8, blue: u8, alpha: u8) -> Color {
+        ret Color { red, green, blue, alpha }
+    }
+
+    pub fn red(self: Self) -> u8 { ret self.red }
+    pub fn green(self: Self) -> u8 { ret self.green }
+    pub fn blue(self: Self) -> u8 { ret self.blue }
+    pub fn alpha(self: Self) -> u8 { ret self.alpha }
+
+    pub fn packed(self: Self) -> u32 {
+        ret ((self.red as u32) << 24_u32) |
+            ((self.green as u32) << 16_u32) |
+            ((self.blue as u32) << 8_u32) |
+            (self.alpha as u32)
+    }
+}
+
+pub fn transparent() -> Color { ret Color::rgba(0_u8, 0_u8, 0_u8, 0_u8) }
+pub fn white() -> Color { ret Color::rgb(255_u8, 255_u8, 255_u8) }
+pub fn black() -> Color { ret Color::rgb(18_u8, 20_u8, 24_u8) }

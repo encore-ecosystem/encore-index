@@ -1,0 +1,53 @@
+//! Verifies URL and HTTP/1.1 protocol contracts without external networking.
+
+import core::result::Result
+import core::testing::assert
+import std::http::{HttpRequest, HttpResponse, Url, parse_http_response}
+
+fn main() -> u32 {
+    let url = match Url::parse("https://example.com:8443/releases/latest?channel=stable") {
+        Result::Ok(value) => value
+        Result::Err(error) => { let _ignored = error ret 1_u32 }
+    }
+    if !assert(url.scheme() == "https") { ret 2_u32 }
+    if !assert(url.host() == "example.com") { ret 3_u32 }
+    if !assert(url.port() == 8443_usize) { ret 4_u32 }
+    if !assert(url.target() == "/releases/latest?channel=stable") { ret 5_u32 }
+
+    let default_port = Url::parse("https://example.com").unwrap_or(Url::empty())
+    if !assert(default_port.port() == 443_usize && default_port.target() == "/") { ret 6_u32 }
+    if !assert(Url::parse("http://example.com").is_err()) { ret 7_u32 }
+    if !assert(Url::parse("https://user@example.com/private").is_err()) { ret 8_u32 }
+
+    let request = HttpRequest::get(url).with_header("Accept", "application/octet-stream")
+    let encoded = request.encode()
+    if !assert(encoded.contains("GET /releases/latest?channel=stable HTTP/1.1\r\n")) { ret 9_u32 }
+    if !assert(encoded.contains("Host: example.com:8443\r\n")) { ret 10_u32 }
+    if !assert(encoded.contains("Connection: close\r\n")) { ret 11_u32 }
+
+    let fixed = match parse_http_response("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nX-Test: yes\r\n\r\nhello", 64_usize) {
+        Result::Ok(value) => value
+        Result::Err(error) => { let _ignored = error ret 12_u32 }
+    }
+    if !assert(fixed.status() == 200_u16 && fixed.reason() == "OK") { ret 13_u32 }
+    if !assert(fixed.header("x-test").unwrap_or("") == "yes") { ret 14_u32 }
+    if !assert(fixed.body() == "hello") { ret 15_u32 }
+
+    let chunked = match parse_http_response("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nWiki\r\n5\r\npedia\r\n0\r\nX-End: yes\r\n\r\n", 64_usize) {
+        Result::Ok(value) => value
+        Result::Err(error) => { let _ignored = error ret 16_u32 }
+    }
+    if !assert(chunked.body() == "Wikipedia") { ret 17_u32 }
+
+    let extended = parse_http_response("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4;name=value\r\ntest\r\n0\r\n\r\n", 64_usize).unwrap_or(HttpResponse::empty())
+    if !assert(extended.body() == "test") { ret 21_u32 }
+
+    let oversized = parse_http_response("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello", 4_usize)
+    if !assert(oversized.unwrap_err_or("").contains("response body exceeds limit")) { ret 18_u32 }
+    if !assert(parse_http_response("HTTP/1.1 broken\r\n\r\n", 64_usize).is_err()) { ret 19_u32 }
+    if !assert(parse_http_response("HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\nshort", 64_usize).is_err()) { ret 20_u32 }
+    if !assert(parse_http_response("HTTP/1.1 200 OK\r\nContent-Length: 4\r\nContent-Length: 5\r\n\r\ntest", 64_usize).is_err()) { ret 22_u32 }
+    if !assert(parse_http_response("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\ntest", 64_usize).is_err()) { ret 23_u32 }
+    if !assert(parse_http_response("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 4\r\n\r\n0\r\n\r\n", 64_usize).is_err()) { ret 24_u32 }
+    ret 0_u32
+}

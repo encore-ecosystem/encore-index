@@ -1,0 +1,892 @@
+import core::fmt::Debug
+import core::option::Option
+import core::result::Result
+import core::vec::Vec
+
+extern fn encore_str_from_codepoint(value: usize) -> str
+extern fn encore_text_builder_new() -> usize
+extern fn encore_text_builder_append(builder: usize, value: str) -> ()
+extern fn encore_text_builder_finish(builder: usize) -> str
+extern fn encore_text_builder_discard(builder: usize) -> ()
+extern fn encore_str_find_byte_from(value: str, needle: u8, start: usize) -> usize
+extern fn encore_str_find_control_from(value: str, start: usize) -> usize
+
+pub enum Json {
+    Null
+    Bool(bool)
+    Number(str)
+    String(str)
+    Array(Vec[Json])
+    Object(Vec[(str, Json)])
+}
+
+pub struct ParseError {
+    message: str
+    position: usize
+}
+
+struct JsonParser {
+    source: str
+    index: usize
+}
+
+impl for ParseError {
+    pub fn new(message: str, position: usize) -> Self {
+        ret Self { message, position }
+    }
+
+    pub fn message(self: Self) -> str {
+        ret self.message
+    }
+
+    pub fn position(self: Self) -> usize {
+        ret self.position
+    }
+}
+
+impl for Json {
+    pub fn is_null(self: Self) -> bool {
+        ret match self {
+            Json::Null => true
+            _ => false
+        }
+    }
+
+    pub fn as_bool(self: Self) -> Option[bool] {
+        ret match self {
+            Json::Bool(value) => Option[bool]::Some(value)
+            _ => Option[bool]::None
+        }
+    }
+
+    pub fn as_number(self: Self) -> Option[str] {
+        ret match self {
+            Json::Number(value) => Option[str]::Some(value)
+            _ => Option[str]::None
+        }
+    }
+
+    pub fn as_str(self: Self) -> Option[str] {
+        ret match self {
+            Json::String(value) => Option[str]::Some(value)
+            _ => Option[str]::None
+        }
+    }
+
+    pub fn as_array(self: Self) -> Option[Vec[Json]] {
+        ret match self {
+            Json::Array(value) => Option[Vec[Json]]::Some(value)
+            _ => Option[Vec[Json]]::None
+        }
+    }
+
+    pub fn as_object(self: Self) -> Option[Vec[(str, Json)]] {
+        ret match self {
+            Json::Object(value) => Option[Vec[(str, Json)]]::Some(value)
+            _ => Option[Vec[(str, Json)]]::None
+        }
+    }
+
+    pub fn get(self: Self, key: str) -> Option[Json] {
+        ret match self {
+            Json::Object(fields) => object_get(fields, key)
+            _ => Option[Json]::None
+        }
+    }
+
+    pub fn index(self: Self, index: usize) -> Option[Json] {
+        ret match self {
+            Json::Array(values) => values.get(index)
+            _ => Option[Json]::None
+        }
+    }
+
+    pub fn stringify(self: Self) -> str {
+        ret stringify(self)
+    }
+}
+
+pub fn null() -> Json {
+    ret Json::Null
+}
+
+pub fn boolean(value: bool) -> Json {
+    ret Json::Bool(value)
+}
+
+pub fn number(value: str) -> Json {
+    ret Json::Number(value)
+}
+
+pub fn string(value: str) -> Json {
+    ret Json::String(value)
+}
+
+pub fn array(values: Vec[Json]) -> Json {
+    ret Json::Array(values)
+}
+
+pub fn object(fields: Vec[(str, Json)]) -> Json {
+    ret Json::Object(fields)
+}
+
+pub fn field(key: str, value: Json) -> (str, Json) {
+    ret (key, value)
+}
+
+pub fn parse(source: str) -> Result[Json, ParseError] {
+    let parser = JsonParser { source, 0_usize }
+    match parse_value(skip_ws(parser)) {
+        Result[(Json, JsonParser), ParseError]::Ok(pair) => {
+            let rest = skip_ws(pair.1)
+            if rest.index != rest.source.byte_len() {
+                ret Result[Json, ParseError]::Err(ParseError::new("trailing characters after JSON value", rest.index))
+            }
+            ret Result[Json, ParseError]::Ok(pair.0)
+        }
+        Result[(Json, JsonParser), ParseError]::Err(err) => {
+            ret Result[Json, ParseError]::Err(err)
+        }
+    }
+}
+
+pub fn stringify(value: Json) -> str {
+    let builder = text_builder_new()
+    stringify_into(builder, value)
+    ret text_builder_finish(builder)
+}
+
+fn stringify_into(builder: usize, value: Json) -> () {
+    match value {
+        Json::Null => {
+            text_builder_append(builder, "null")
+        }
+        Json::Bool(flag) => {
+            if flag {
+                text_builder_append(builder, "true")
+            }
+            else {
+                text_builder_append(builder, "false")
+            }
+        }
+        Json::Number(text) => {
+            text_builder_append(builder, text)
+        }
+        Json::String(text) => {
+            text_builder_append(builder, "\"")
+            append_escaped_string(builder, text)
+            text_builder_append(builder, "\"")
+        }
+        Json::Array(values) => {
+            text_builder_append(builder, "[")
+            let mut index = 0_usize
+            while index < values.len() {
+                match values.get(index) {
+                    Option[Json]::Some(item) => {
+                        if index > 0_usize {
+                            text_builder_append(builder, ",")
+                        }
+                        stringify_into(builder, item)
+                    }
+                    Option[Json]::None => {}
+                }
+                index += 1_usize
+            }
+            text_builder_append(builder, "]")
+        }
+        Json::Object(fields) => {
+            text_builder_append(builder, "{")
+            let mut index = 0_usize
+            while index < fields.len() {
+                match fields.get(index) {
+                    Option[(str, Json)]::Some(item) => {
+                        if index > 0_usize {
+                            text_builder_append(builder, ",")
+                        }
+                        text_builder_append(builder, "\"")
+                        append_escaped_string(builder, item.0)
+                        text_builder_append(builder, "\":")
+                        stringify_into(builder, item.1)
+                    }
+                    Option[(str, Json)]::None => {}
+                }
+                index += 1_usize
+            }
+            text_builder_append(builder, "}")
+        }
+    }
+    ret ()
+}
+
+fn object_get(fields: Vec[(str, Json)], key: str) -> Option[Json] {
+    let mut index = 0_usize
+    while index < fields.len() {
+        match fields.get(index) {
+            Option[(str, Json)]::Some(item) => {
+                if item.0 == key {
+                    ret Option[Json]::Some(item.1)
+                }
+            }
+            Option[(str, Json)]::None => {}
+        }
+        index += 1_usize
+    }
+    ret Option[Json]::None
+}
+
+fn parse_value(parser: JsonParser) -> Result[(Json, JsonParser), ParseError] {
+    let current = skip_ws(parser)
+    if current.index >= current.source.byte_len() {
+        ret Result[(Json, JsonParser), ParseError]::Err(ParseError::new("expected JSON value", current.index))
+    }
+
+    let b = current.source.byte_at(current.index)
+    if b == 123_u8 {
+        ret parse_object(current)
+    }
+    if b == 91_u8 {
+        ret parse_array(current)
+    }
+    if b == 34_u8 {
+        match parse_string(current) {
+            Result[(str, JsonParser), ParseError]::Ok(pair) => {
+                ret ok_json_parser(Json::String(pair.0), pair.1)
+            }
+            Result[(str, JsonParser), ParseError]::Err(err) => {
+                ret Result[(Json, JsonParser), ParseError]::Err(err)
+            }
+        }
+    }
+    if starts_at(current.source, "true", current.index) {
+        ret ok_json_parser(Json::Bool(true), advance(current, 4_usize))
+    }
+    if starts_at(current.source, "false", current.index) {
+        ret ok_json_parser(Json::Bool(false), advance(current, 5_usize))
+    }
+    if starts_at(current.source, "null", current.index) {
+        ret ok_json_parser(Json::Null, advance(current, 4_usize))
+    }
+    if b == 45_u8 {
+        ret parse_number(current)
+    }
+    if is_digit(b) {
+        ret parse_number(current)
+    }
+    ret Result[(Json, JsonParser), ParseError]::Err(ParseError::new("expected JSON value", current.index))
+}
+
+fn parse_object(parser: JsonParser) -> Result[(Json, JsonParser), ParseError] {
+    let mut current = skip_ws(advance(parser, 1_usize))
+    let mut fields = Vec[(str, Json)]::new()
+    if peek_byte(current) == 125_u8 {
+        ret ok_json_parser(Json::Object(fields), advance(current, 1_usize))
+    }
+
+    loop {
+        current = skip_ws(current)
+        if peek_byte(current) != 34_u8 {
+            ret Result[(Json, JsonParser), ParseError]::Err(ParseError::new("expected object key string", current.index))
+        }
+
+        let key_pair_result = parse_string(current)
+        match key_pair_result {
+            Result[(str, JsonParser), ParseError]::Ok(key_pair) => {
+                current = skip_ws(key_pair.1)
+                if peek_byte(current) != 58_u8 {
+                    ret Result[(Json, JsonParser), ParseError]::Err(ParseError::new("expected ':' after object key", current.index))
+                }
+                current = advance(current, 1_usize)
+
+                match parse_value(current) {
+                    Result[(Json, JsonParser), ParseError]::Ok(value_pair) => {
+                        fields.push((key_pair.0, value_pair.0))
+                        current = skip_ws(value_pair.1)
+                    }
+                    Result[(Json, JsonParser), ParseError]::Err(err) => {
+                        ret Result[(Json, JsonParser), ParseError]::Err(err)
+                    }
+                }
+            }
+            Result[(str, JsonParser), ParseError]::Err(err) => {
+                ret Result[(Json, JsonParser), ParseError]::Err(err)
+            }
+        }
+
+        if peek_byte(current) == 125_u8 {
+            ret ok_json_parser(Json::Object(fields), advance(current, 1_usize))
+        }
+        if peek_byte(current) != 44_u8 {
+            ret Result[(Json, JsonParser), ParseError]::Err(ParseError::new("expected ',' or '}' in object", current.index))
+        }
+        current = advance(current, 1_usize)
+    }
+}
+
+fn parse_array(parser: JsonParser) -> Result[(Json, JsonParser), ParseError] {
+    let mut current = skip_ws(advance(parser, 1_usize))
+    let mut values = Vec[Json]::new()
+    if peek_byte(current) == 93_u8 {
+        ret ok_json_parser(Json::Array(values), advance(current, 1_usize))
+    }
+
+    loop {
+        match parse_value(current) {
+            Result[(Json, JsonParser), ParseError]::Ok(pair) => {
+                values.push(pair.0)
+                current = skip_ws(pair.1)
+            }
+            Result[(Json, JsonParser), ParseError]::Err(err) => {
+                ret Result[(Json, JsonParser), ParseError]::Err(err)
+            }
+        }
+
+        if peek_byte(current) == 93_u8 {
+            ret ok_json_parser(Json::Array(values), advance(current, 1_usize))
+        }
+        if peek_byte(current) != 44_u8 {
+            ret Result[(Json, JsonParser), ParseError]::Err(ParseError::new("expected ',' or ']' in array", current.index))
+        }
+        current = skip_ws(advance(current, 1_usize))
+    }
+}
+
+fn parse_string(parser: JsonParser) -> Result[(str, JsonParser), ParseError] {
+    if peek_byte(parser) != 34_u8 {
+        ret Result[(str, JsonParser), ParseError]::Err(ParseError::new("expected string", parser.index))
+    }
+
+    let builder = text_builder_new()
+    let source = parser.source
+    let mut index = parser.index + 1_usize
+    let mut segment_start = index
+    let end = source.byte_len()
+    let closing_quote = unsafe { encore_str_find_byte_from(source, 34_u8, index) }
+    let first_escape = unsafe { encore_str_find_byte_from(source, 92_u8, index) }
+    let first_control = unsafe { encore_str_find_control_from(source, index) }
+    if closing_quote < first_escape && closing_quote < first_control {
+        let value = source.slice_bytes(index, closing_quote - index)
+        text_builder_discard(builder)
+        ret ok_str_parser(value, JsonParser {source, closing_quote + 1_usize})
+    }
+    while index < end {
+        let next_quote = unsafe { encore_str_find_byte_from(source, 34_u8, index) }
+        let next_escape = unsafe { encore_str_find_byte_from(source, 92_u8, index) }
+        let next_control = unsafe { encore_str_find_control_from(source, index) }
+        let next_special = min_usize(next_quote, min_usize(next_escape, next_control))
+        if next_special > index {
+            index = next_special
+            continue
+        }
+        let b = source.byte_at(index)
+        if b == 34_u8 {
+            if index > segment_start {
+                text_builder_append(builder, source.slice_bytes(segment_start, index - segment_start))
+            }
+            ret ok_str_parser(text_builder_finish(builder), JsonParser {source, index + 1_usize})
+        }
+        if b == 92_u8 {
+            if index > segment_start {
+                text_builder_append(builder, source.slice_bytes(segment_start, index - segment_start))
+            }
+            if index + 1_usize >= end {
+                text_builder_discard(builder)
+                ret Result[(str, JsonParser), ParseError]::Err(ParseError::new("unterminated escape sequence", index))
+            }
+            let esc = source.byte_at(index + 1_usize)
+            if esc == 34_u8 {
+                text_builder_append(builder, "\"")
+                index += 2_usize
+                segment_start = index
+                continue
+            }
+            if esc == 92_u8 {
+                text_builder_append(builder, "\\")
+                index += 2_usize
+                segment_start = index
+                continue
+            }
+            if esc == 47_u8 {
+                text_builder_append(builder, "/")
+                index += 2_usize
+                segment_start = index
+                continue
+            }
+            if esc == 98_u8 {
+                text_builder_append(builder, "\b")
+                index += 2_usize
+                segment_start = index
+                continue
+            }
+            if esc == 102_u8 {
+                text_builder_append(builder, "\f")
+                index += 2_usize
+                segment_start = index
+                continue
+            }
+            if esc == 110_u8 {
+                text_builder_append(builder, "\n")
+                index += 2_usize
+                segment_start = index
+                continue
+            }
+            if esc == 114_u8 {
+                text_builder_append(builder, "\r")
+                index += 2_usize
+                segment_start = index
+                continue
+            }
+            if esc == 116_u8 {
+                text_builder_append(builder, "\t")
+                index += 2_usize
+                segment_start = index
+                continue
+            }
+            if esc == 117_u8 {
+                let escape_parser = JsonParser {source, index}
+                match parse_unicode_escape(escape_parser) {
+                    Result[(str, JsonParser), ParseError]::Ok(pair) => {
+                        text_builder_append(builder, pair.0)
+                        index = pair.1.index
+                        segment_start = index
+                        continue
+                    }
+                    Result[(str, JsonParser), ParseError]::Err(err) => {
+                        text_builder_discard(builder)
+                        ret Result[(str, JsonParser), ParseError]::Err(err)
+                    }
+                }
+            }
+            text_builder_discard(builder)
+            ret Result[(str, JsonParser), ParseError]::Err(ParseError::new("invalid escape sequence", index))
+        }
+        // Compare after widening: native i8 ordering is signed, so a direct
+        // comparison would misclassify every UTF-8 lead byte >= 0x80.
+        if (b as usize) < 32_usize {
+            text_builder_discard(builder)
+            ret Result[(str, JsonParser), ParseError]::Err(ParseError::new("control character in string", index))
+        }
+        index += 1_usize
+    }
+    text_builder_discard(builder)
+    ret Result[(str, JsonParser), ParseError]::Err(ParseError::new("unterminated string", index))
+}
+
+fn parse_unicode_escape(parser: JsonParser) -> Result[(str, JsonParser), ParseError] {
+    if parser.index + 6_usize > parser.source.byte_len() {
+        ret Result[(str, JsonParser), ParseError]::Err(ParseError::new("incomplete unicode escape", parser.index))
+    }
+
+    let hex = parser.source.slice_bytes(parser.index + 2_usize, 4_usize)
+    let mut code = 0_usize
+    let mut i = 0_usize
+    while i < 4_usize {
+        let b = hex.byte_at(i)
+        if !is_hex_digit(b) {
+            ret Result[(str, JsonParser), ParseError]::Err(ParseError::new("invalid unicode escape", parser.index))
+        }
+        code = (code * 16_usize) + hex_value(b)
+        i += 1_usize
+    }
+
+    let mut next = advance(parser, 6_usize)
+    if code >= 55296_usize && code <= 56319_usize {
+        if next.index + 6_usize > next.source.byte_len() || next.source.byte_at(next.index) != 92_u8 || next.source.byte_at(next.index + 1_usize) != 117_u8 {
+            ret Result[(str, JsonParser), ParseError]::Err(ParseError::new("missing low surrogate", parser.index))
+        }
+        let low_hex = next.source.slice_bytes(next.index + 2_usize, 4_usize)
+        let mut low = 0_usize
+        let mut low_index = 0_usize
+        while low_index < 4_usize {
+            let b = low_hex.byte_at(low_index)
+            if !is_hex_digit(b) {
+                ret Result[(str, JsonParser), ParseError]::Err(ParseError::new("invalid low surrogate", next.index))
+            }
+            low = low * 16_usize + hex_value(b)
+            low_index += 1_usize
+        }
+        if low < 56320_usize || low > 57343_usize {
+            ret Result[(str, JsonParser), ParseError]::Err(ParseError::new("invalid low surrogate", next.index))
+        }
+        code = 65536_usize + ((code - 55296_usize) * 1024_usize) + (low - 56320_usize)
+        next = advance(next, 6_usize)
+    }
+    elif code >= 56320_usize && code <= 57343_usize {
+        ret Result[(str, JsonParser), ParseError]::Err(ParseError::new("unexpected low surrogate", parser.index))
+    }
+    ret ok_str_parser(unsafe { encore_str_from_codepoint(code) }, next)
+}
+
+fn parse_number(parser: JsonParser) -> Result[(Json, JsonParser), ParseError] {
+    let start = parser.index
+    let mut current = parser
+    if peek_byte(current) == 45_u8 {
+        current = advance(current, 1_usize)
+    }
+
+    if current.index >= current.source.byte_len() {
+        ret Result[(Json, JsonParser), ParseError]::Err(ParseError::new("invalid number", start))
+    }
+
+    if peek_byte(current) == 48_u8 {
+        current = advance(current, 1_usize)
+    }
+    elif is_digit(peek_byte(current)) {
+        while current.index < current.source.byte_len() {
+            if !is_digit(peek_byte(current)) {
+                break
+            }
+            current = advance(current, 1_usize)
+        }
+    }
+    else {
+        ret Result[(Json, JsonParser), ParseError]::Err(ParseError::new("invalid number", start))
+    }
+
+    if peek_byte(current) == 46_u8 {
+        current = advance(current, 1_usize)
+        if !is_digit(peek_byte(current)) {
+            ret Result[(Json, JsonParser), ParseError]::Err(ParseError::new("invalid fraction", current.index))
+        }
+        while current.index < current.source.byte_len() {
+            if !is_digit(peek_byte(current)) {
+                break
+            }
+            current = advance(current, 1_usize)
+        }
+    }
+
+    let exp = peek_byte(current)
+    if exp == 69_u8 {
+        match parse_exponent(current) {
+            Result[JsonParser, ParseError]::Ok(next) => {
+                current = next
+            }
+            Result[JsonParser, ParseError]::Err(err) => {
+                ret Result[(Json, JsonParser), ParseError]::Err(err)
+            }
+        }
+    }
+    elif exp == 101_u8 {
+        match parse_exponent(current) {
+            Result[JsonParser, ParseError]::Ok(next) => {
+                current = next
+            }
+            Result[JsonParser, ParseError]::Err(err) => {
+                ret Result[(Json, JsonParser), ParseError]::Err(err)
+            }
+        }
+    }
+
+    ret ok_json_parser(Json::Number(parser.source.slice_bytes(start, current.index - start)), current)
+}
+
+fn parse_exponent(parser: JsonParser) -> Result[JsonParser, ParseError] {
+    let mut current = parser
+    current = advance(current, 1_usize)
+    let sign = peek_byte(current)
+    if sign == 43_u8 {
+        current = advance(current, 1_usize)
+    }
+    elif sign == 45_u8 {
+        current = advance(current, 1_usize)
+    }
+    if !is_digit(peek_byte(current)) {
+        ret Result[JsonParser, ParseError]::Err(ParseError::new("invalid exponent", current.index))
+    }
+    while current.index < current.source.byte_len() {
+        if !is_digit(peek_byte(current)) {
+            break
+        }
+        current = advance(current, 1_usize)
+    }
+    ret Result[JsonParser, ParseError]::Ok(current)
+}
+
+fn ok_json_parser(value: Json, parser: JsonParser) -> Result[(Json, JsonParser), ParseError] {
+    let pair: (Json, JsonParser) = (value, parser)
+    ret Result[(Json, JsonParser), ParseError]::Ok(pair)
+}
+
+fn ok_str_parser(value: str, parser: JsonParser) -> Result[(str, JsonParser), ParseError] {
+    let pair: (str, JsonParser) = (value, parser)
+    ret Result[(str, JsonParser), ParseError]::Ok(pair)
+}
+
+fn append_escaped_string(builder: usize, value: str) -> () {
+    let mut segment_start = 0_usize
+    let mut index = 0_usize
+    while index < value.len() {
+        let b = value.byte_at(index)
+        let mut escaped = ""
+        if b == 34_u8 { escaped = "\\\"" }
+        elif b == 92_u8 { escaped = "\\\\" }
+        elif b == 8_u8 { escaped = "\\b" }
+        elif b == 12_u8 { escaped = "\\f" }
+        elif b == 10_u8 { escaped = "\\n" }
+        elif b == 13_u8 { escaped = "\\r" }
+        elif b == 9_u8 { escaped = "\\t" }
+        elif b < 32_u8 { escaped = "\\u00" + byte_to_hex2(b) }
+        if escaped != "" {
+            if index > segment_start {
+                text_builder_append(builder, value.slice_bytes(segment_start, index - segment_start))
+            }
+            text_builder_append(builder, escaped)
+            segment_start = index + 1_usize
+        }
+        index += 1_usize
+    }
+    if index > segment_start {
+        text_builder_append(builder, value.slice_bytes(segment_start, index - segment_start))
+    }
+    ret ()
+}
+
+fn text_builder_new() -> usize {
+    ret unsafe { encore_text_builder_new() }
+}
+
+fn min_usize(lhs: usize, rhs: usize) -> usize {
+    if lhs < rhs { ret lhs }
+    ret rhs
+}
+
+fn text_builder_append(builder: usize, value: str) -> () {
+    unsafe { encore_text_builder_append(builder, value) }
+    ret ()
+}
+
+fn text_builder_finish(builder: usize) -> str {
+    ret unsafe { encore_text_builder_finish(builder) }
+}
+
+fn text_builder_discard(builder: usize) -> () {
+    unsafe { encore_text_builder_discard(builder) }
+    ret ()
+}
+
+fn skip_ws(parser: JsonParser) -> JsonParser {
+    let mut index = parser.index
+    while index < parser.source.byte_len() {
+        let b = parser.source.byte_at(index)
+        if !is_ws(b) {
+            break
+        }
+        index += 1_usize
+    }
+    ret JsonParser { parser.source, index }
+}
+
+fn advance(parser: JsonParser, count: usize) -> JsonParser {
+    ret JsonParser { parser.source, parser.index + count }
+}
+
+fn peek_byte(parser: JsonParser) -> u8 {
+    if parser.index >= parser.source.byte_len() {
+        ret 0_u8
+    }
+    ret parser.source.byte_at(parser.index)
+}
+
+fn starts_at(value: str, needle: str, offset: usize) -> bool {
+    if offset + needle.len() > value.len() {
+        ret false
+    }
+    let mut index = 0_usize
+    while index < needle.len() {
+        if value.byte_at(offset + index) != needle.byte_at(index) {
+            ret false
+        }
+        index += 1_usize
+    }
+    ret true
+}
+
+fn is_digit(value: u8) -> bool {
+    if value < 48_u8 {
+        ret false
+    }
+    ret value <= 57_u8
+}
+
+fn is_hex_digit(value: u8) -> bool {
+    if is_digit(value) {
+        ret true
+    }
+    if value >= 65_u8 {
+        if value <= 70_u8 {
+            ret true
+        }
+    }
+    if value >= 97_u8 {
+        if value <= 102_u8 {
+            ret true
+        }
+    }
+    ret false
+}
+
+fn hex_value(value: u8) -> usize {
+    if value >= 48_u8 {
+        if value <= 57_u8 {
+            ret (value as usize) - 48_usize
+        }
+    }
+    if value >= 65_u8 {
+        if value <= 70_u8 {
+            ret ((value as usize) - 65_usize) + 10_usize
+        }
+    }
+    ret ((value as usize) - 97_usize) + 10_usize
+}
+
+fn is_ws(value: u8) -> bool {
+    if value == 32_u8 {
+        ret true
+    }
+    if value == 9_u8 {
+        ret true
+    }
+    if value == 10_u8 {
+        ret true
+    }
+    ret value == 13_u8
+}
+
+fn byte_to_hex2(value: u8) -> str {
+    ret hex_digit((value as usize) / 16_usize) + hex_digit((value as usize) % 16_usize)
+}
+
+fn hex_digit(value: usize) -> str {
+    if value == 0_usize { ret "0" }
+    if value == 1_usize { ret "1" }
+    if value == 2_usize { ret "2" }
+    if value == 3_usize { ret "3" }
+    if value == 4_usize { ret "4" }
+    if value == 5_usize { ret "5" }
+    if value == 6_usize { ret "6" }
+    if value == 7_usize { ret "7" }
+    if value == 8_usize { ret "8" }
+    if value == 9_usize { ret "9" }
+    if value == 10_usize { ret "A" }
+    if value == 11_usize { ret "B" }
+    if value == 12_usize { ret "C" }
+    if value == 13_usize { ret "D" }
+    if value == 14_usize { ret "E" }
+    ret "F"
+}
+
+fn ascii_code_to_str(value: usize) -> str {
+    if value == 8_usize { ret "\b" }
+    if value == 9_usize { ret "\t" }
+    if value == 10_usize { ret "\n" }
+    if value == 12_usize { ret "\f" }
+    if value == 13_usize { ret "\r" }
+    if value == 32_usize { ret " " }
+    if value == 33_usize { ret "!" }
+    if value == 34_usize { ret "\"" }
+    if value == 35_usize { ret "#" }
+    if value == 36_usize { ret "$" }
+    if value == 37_usize { ret "%" }
+    if value == 38_usize { ret "&" }
+    if value == 39_usize { ret "'" }
+    if value == 40_usize { ret "(" }
+    if value == 41_usize { ret ")" }
+    if value == 42_usize { ret "*" }
+    if value == 43_usize { ret "+" }
+    if value == 44_usize { ret "," }
+    if value == 45_usize { ret "-" }
+    if value == 46_usize { ret "." }
+    if value == 47_usize { ret "/" }
+    if value == 48_usize { ret "0" }
+    if value == 49_usize { ret "1" }
+    if value == 50_usize { ret "2" }
+    if value == 51_usize { ret "3" }
+    if value == 52_usize { ret "4" }
+    if value == 53_usize { ret "5" }
+    if value == 54_usize { ret "6" }
+    if value == 55_usize { ret "7" }
+    if value == 56_usize { ret "8" }
+    if value == 57_usize { ret "9" }
+    if value == 58_usize { ret ":" }
+    if value == 59_usize { ret ";" }
+    if value == 60_usize { ret "<" }
+    if value == 61_usize { ret "=" }
+    if value == 62_usize { ret ">" }
+    if value == 63_usize { ret "?" }
+    if value == 64_usize { ret "@" }
+    if value == 65_usize { ret "A" }
+    if value == 66_usize { ret "B" }
+    if value == 67_usize { ret "C" }
+    if value == 68_usize { ret "D" }
+    if value == 69_usize { ret "E" }
+    if value == 70_usize { ret "F" }
+    if value == 71_usize { ret "G" }
+    if value == 72_usize { ret "H" }
+    if value == 73_usize { ret "I" }
+    if value == 74_usize { ret "J" }
+    if value == 75_usize { ret "K" }
+    if value == 76_usize { ret "L" }
+    if value == 77_usize { ret "M" }
+    if value == 78_usize { ret "N" }
+    if value == 79_usize { ret "O" }
+    if value == 80_usize { ret "P" }
+    if value == 81_usize { ret "Q" }
+    if value == 82_usize { ret "R" }
+    if value == 83_usize { ret "S" }
+    if value == 84_usize { ret "T" }
+    if value == 85_usize { ret "U" }
+    if value == 86_usize { ret "V" }
+    if value == 87_usize { ret "W" }
+    if value == 88_usize { ret "X" }
+    if value == 89_usize { ret "Y" }
+    if value == 90_usize { ret "Z" }
+    if value == 91_usize { ret "[" }
+    if value == 92_usize { ret "\\" }
+    if value == 93_usize { ret "]" }
+    if value == 94_usize { ret "^" }
+    if value == 95_usize { ret "_" }
+    if value == 96_usize { ret "`" }
+    if value == 97_usize { ret "a" }
+    if value == 98_usize { ret "b" }
+    if value == 99_usize { ret "c" }
+    if value == 100_usize { ret "d" }
+    if value == 101_usize { ret "e" }
+    if value == 102_usize { ret "f" }
+    if value == 103_usize { ret "g" }
+    if value == 104_usize { ret "h" }
+    if value == 105_usize { ret "i" }
+    if value == 106_usize { ret "j" }
+    if value == 107_usize { ret "k" }
+    if value == 108_usize { ret "l" }
+    if value == 109_usize { ret "m" }
+    if value == 110_usize { ret "n" }
+    if value == 111_usize { ret "o" }
+    if value == 112_usize { ret "p" }
+    if value == 113_usize { ret "q" }
+    if value == 114_usize { ret "r" }
+    if value == 115_usize { ret "s" }
+    if value == 116_usize { ret "t" }
+    if value == 117_usize { ret "u" }
+    if value == 118_usize { ret "v" }
+    if value == 119_usize { ret "w" }
+    if value == 120_usize { ret "x" }
+    if value == 121_usize { ret "y" }
+    if value == 122_usize { ret "z" }
+    if value == 123_usize { ret "{" }
+    if value == 124_usize { ret "|" }
+    if value == 125_usize { ret "}" }
+    if value == 126_usize { ret "~" }
+    ret "?"
+}
+
+impl Debug for ParseError {
+    pub fn fmt(self: ParseError) -> str {
+        ret "ParseError(" + self.message + " at " + Debug::fmt(self.position) + ")"
+    }
+}
+
+impl Debug for Json {
+    pub fn fmt(self: Json) -> str {
+        ret stringify(self)
+    }
+}

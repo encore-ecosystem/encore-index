@@ -1,0 +1,84 @@
+pub enum Color {
+    Default
+    Black
+    Red
+    Green
+    Yellow
+    Blue
+    Magenta
+    Cyan
+    White
+
+    BrightBlack
+    BrightRed
+    BrightGreen
+    BrightYellow
+    BrightBlue
+    BrightMagenta
+    BrightCyan
+    BrightWhite
+}
+
+pub enum Style {
+    Normal
+    Bold
+    Dim
+    Italic
+    Underline
+    Blink
+    Reverse
+    Hidden
+    Strikethrough
+}
+
+pub fn reset() -> str {
+    ret "\x1b[0m"
+}
+
+pub fn styled(text: str, color: Color, style: Style) -> str {
+    let mut out = "\x1b["
+    out = out + style_code(style)
+    out = out + ";"
+    out = out + color_code(color)
+    out = out + "m"
+    out = out + text
+    out = out + reset()
+    ret out
+}
+
+fn color_code(color: Color) -> str {
+    ret match color {
+        Color::Default => "39"
+        Color::Black => "30"
+        Color::Red => "31"
+        Color::Green => "32"
+        Color::Yellow => "33"
+        Color::Blue => "34"
+        Color::Magenta => "35"
+        Color::Cyan => "36"
+        Color::White => "37"
+
+        Color::BrightBlack => "90"
+        Color::BrightRed => "91"
+        Color::BrightGreen => "92"
+        Color::BrightYellow => "93"
+        Color::BrightBlue => "94"
+        Color::BrightMagenta => "95"
+        Color::BrightCyan => "96"
+        Color::BrightWhite => "97"
+    }
+}
+
+fn style_code(style: Style) -> str {
+    ret match style {
+        Style::Normal => "0"
+        Style::Bold => "1"
+        Style::Dim => "2"
+        Style::Italic => "3"
+        Style::Underline => "4"
+        Style::Blink => "5"
+        Style::Reverse => "7"
+        Style::Hidden => "8"
+        Style::Strikethrough => "9"
+    }
+}

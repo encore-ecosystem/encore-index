@@ -1,0 +1,712 @@
+import core::fmt::Debug
+import core::io::{print, read_line, stdin_fd}
+import core::option::Option
+import core::result::Result
+import core::testing::assert
+import core::vec::Vec
+
+pub struct Prompt {
+    label: str
+    default_value: str
+}
+
+pub struct SelectPrompt {
+    label: str
+    choices: Vec[str]
+    default_index: usize
+}
+
+pub struct RetryPolicy {
+    max_attempts: usize
+    error_message: str
+}
+
+impl for Prompt {
+    pub fn new(label: str) -> Self {
+        ret Self{label, ""}
+    }
+
+    pub fn with_default(label: str, default_value: str) -> Self {
+        ret Self{label, default_value}
+    }
+
+    pub fn render(self) -> str {
+        if self.default_value == "" {
+            ret self.label + ": "
+        }
+        ret self.label + " [" + self.default_value + "]: "
+    }
+
+    pub fn parse(self, raw: str) -> str {
+        let normalized = trim_line(raw)
+        if normalized == "" {
+            ret self.default_value
+        }
+        ret normalized
+    }
+
+    pub fn ask(self) -> str {
+        print(self.render())
+        match read_line(stdin_fd()) {
+            Option[str]::Some(raw) => {
+                ret self.parse(raw)
+            }
+            Option[str]::None => {
+                ret self.default_value
+            }
+        }
+    }
+}
+
+impl for SelectPrompt {
+    pub fn new(label: str, choices: Vec[str]) -> Self {
+        ret Self{label, choices, 0_usize}
+    }
+
+    pub fn with_default(label: str, choices: Vec[str], default_index: usize) -> Self {
+        ret Self{label, choices, default_index}
+    }
+
+    pub fn render(self) -> str {
+        let mut out = self.label + ": "
+        let mut index = 0_usize
+        loop {
+            match self.choices.get(index) {
+                Option[str]::Some(choice) => {
+                    if index > 0_usize {
+                        out += ", "
+                    }
+                    out += Debug::fmt(index + 1_usize) + "=" + choice
+                    index = index + 1_usize
+                }
+                Option[str]::None => {
+                    break
+                }
+            }
+        }
+        if self.choices.len() > 0_usize {
+            out += " [" + Debug::fmt(self.default_index + 1_usize) + "]"
+        }
+        out += ": "
+        ret out
+    }
+
+    pub fn parse(self, raw: str) -> str {
+        ret parse_choice(raw, self.choices, self.default_index)
+    }
+
+    pub fn ask(self) -> str {
+        print(self.render())
+        match read_line(stdin_fd()) {
+            Option[str]::Some(raw) => {
+                ret self.parse(raw)
+            }
+            Option[str]::None => {
+                ret self.choices.get(self.default_index).unwrap_or("")
+            }
+        }
+    }
+}
+
+impl for RetryPolicy {
+    pub fn new(max_attempts: usize, error_message: str) -> Self {
+        ret Self{max_attempts, error_message}
+    }
+
+    pub fn three(error_message: str) -> Self {
+        ret Self::new(3_usize, error_message)
+    }
+}
+
+pub fn confirm(prompt: str, default_yes: bool) -> bool {
+    let suffix = if default_yes { " [Y/n]: " } else { " [y/N]: " }
+    print(prompt + suffix)
+    match read_line(stdin_fd()) {
+        Option[str]::Some(raw) => {
+            ret parse_confirm(raw, default_yes)
+        }
+        Option[str]::None => {
+            ret default_yes
+        }
+    }
+}
+
+pub fn parse_confirm(raw: str, default_yes: bool) -> bool {
+    let normalized = trim_line(raw)
+    if normalized == "" {
+        ret default_yes
+    }
+    if normalized == "y" || normalized == "Y" || normalized == "yes" || normalized == "YES" || normalized == "true" || normalized == "1" {
+        ret true
+    }
+    ret false
+}
+
+pub fn parse_choice(raw: str, choices: Vec[str], default_index: usize) -> str {
+    let normalized = trim_line(raw)
+    if normalized == "" {
+        ret choices.get(default_index).unwrap_or("")
+    }
+
+    let mut index = 0_usize
+    loop {
+        match choices.get(index) {
+            Option[str]::Some(choice) => {
+                if normalized == choice {
+                    ret choice
+                }
+                if normalized == Debug::fmt(index + 1_usize) {
+                    ret choice
+                }
+                index = index + 1_usize
+            }
+            Option[str]::None => {
+                break
+            }
+        }
+    }
+
+    ret choices.get(default_index).unwrap_or("")
+}
+
+pub fn parse_choice_result(raw: str, choices: Vec[str], default_index: usize) -> Result[str, str] {
+    let normalized = trim_line(raw)
+    if normalized == "" {
+        match choices.get(default_index) {
+            Option[str]::Some(value) => {
+                ret Result[str, str]::Ok(value)
+            }
+            Option[str]::None => {
+                ret Result[str, str]::Err("default choice is out of range")
+            }
+        }
+    }
+
+    let mut index = 0_usize
+    loop {
+        match choices.get(index) {
+            Option[str]::Some(choice) => {
+                if normalized == choice || normalized == Debug::fmt(index + 1_usize) {
+                    ret Result[str, str]::Ok(choice)
+                }
+                index = index + 1_usize
+            }
+            Option[str]::None => {
+                break
+            }
+        }
+    }
+
+    ret Result[str, str]::Err("choice is not in the available options")
+}
+
+pub fn parse_non_empty(raw: str, fallback: str) -> str {
+    let normalized = trim_line(raw)
+    if normalized == "" {
+        ret fallback
+    }
+    ret normalized
+}
+
+pub fn parse_non_empty_result(raw: str) -> Result[str, str] {
+    let normalized = trim_line(raw)
+    if normalized == "" {
+        ret Result[str, str]::Err("value must not be empty")
+    }
+    ret Result[str, str]::Ok(normalized)
+}
+
+pub fn parse_identifier(raw: str, fallback: str) -> str {
+    let normalized = trim_line(raw)
+    if normalized == "" {
+        ret fallback
+    }
+    if !is_identifier_start(normalized.slice(0_usize, 1_usize)) {
+        ret fallback
+    }
+
+    let mut index = 1_usize
+    while index < normalized.char_len() {
+        let ch = normalized.slice(index, 1_usize)
+        if !is_identifier_continue(ch) {
+            ret fallback
+        }
+        index = index + 1_usize
+    }
+    ret normalized
+}
+
+pub fn parse_identifier_result(raw: str) -> Result[str, str] {
+    let normalized = trim_line(raw)
+    if normalized == "" {
+        ret Result[str, str]::Err("value must not be empty")
+    }
+    if !is_identifier_start(normalized.slice(0_usize, 1_usize)) {
+        ret Result[str, str]::Err("identifier must start with a letter or underscore")
+    }
+
+    let mut index = 1_usize
+    while index < normalized.char_len() {
+        let ch = normalized.slice(index, 1_usize)
+        if !is_identifier_continue(ch) {
+            ret Result[str, str]::Err("identifier contains invalid characters")
+        }
+        index = index + 1_usize
+    }
+    ret Result[str, str]::Ok(normalized)
+}
+
+pub fn parse_usize_or(raw: str, fallback: usize) -> usize {
+    let normalized = trim_line(raw)
+    if normalized == "" {
+        ret fallback
+    }
+
+    let mut out = 0_usize
+    let mut index = 0_usize
+    while index < normalized.char_len() {
+        let ch = normalized.slice(index, 1_usize)
+        if ch == "0" || ch == "1" || ch == "2" || ch == "3" || ch == "4" || ch == "5" || ch == "6" || ch == "7" || ch == "8" || ch == "9" {
+            out = out * 10_usize + digit_value(ch)
+            index = index + 1_usize
+        }
+        else {
+            ret fallback
+        }
+    }
+    ret out
+}
+
+pub fn parse_usize_result(raw: str) -> Result[usize, str] {
+    let normalized = trim_line(raw)
+    if normalized == "" {
+        ret Result[usize, str]::Err("value must not be empty")
+    }
+
+    let mut out = 0_usize
+    let mut index = 0_usize
+    while index < normalized.char_len() {
+        let ch = normalized.slice(index, 1_usize)
+        if ch == "0" || ch == "1" || ch == "2" || ch == "3" || ch == "4" || ch == "5" || ch == "6" || ch == "7" || ch == "8" || ch == "9" {
+            out = out * 10_usize + digit_value(ch)
+            index = index + 1_usize
+        }
+        else {
+            ret Result[usize, str]::Err("value must be a positive integer")
+        }
+    }
+    ret Result[usize, str]::Ok(out)
+}
+
+pub fn ask_non_empty(prompt: Prompt, fallback: str, max_attempts: usize) -> str {
+    let mut attempts = 0_usize
+    while attempts < max_attempts {
+        let value = prompt.ask()
+        let parsed = parse_non_empty(value, "")
+        if parsed != "" {
+            ret parsed
+        }
+        print("value must not be empty\n")
+        attempts = attempts + 1_usize
+    }
+    ret fallback
+}
+
+pub fn ask_identifier(prompt: Prompt, fallback: str, max_attempts: usize) -> str {
+    let mut attempts = 0_usize
+    while attempts < max_attempts {
+        let value = prompt.ask()
+        let parsed = parse_identifier(value, "")
+        if parsed != "" {
+            ret parsed
+        }
+        print("value must be a valid identifier\n")
+        attempts = attempts + 1_usize
+    }
+    ret fallback
+}
+
+pub fn ask_usize(prompt: Prompt, fallback: usize, max_attempts: usize) -> usize {
+    let mut attempts = 0_usize
+    while attempts < max_attempts {
+        let value = prompt.ask()
+        let parsed = parse_usize_or(value, fallback + 1_usize)
+        if parsed != fallback + 1_usize || value == Debug::fmt(fallback + 1_usize) {
+            ret parsed
+        }
+        if trim_line(value) == Debug::fmt(fallback) {
+            ret fallback
+        }
+        print("value must be a positive integer\n")
+        attempts = attempts + 1_usize
+    }
+    ret fallback
+}
+
+pub fn ask_non_empty_with_policy(prompt: Prompt, fallback: str, policy: RetryPolicy) -> str {
+    ret ask_non_empty_with_message(prompt, fallback, policy.max_attempts, policy.error_message)
+}
+
+pub fn ask_identifier_with_policy(prompt: Prompt, fallback: str, policy: RetryPolicy) -> str {
+    ret ask_identifier_with_message(prompt, fallback, policy.max_attempts, policy.error_message)
+}
+
+pub fn ask_usize_with_policy(prompt: Prompt, fallback: usize, policy: RetryPolicy) -> usize {
+    ret ask_usize_with_message(prompt, fallback, policy.max_attempts, policy.error_message)
+}
+
+pub fn ask_non_empty_with_message(prompt: Prompt, fallback: str, max_attempts: usize, error_message: str) -> str {
+    let mut attempts = 0_usize
+    while attempts < max_attempts {
+        let value = prompt.ask()
+        match parse_non_empty_result(value) {
+            Result[str, str]::Ok(parsed) => { ret parsed }
+            Result[str, str]::Err(message) => {
+                if error_message != "" { print(error_message + "\n") }
+                else { print(message + "\n") }
+            }
+        }
+        attempts = attempts + 1_usize
+    }
+    ret fallback
+}
+
+pub fn ask_identifier_with_message(prompt: Prompt, fallback: str, max_attempts: usize, error_message: str) -> str {
+    let mut attempts = 0_usize
+    while attempts < max_attempts {
+        let value = prompt.ask()
+        match parse_identifier_result(value) {
+            Result[str, str]::Ok(parsed) => { ret parsed }
+            Result[str, str]::Err(message) => {
+                if error_message != "" { print(error_message + "\n") }
+                else { print(message + "\n") }
+            }
+        }
+        attempts = attempts + 1_usize
+    }
+    ret fallback
+}
+
+pub fn ask_usize_with_message(prompt: Prompt, fallback: usize, max_attempts: usize, error_message: str) -> usize {
+    let mut attempts = 0_usize
+    while attempts < max_attempts {
+        let value = prompt.ask()
+        match parse_usize_result(value) {
+            Result[usize, str]::Ok(parsed) => { ret parsed }
+            Result[usize, str]::Err(message) => {
+                if trim_line(value) == Debug::fmt(fallback) { ret fallback }
+                if error_message != "" { print(error_message + "\n") }
+                else { print(message + "\n") }
+            }
+        }
+        attempts = attempts + 1_usize
+    }
+    ret fallback
+}
+
+pub fn ask_non_empty_result(prompt: Prompt, max_attempts: usize) -> Result[str, str] {
+    let mut attempts = 0_usize
+    let mut last_error = "value must not be empty"
+    while attempts < max_attempts {
+        match parse_non_empty_result(prompt.ask()) {
+            Result[str, str]::Ok(value) => { ret Result[str, str]::Ok(value) }
+            Result[str, str]::Err(message) => {
+                last_error = message
+                attempts = attempts + 1_usize
+            }
+        }
+    }
+    ret Result[str, str]::Err(last_error)
+}
+
+pub fn ask_identifier_result(prompt: Prompt, max_attempts: usize) -> Result[str, str] {
+    let mut attempts = 0_usize
+    let mut last_error = "value must be a valid identifier"
+    while attempts < max_attempts {
+        match parse_identifier_result(prompt.ask()) {
+            Result[str, str]::Ok(value) => { ret Result[str, str]::Ok(value) }
+            Result[str, str]::Err(message) => {
+                last_error = message
+                attempts = attempts + 1_usize
+            }
+        }
+    }
+    ret Result[str, str]::Err(last_error)
+}
+
+pub fn ask_usize_result(prompt: Prompt, max_attempts: usize) -> Result[usize, str] {
+    let mut attempts = 0_usize
+    let mut last_error = "value must be a positive integer"
+    while attempts < max_attempts {
+        match parse_usize_result(prompt.ask()) {
+            Result[usize, str]::Ok(value) => { ret Result[usize, str]::Ok(value) }
+            Result[usize, str]::Err(message) => {
+                last_error = message
+                attempts = attempts + 1_usize
+            }
+        }
+    }
+    ret Result[usize, str]::Err(last_error)
+}
+
+pub fn ask_select_result(prompt: SelectPrompt, max_attempts: usize) -> Result[str, str] {
+    let mut attempts = 0_usize
+    let mut last_error = "choice is not in the available options"
+    while attempts < max_attempts {
+        match parse_choice_result(prompt.ask(), prompt.choices, prompt.default_index) {
+            Result[str, str]::Ok(value) => { ret Result[str, str]::Ok(value) }
+            Result[str, str]::Err(message) => {
+                last_error = message
+                attempts = attempts + 1_usize
+            }
+        }
+    }
+    ret Result[str, str]::Err(last_error)
+}
+
+fn digit_value(ch: str) -> usize {
+    if ch == "0" { ret 0_usize }
+    if ch == "1" { ret 1_usize }
+    if ch == "2" { ret 2_usize }
+    if ch == "3" { ret 3_usize }
+    if ch == "4" { ret 4_usize }
+    if ch == "5" { ret 5_usize }
+    if ch == "6" { ret 6_usize }
+    if ch == "7" { ret 7_usize }
+    if ch == "8" { ret 8_usize }
+    ret 9_usize
+}
+
+fn is_identifier_start(ch: str) -> bool {
+    ret is_alpha(ch) || ch == "_"
+}
+
+fn is_identifier_continue(ch: str) -> bool {
+    ret is_identifier_start(ch) || prompt_is_digit(ch)
+}
+
+fn is_alpha(ch: str) -> bool {
+    let b = ch.byte_at(0_usize)
+    ret (b >= 97_u8 && b <= 122_u8) || (b >= 65_u8 && b <= 90_u8)
+}
+
+fn prompt_is_digit(ch: str) -> bool {
+    let b = ch.byte_at(0_usize)
+    ret b >= 48_u8 && b <= 57_u8
+}
+
+fn trim_line(value: str) -> str {
+    let total = value.char_len()
+    if total == 0_usize {
+        ret value
+    }
+
+    let mut end = total
+    loop {
+        if end == 0_usize {
+            break
+        }
+        match value.get(end - 1_usize) {
+            Option[str]::Some(ch) => {
+                if ch == "\n" || ch == "\r" || ch == " " || ch == "\t" {
+                    end = end - 1_usize
+                }
+                else {
+                    break
+                }
+            }
+            Option[str]::None => {
+                break
+            }
+        }
+    }
+
+    let mut start = 0_usize
+    loop {
+        if start >= end {
+            break
+        }
+        match value.get(start) {
+            Option[str]::Some(ch) => {
+                if ch == " " || ch == "\t" {
+                    start = start + 1_usize
+                }
+                else {
+                    break
+                }
+            }
+            Option[str]::None => {
+                break
+            }
+        }
+    }
+
+    ret value.slice(start, end - start)
+}
+
+#attr(test)
+fn prompt_parses_defaults_and_confirmation() -> bool {
+    let prompt = Prompt::with_default("Name", "encore")
+    ret assert(prompt.render() == "Name [encore]: ")
+        && assert(prompt.parse("\n") == "encore")
+        && assert(prompt.parse(" compiler \n") == "compiler")
+        && assert(parse_confirm("\n", true))
+        && assert(!parse_confirm("\n", false))
+        && assert(parse_confirm("yes\n", false))
+        && assert(!parse_confirm("no\n", true))
+}
+
+#attr(test)
+fn select_prompt_parses_indexes_and_labels() -> bool {
+    let mut choices = Vec[str]::new()
+    choices.push("debug")
+    choices.push("release")
+    choices.push("extreme")
+    let prompt = SelectPrompt::with_default("Profile", choices, 1_usize)
+    ret assert(str_contains(prompt.render(), "1=debug"))
+        && assert(prompt.parse("3\n") == "extreme")
+        && assert(prompt.parse("debug\n") == "debug")
+        && assert(prompt.parse("\n") == "release")
+        && assert(parse_choice_result("2\n", vec3("debug", "release", "extreme"), 0_usize).unwrap_or("x") == "release")
+}
+
+#attr(test)
+fn prompt_validators_handle_fallbacks() -> bool {
+    ret assert(parse_non_empty(" build \n", "fallback") == "build")
+        && assert(parse_non_empty("\n", "fallback") == "fallback")
+        && assert(parse_non_empty_result(" build ").unwrap_or("x") == "build")
+        && assert(parse_identifier("bootstrap_2\n", "fallback") == "bootstrap_2")
+        && assert(parse_identifier("2bad\n", "fallback") == "fallback")
+        && assert(parse_identifier_result("bootstrap_2").unwrap_or("x") == "bootstrap_2")
+        && assert(parse_usize_or("42\n", 7_usize) == 42_usize)
+        && assert(parse_usize_or("oops\n", 7_usize) == 7_usize)
+        && assert(parse_usize_result("42").unwrap_or(0_usize) == 42_usize)
+        && assert(resolve_non_empty_attempts(vec2("","build"), "fallback") == "build")
+        && assert(resolve_identifier_attempts(vec2("2bad","good_name"), "fallback") == "good_name")
+        && assert(resolve_usize_attempts(vec2("oops","42"), 7_usize) == 42_usize)
+        && assert(resolve_non_empty_attempts(vec3("", "", "ok"), "fallback") == "ok")
+}
+
+#attr(test)
+fn retry_policy_exposes_attempts_and_messages() -> bool {
+    let policy = RetryPolicy::three("retry")
+    ret assert(policy.max_attempts == 3_usize)
+        && assert(policy.error_message == "retry")
+        && assert(resolve_prompt_result(vec2("","ok")).unwrap_or("x") == "ok")
+}
+
+pub fn resolve_non_empty_attempts(values: Vec[str], fallback: str) -> str {
+    let mut index = 0_usize
+    loop {
+        match values.get(index) {
+            Option[str]::Some(value) => {
+                let parsed = parse_non_empty(value, "")
+                if parsed != "" {
+                    ret parsed
+                }
+                index = index + 1_usize
+            }
+            Option[str]::None => {
+                break
+            }
+        }
+    }
+    ret fallback
+}
+
+pub fn resolve_identifier_attempts(values: Vec[str], fallback: str) -> str {
+    let mut index = 0_usize
+    loop {
+        match values.get(index) {
+            Option[str]::Some(value) => {
+                let parsed = parse_identifier(value, "")
+                if parsed != "" {
+                    ret parsed
+                }
+                index = index + 1_usize
+            }
+            Option[str]::None => {
+                break
+            }
+        }
+    }
+    ret fallback
+}
+
+pub fn resolve_usize_attempts(values: Vec[str], fallback: usize) -> usize {
+    let mut index = 0_usize
+    loop {
+        match values.get(index) {
+            Option[str]::Some(value) => {
+                if trim_line(value) == "" {
+                    index = index + 1_usize
+                }
+                else {
+                    let parsed = parse_usize_or(value, fallback)
+                    if parsed != fallback || trim_line(value) == Debug::fmt(fallback) {
+                        ret parsed
+                    }
+                    index = index + 1_usize
+                }
+            }
+            Option[str]::None => {
+                break
+            }
+        }
+    }
+    ret fallback
+}
+
+fn vec2(a: str, b: str) -> Vec[str] {
+    let mut out = Vec[str]::new()
+    out.push(a)
+    out.push(b)
+    ret out
+}
+
+fn vec3(a: str, b: str, c: str) -> Vec[str] {
+    let mut out = Vec[str]::new()
+    out.push(a)
+    out.push(b)
+    out.push(c)
+    ret out
+}
+
+pub fn resolve_prompt_result(values: Vec[str]) -> Result[str, str] {
+    let mut index = 0_usize
+    loop {
+        match values.get(index) {
+            Option[str]::Some(value) => {
+                match parse_non_empty_result(value) {
+                    Result[str, str]::Ok(parsed) => { ret Result[str, str]::Ok(parsed) }
+                    Result[str, str]::Err(message) => {
+                        index = index + 1_usize
+                    }
+                }
+            }
+            Option[str]::None => {
+                break
+            }
+        }
+    }
+    ret Result[str, str]::Err("value must not be empty")
+}
+
+fn str_contains(value: str, needle: str) -> bool {
+    let needle_len = needle.char_len()
+    let value_len = value.char_len()
+    if needle_len == 0_usize {
+        ret true
+    }
+    if needle_len > value_len {
+        ret false
+    }
+    let mut start = 0_usize
+    while start + needle_len <= value_len {
+        if value.slice(start, needle_len) == needle {
+            ret true
+        }
+        start = start + 1_usize
+    }
+    ret false
+}

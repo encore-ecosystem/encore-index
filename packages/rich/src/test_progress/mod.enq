@@ -1,0 +1,93 @@
+import colorterm::{styled, Color, Style}
+import core::fmt::Debug
+import core::io::{eprintln, stderr_fd}
+import core::time::perf_counter_ms
+import refrain::native::{is_terminal, terminal_spinner_start, terminal_spinner_stop}
+import refrain::spinner::Spinner
+import std::vec::Vec
+
+pub struct TestProgress {
+    interactive: bool
+    active: bool
+    spinner: Spinner
+    suite_started_ms: u64
+    test_started_ms: u64
+    failures: Vec[str]
+}
+
+impl for TestProgress {
+    pub fn auto() -> Self {
+        let now = perf_counter_ms()
+        ret Self{is_terminal(stderr_fd()), false, Spinner::dots(), now, now, Vec[str]::new()}
+    }
+
+    pub fn with_interactive(interactive: bool) -> Self {
+        let now = perf_counter_ms()
+        ret Self{interactive, false, Spinner::dots(), now, now, Vec[str]::new()}
+    }
+
+    pub fn start_suite(self: mut Self, suite: str, total: usize) -> () {
+        self.suite_started_ms = perf_counter_ms()
+        self.failures = Vec[str]::new()
+        eprintln("     Running " + Debug::fmt(total) + " tests in " + suite)
+        ret ()
+    }
+
+    pub fn start_test(self: mut Self, name: str, current: usize, total: usize) -> () {
+        self.stop_live()
+        self.active = true
+        self.test_started_ms = perf_counter_ms()
+        if self.interactive {
+            terminal_spinner_start("     Testing [" + Debug::fmt(current) + "/" + Debug::fmt(total) + "] " + name, self.spinner.encoded_frames(), self.spinner.interval())
+        }
+        ret ()
+    }
+
+    pub fn pass_test(self: mut Self, name: str) -> () {
+        self.stop_live()
+        let status = if self.interactive { styled("ok", Color::Green, Style::Normal) } else { "ok" }
+        let elapsed = format_duration(perf_counter_ms() - self.test_started_ms)
+        eprintln("test " + name + " ... " + status + " (" + elapsed + ")")
+        ret ()
+    }
+
+    pub fn fail_test(self: mut Self, name: str, reason: str) -> () {
+        self.stop_live()
+        self.failures.push(name)
+        let status = if self.interactive { styled("FAILED", Color::Red, Style::Bold) } else { "FAILED" }
+        let elapsed = format_duration(perf_counter_ms() - self.test_started_ms)
+        eprintln("test " + name + " ... " + status + " (" + elapsed + ")")
+        if reason != "" { eprintln("    " + reason) }
+        ret ()
+    }
+
+    pub fn finish(self: mut Self, passed: usize, failed: usize) -> () {
+        self.stop_live()
+        if self.failures.len() > 0_usize {
+            eprintln("")
+            eprintln("failures:")
+            for name in self.failures { eprintln("    " + name) }
+            eprintln("")
+        }
+        let elapsed = format_duration(perf_counter_ms() - self.suite_started_ms)
+        let state = if failed == 0_usize { "ok" } else { "FAILED" }
+        let summary = "test result: " + state + ". " + Debug::fmt(passed) + " passed; " + Debug::fmt(failed) + " failed; finished in " + elapsed
+        if self.interactive && failed == 0_usize { eprintln(styled(summary, Color::Green, Style::Normal)) }
+        elif self.interactive { eprintln(styled(summary, Color::Red, Style::Bold)) }
+        else { eprintln(summary) }
+        ret ()
+    }
+
+    fn stop_live(self: mut Self) -> () {
+        if self.interactive && self.active { terminal_spinner_stop() }
+        self.active = false
+        ret ()
+    }
+}
+
+fn format_duration(milliseconds: u64) -> str {
+    if milliseconds < 1000_u64 { ret Debug::fmt(milliseconds) + " ms" }
+    let seconds = milliseconds / 1000_u64
+    let tenths = (milliseconds % 1000_u64) / 100_u64
+    ret Debug::fmt(seconds) + "." + Debug::fmt(tenths) + "s"
+}

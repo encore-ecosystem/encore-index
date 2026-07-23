@@ -1,0 +1,3 @@
+//! Provides console and stream input/output helpers.
+
+pub import core::io::*

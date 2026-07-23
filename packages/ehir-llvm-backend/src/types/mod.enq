@@ -1,0 +1,54 @@
+import ehirlib::core::Module
+
+pub enum BackendOptProfile {
+    DEBUG
+    RELEASE
+    EXTREME
+}
+
+pub enum BackendTarget {
+    OBJECT
+    STATIC_LIB
+    EXECUTABLE
+}
+
+pub struct BackendConfig {
+    target_dir: str
+    profile: BackendOptProfile
+}
+
+pub struct CompiledRefrain {
+    name: str
+    target: BackendTarget
+    module: Module
+}
+
+pub struct BuildArtifact {
+    output_path: str
+    target: BackendTarget
+    status: i32
+}
+
+pub fn backend_config(target_dir: str, profile: BackendOptProfile) -> BackendConfig {
+    ret BackendConfig{target_dir, profile}
+}
+
+pub fn compiled_refrain(name: str, target: BackendTarget, module: Module) -> CompiledRefrain {
+    ret CompiledRefrain{name, target, module}
+}
+
+pub fn build_artifact(output_path: str, target: BackendTarget, status: i32) -> BuildArtifact {
+    ret BuildArtifact{output_path, target, status}
+}
+
+pub fn debug_profile() -> BackendOptProfile {
+    ret BackendOptProfile::DEBUG
+}
+
+pub fn release_profile() -> BackendOptProfile {
+    ret BackendOptProfile::RELEASE
+}
+
+pub fn extreme_profile() -> BackendOptProfile {
+    ret BackendOptProfile::EXTREME
+}

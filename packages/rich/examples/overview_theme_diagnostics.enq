@@ -1,0 +1,43 @@
+import core::vec::Vec
+import rich::{Console, Panel, Table, Theme, Traceback, inspect_compiler_state, pretty_kv, render_markup}
+
+fn main() -> u32 {
+    let console = Console::new()
+    let theme = Theme::compiler()
+
+    console.theme_info(theme, "bootstrap diagnostics")
+    console.println(render_markup("[bold]phase[/]: [info]analysis[/]"))
+    console.println(pretty_kv("module", "frontend"))
+    console.println(inspect_compiler_state("analysis", "frontend", 17_usize, "collecting diagnostics"))
+
+    let mut headers = Vec[str]::new()
+    headers.push("check")
+    headers.push("result")
+    let mut table = Table::themed(theme, "Diagnostics", headers)
+    let mut row1 = Vec[str]::new()
+    row1.push("imports")
+    row1.push("ok")
+    table.add_row(row1)
+    let mut row2 = Vec[str]::new()
+    row2.push("types")
+    row2.push("pending")
+    table.add_row(row2)
+    console.themed_table(theme, table)
+
+    console.panel(Panel::themed(theme, "Summary", "imports resolved\ntypes pending"))
+
+    let mut tb = Traceback::compiler_error("unknown symbol")
+    tb.add_context_frame(
+        "frontend/checker.enq",
+        "check_symbol",
+        27_usize,
+        11_usize,
+        "let ty = resolve(expr)",
+        "ret env.lookup(name)",
+        "ret ty",
+    )
+    tb.add_note("name lookup reached the current scope boundary")
+    tb.add_hint("check whether the symbol is introduced by a previous pass")
+    console.traceback(tb)
+    ret 0_u32
+}

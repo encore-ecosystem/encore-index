@@ -1,0 +1,254 @@
+//! Provides the `os` module.
+
+import core::option::Option
+import core::ops::*
+import core::vec::Vec
+
+extern fn encore_os_argc() -> usize
+extern fn encore_os_argv(index: usize) -> str
+extern fn encore_os_cwd() -> str
+extern fn encore_os_home_dir() -> str
+extern fn encore_os_core_dir() -> str
+extern fn encore_os_arch() -> str
+extern fn encore_os_getenv(name: str) -> str
+extern fn encore_os_executable_path() -> str
+
+extern fn encore_fs_read_file(path: str) -> str
+extern fn encore_fs_write_file(path: str, contents: str) -> i32
+extern fn encore_fs_status(path: str) -> i32
+extern fn encore_fs_is_directory(path: str) -> bool
+extern fn encore_fs_remove_file(path: str) -> i32
+extern fn encore_fs_copy_file(source: str, destination: str) -> i32
+extern fn encore_fs_set_executable(path: str) -> i32
+extern fn encore_fs_mkdir(path: str) -> i32
+extern fn encore_fs_mkdir_all(path: str) -> i32
+extern fn encore_fs_read_dir(path: str) -> str
+extern fn encore_fs_remove_dir_all(path: str) -> i32
+extern fn encore_fs_sha256(path: str) -> str
+extern fn encore_self_update_commit(staged_root: str, install_root: str, new_executable: str, workspace: str) -> i32
+extern fn encore_self_update_apply(parent_pid: usize, staged_root: str, install_root: str, workspace: str, helper_path: str) -> i32
+
+/// Performs the `argc` operation.
+pub fn argc() -> usize {
+    unsafe {
+        ret encore_os_argc()
+    }
+}
+
+/// Performs the `argv` operation.
+pub fn argv(index: usize) -> Option[str] {
+    if index >= argc() {
+        ret Option[str]::None
+    }
+
+    unsafe {
+        ret Option[str]::Some(encore_os_argv(index))
+    }
+}
+
+/// Performs the `args` operation.
+pub fn args() -> Vec[str] {
+    let mut out = Vec[str]::new()
+    let mut index = 0_usize
+    loop {
+        match argv(index) {
+            Option[str]::Some(value) => {
+                out.push(value)
+                index = index + 1_usize
+            }
+            Option[str]::None => {
+                break
+            }
+        }
+    }
+    ret out
+}
+
+/// Performs the `cwd` operation.
+pub fn cwd() -> str {
+    unsafe {
+        ret encore_os_cwd()
+    }
+}
+
+/// Performs the `home_dir` operation.
+pub fn home_dir() -> str {
+    unsafe {
+        ret encore_os_home_dir()
+    }
+}
+
+/// Performs the `core_dir` operation.
+pub fn core_dir() -> str {
+    unsafe { ret encore_os_core_dir() }
+}
+
+/// Performs the `arch_name` operation.
+pub fn arch_name() -> str {
+    unsafe { ret encore_os_arch() }
+}
+
+/// Performs the `env` operation.
+pub fn env(name: str) -> Option[str] {
+    let value = unsafe { encore_os_getenv(name) }
+    if value == "" { ret Option[str]::None }
+    ret Option[str]::Some(value)
+}
+
+/// Returns the absolute path of the running executable when the OS exposes it.
+pub fn executable_path() -> str { unsafe { ret encore_os_executable_path() } }
+
+#cfg(windows)
+/// Performs the `os_name` operation.
+pub fn os_name() -> str {
+    ret "windows"
+}
+
+#cfg(linux)
+/// Performs the `os_name` operation.
+pub fn os_name() -> str {
+    ret "linux"
+}
+
+#cfg(macos)
+/// Performs the `os_name` operation.
+pub fn os_name() -> str {
+    ret "macos"
+}
+
+#cfg(all(unix, not(any(linux, macos))))
+/// Performs the `os_name` operation.
+pub fn os_name() -> str {
+    ret "unix"
+}
+
+#cfg(windows)
+/// Performs the `path_separator` operation.
+pub fn path_separator() -> str {
+    ret "\\"
+}
+
+#cfg(unix)
+/// Performs the `path_separator` operation.
+pub fn path_separator() -> str {
+    ret "/"
+}
+
+/// Reads file from the underlying resource.
+pub fn read_file(path: str) -> str {
+    unsafe {
+        ret encore_fs_read_file(path)
+    }
+}
+
+/// Writes file to the underlying resource.
+pub fn write_file(path: str, contents: str) -> i32 {
+    unsafe {
+        ret encore_fs_write_file(path, contents)
+    }
+}
+
+/// Performs the `file_exists` operation.
+pub fn file_exists(path: str) -> bool {
+    unsafe {
+        ret encore_fs_status(path) == 0_i32
+    }
+}
+
+/// Returns whether directory.
+pub fn is_directory(path: str) -> bool {
+    unsafe { ret encore_fs_is_directory(path) }
+}
+
+/// Removes file.
+pub fn remove_file(path: str) -> i32 {
+    unsafe {
+        ret encore_fs_remove_file(path)
+    }
+}
+
+/// Performs the `copy_file` operation.
+pub fn copy_file(source: str, destination: str) -> i32 {
+    unsafe { ret encore_fs_copy_file(source, destination) }
+}
+
+/// Updates executable.
+pub fn set_executable(path: str) -> i32 {
+    unsafe { ret encore_fs_set_executable(path) }
+}
+
+/// Performs the `mkdir` operation.
+pub fn mkdir(path: str) -> i32 {
+    unsafe {
+        ret encore_fs_mkdir(path)
+    }
+}
+
+/// Performs the `mkdir_all` operation.
+pub fn mkdir_all(path: str) -> i32 {
+    unsafe { ret encore_fs_mkdir_all(path) }
+}
+
+/// Reads dir from the underlying resource.
+pub fn read_dir(path: str) -> Vec[str] {
+    let raw = unsafe {
+        encore_fs_read_dir(path)
+    }
+    ret split_lines(raw)
+}
+
+/// Recursively removes one directory tree without following directory links.
+pub fn remove_dir_all(path: str) -> i32 { unsafe { ret encore_fs_remove_dir_all(path) } }
+
+/// Computes the lowercase SHA-256 digest of one file, or an empty string when
+/// the file cannot be read.
+pub fn file_sha256(path: str) -> str { unsafe { ret encore_fs_sha256(path) } }
+
+/// Atomically activates a staged Encore installation. On Windows this starts
+/// a detached helper and returns 1; on Unix it completes synchronously and
+/// returns 0. Negative values report a failed transaction.
+pub fn commit_self_update(staged_root: str, install_root: str, new_executable: str, workspace: str) -> i32 {
+    unsafe { ret encore_self_update_commit(staged_root, install_root, new_executable, workspace) }
+}
+
+/// Internal entrypoint used only by the detached Windows update helper.
+pub fn apply_self_update(parent_pid: usize, staged_root: str, install_root: str, workspace: str, helper_path: str) -> i32 {
+    unsafe { ret encore_self_update_apply(parent_pid, staged_root, install_root, workspace, helper_path) }
+}
+
+fn split_lines(value: str) -> Vec[str] {
+    let mut out = Vec[str]::new()
+    let total = value.len()
+    if total == 0_usize {
+        ret out
+    }
+
+    let mut start = 0_usize
+    let mut index = 0_usize
+    loop {
+        if index >= total {
+            break
+        }
+
+        match value.get(index) {
+            Option[str]::Some(ch) => {
+                if ch == "\n" {
+                    if index > start {
+                        out.push(value.slice(start, index - start))
+                    }
+                    start = index + 1_usize
+                }
+            }
+            Option[str]::None => {
+                break
+            }
+        }
+        index = index + 1_usize
+    }
+
+    if start < total {
+        out.push(value.slice(start, total - start))
+    }
+
+    ret out
+}

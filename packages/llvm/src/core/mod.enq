@@ -1,0 +1,259 @@
+import core::option::Option
+import std::vec::Vec
+import refrain::types::LLVMType
+import refrain::value::LLVMValue
+
+pub struct LLVMContext {
+    id: usize
+}
+
+pub struct LLVMParam {
+    name: str
+    typ: LLVMType
+}
+
+pub struct LLVMAddInstruction {
+    out: LLVMValue
+    lhs: LLVMValue
+    rhs: LLVMValue
+}
+
+pub struct LLVMSubInstruction {
+    out: LLVMValue
+    lhs: LLVMValue
+    rhs: LLVMValue
+}
+
+pub struct LLVMRawBinaryInstruction {
+    op: str
+    out: LLVMValue
+    lhs: LLVMValue
+    rhs: LLVMValue
+}
+
+pub struct LLVMCallInstruction {
+    out: Option[LLVMValue]
+    ret_type: LLVMType
+    callee: str
+    args: Vec[LLVMValue]
+}
+
+pub struct LLVMAllocaInstruction {
+    out: LLVMValue
+    alloc_type: LLVMType
+}
+
+pub struct LLVMLoadInstruction {
+    out: LLVMValue
+    ptr: LLVMValue
+}
+
+pub struct LLVMStoreInstruction {
+    value: LLVMValue
+    ptr: LLVMValue
+}
+
+pub struct LLVMGepInstruction {
+    out: LLVMValue
+    element_type: LLVMType
+    ptr: LLVMValue
+    indices: Vec[LLVMValue]
+    inbounds: bool
+}
+
+pub struct LLVMBitcastInstruction {
+    out: LLVMValue
+    src: LLVMValue
+}
+
+pub struct LLVMCastInstruction {
+    op: str
+    out: LLVMValue
+    src: LLVMValue
+}
+
+pub struct LLVMInsertValueInstruction {
+    out: LLVMValue
+    aggregate: LLVMValue
+    value: LLVMValue
+    index: str
+}
+
+pub struct LLVMExtractValueInstruction {
+    out: LLVMValue
+    aggregate: LLVMValue
+    index: str
+}
+
+pub enum LLVMInstruction {
+    Add(LLVMAddInstruction)
+    Sub(LLVMSubInstruction)
+    RawBinary(LLVMRawBinaryInstruction)
+    Call(LLVMCallInstruction)
+    Alloca(LLVMAllocaInstruction)
+    Load(LLVMLoadInstruction)
+    Store(LLVMStoreInstruction)
+    Gep(LLVMGepInstruction)
+    Bitcast(LLVMBitcastInstruction)
+    Cast(LLVMCastInstruction)
+    InsertValue(LLVMInsertValueInstruction)
+    ExtractValue(LLVMExtractValueInstruction)
+}
+
+pub struct LLVMRetTerminator {
+    value: Option[LLVMValue]
+    ret_type: LLVMType
+}
+
+pub struct LLVMBrTerminator {
+    label: str
+}
+
+pub struct LLVMCbrTerminator {
+    cond: LLVMValue
+    true_label: str
+    false_label: str
+}
+
+pub enum LLVMTerminator {
+    Unreachable
+    Ret(LLVMRetTerminator)
+    Br(LLVMBrTerminator)
+    Cbr(LLVMCbrTerminator)
+}
+
+pub fn llvm_unreachable_term() -> LLVMTerminator {
+    ret LLVMTerminator::Unreachable
+}
+
+pub struct LLVMBasicBlock {
+    name: str
+    instructions: Vec[LLVMInstruction]
+    terminator: LLVMTerminator
+}
+
+pub struct LLVMFunction {
+    name: str
+    ret_type: LLVMType
+    params: Vec[LLVMParam]
+    blocks: Vec[LLVMBasicBlock]
+    is_extern: bool
+    linkage: str
+    attributes: str
+}
+
+pub struct LLVMModule {
+    context: LLVMContext
+    name: str
+    type_declarations: Vec[str]
+    functions: Vec[LLVMFunction]
+}
+
+pub fn llvm_context_new() -> LLVMContext {
+    ret LLVMContext{0_usize}
+}
+
+pub fn llvm_module_new(context: LLVMContext, name: str, type_declarations: Vec[str], functions: Vec[LLVMFunction]) -> LLVMModule {
+    ret LLVMModule{context, name, type_declarations, functions}
+}
+
+pub fn llvm_param(name: str, typ: LLVMType) -> LLVMParam {
+    ret LLVMParam{name, typ}
+}
+
+pub fn llvm_add_instruction(out: LLVMValue, lhs: LLVMValue, rhs: LLVMValue) -> LLVMInstruction {
+    ret LLVMInstruction::Add(LLVMAddInstruction{out, lhs, rhs})
+}
+
+pub fn llvm_sub_instruction(out: LLVMValue, lhs: LLVMValue, rhs: LLVMValue) -> LLVMInstruction {
+    ret LLVMInstruction::Sub(LLVMSubInstruction{out, lhs, rhs})
+}
+
+pub fn llvm_raw_binary_instruction(op: str, out: LLVMValue, lhs: LLVMValue, rhs: LLVMValue) -> LLVMInstruction {
+    ret LLVMInstruction::RawBinary(LLVMRawBinaryInstruction{op, out, lhs, rhs})
+}
+
+pub fn llvm_call_instruction(
+    out: Option[LLVMValue],
+    ret_type: LLVMType,
+    callee: str,
+    args: Vec[LLVMValue]
+) -> LLVMInstruction {
+    ret LLVMInstruction::Call(LLVMCallInstruction{out, ret_type, callee, args})
+}
+
+pub fn llvm_alloca_instruction(out: LLVMValue, alloc_type: LLVMType) -> LLVMInstruction {
+    ret LLVMInstruction::Alloca(LLVMAllocaInstruction{out, alloc_type})
+}
+
+pub fn llvm_load_instruction(out: LLVMValue, ptr: LLVMValue) -> LLVMInstruction {
+    ret LLVMInstruction::Load(LLVMLoadInstruction{out, ptr})
+}
+
+pub fn llvm_store_instruction(value: LLVMValue, ptr: LLVMValue) -> LLVMInstruction {
+    ret LLVMInstruction::Store(LLVMStoreInstruction{value, ptr})
+}
+
+pub fn llvm_gep_instruction(
+    out: LLVMValue,
+    element_type: LLVMType,
+    ptr: LLVMValue,
+    indices: Vec[LLVMValue],
+    inbounds: bool
+) -> LLVMInstruction {
+    ret LLVMInstruction::Gep(LLVMGepInstruction{out, element_type, ptr, indices, inbounds})
+}
+
+pub fn llvm_bitcast_instruction(out: LLVMValue, src: LLVMValue) -> LLVMInstruction {
+    ret LLVMInstruction::Bitcast(LLVMBitcastInstruction{out, src})
+}
+
+pub fn llvm_cast_instruction(op: str, out: LLVMValue, src: LLVMValue) -> LLVMInstruction {
+    ret LLVMInstruction::Cast(LLVMCastInstruction{op, out, src})
+}
+
+pub fn llvm_insertvalue_instruction(out: LLVMValue, aggregate: LLVMValue, value: LLVMValue, index: str) -> LLVMInstruction {
+    ret LLVMInstruction::InsertValue(LLVMInsertValueInstruction{out, aggregate, value, index})
+}
+
+pub fn llvm_extractvalue_instruction(out: LLVMValue, aggregate: LLVMValue, index: str) -> LLVMInstruction {
+    ret LLVMInstruction::ExtractValue(LLVMExtractValueInstruction{out, aggregate, index})
+}
+
+pub fn llvm_ret_term(value: Option[LLVMValue], ret_type: LLVMType) -> LLVMTerminator {
+    ret LLVMTerminator::Ret(LLVMRetTerminator{value, ret_type})
+}
+
+pub fn llvm_br_term(label: str) -> LLVMTerminator {
+    ret LLVMTerminator::Br(LLVMBrTerminator{label})
+}
+
+pub fn llvm_cbr_term(cond: LLVMValue, true_label: str, false_label: str) -> LLVMTerminator {
+    ret LLVMTerminator::Cbr(LLVMCbrTerminator{cond, true_label, false_label})
+}
+
+pub fn llvm_basic_block(
+    name: str,
+    instructions: Vec[LLVMInstruction],
+    terminator: LLVMTerminator
+) -> LLVMBasicBlock {
+    ret LLVMBasicBlock{name, instructions, terminator}
+}
+
+pub fn llvm_function(
+    name: str,
+    ret_type: LLVMType,
+    params: Vec[LLVMParam],
+    blocks: Vec[LLVMBasicBlock],
+    is_extern: bool
+) -> LLVMFunction {
+    ret LLVMFunction{name, ret_type, params, blocks, is_extern, "", ""}
+}
+
+pub fn llvm_function_with_linkage(function: LLVMFunction, linkage: str) -> LLVMFunction {
+    ret LLVMFunction{function.name, function.ret_type, function.params, function.blocks, function.is_extern, linkage, function.attributes}
+}
+
+pub fn llvm_function_with_attributes(function: LLVMFunction, attributes: str) -> LLVMFunction {
+    ret LLVMFunction{function.name, function.ret_type, function.params, function.blocks, function.is_extern, function.linkage, attributes}
+}

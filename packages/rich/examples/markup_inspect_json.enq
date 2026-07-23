@@ -1,0 +1,23 @@
+import core::vec::Vec
+import json::{Json, field}
+import rich::Console
+
+fn main() -> u32 {
+    let console = Console::new()
+
+    console.rule("Markup")
+    console.markup("[bold]Encore[/] [info]bootstrap[/] [warn]in progress[/]")
+
+    console.rule("Inspect")
+    let mut fields = Vec[(str, str)]::new()
+    fields.push(("module", "translator"))
+    fields.push(("state", "ready"))
+    console.inspect_fields("Frontend", fields)
+
+    console.rule("JSON")
+    let mut payload = Vec[(str, Json)]::new()
+    payload.push(field("name", Json::String("encore")))
+    payload.push(field("compiler", Json::Bool(true)))
+    console.json(Json::Object(payload))
+    ret 0_u32
+}

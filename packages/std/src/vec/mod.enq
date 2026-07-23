@@ -1,0 +1,48 @@
+//! Provides growable vectors and vector iterators.
+
+pub import core::vec::*
+
+import core::option::Option
+
+/// Performs the `vec_singleton` operation.
+pub fn vec_singleton[T](value: T) -> Vec[T] {
+    ret Vec[T]::singleton(value)
+}
+
+/// Returns whether empty.
+pub fn is_empty[T](values: Vec[T]) -> bool {
+    ret values.is_empty()
+}
+
+/// Performs the `append` operation.
+pub fn append[T](left: Vec[T], right: Vec[T]) -> Vec[T] {
+    let mut out = Vec[T]::new()
+    out.extend(left)
+    out.extend(right)
+    ret out
+}
+
+/// Performs the `head_or` operation.
+pub fn head_or[T](values: Vec[T], default: T) -> T {
+    match values.get(0_usize) {
+        Option[T]::Some(value) => { ret value }
+        Option[T]::None => { ret default }
+    }
+}
+
+/// Performs the `tail_or` operation.
+pub fn tail_or[T](values: Vec[T], default: Vec[T]) -> Vec[T] {
+    if values.len() <= 1_usize {
+        ret default
+    }
+    let mut out = Vec[T]::new()
+    let mut index = 1_usize
+    while index < values.len() {
+        match values.get(index) {
+            Option[T]::Some(value) => { out.push(value) }
+            Option[T]::None => { break }
+        }
+        index = index + 1_usize
+    }
+    ret out
+}

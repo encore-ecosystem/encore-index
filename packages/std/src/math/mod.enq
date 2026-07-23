@@ -1,0 +1,52 @@
+//! Provides common mathematical operations.
+
+import core::ops::{Lt, Gt}
+
+/// Performs the `sin` operation.
+pub fn sin(x: f32) -> f32 {
+    let x2 = x * x
+    let x3 = x * x2
+    let x5 = x3 * x2
+    let x7 = x5 * x2
+    ret x - x3 / 6_f32 + x5 / 120_f32 - x7 / 5040_f32
+}
+
+/// Performs the `cos` operation.
+pub fn cos(x: f32) -> f32 {
+    let x2 = x * x
+    let x4 = x2 * x2
+    let x6 = x4 * x2
+    ret 1_f32 - x2 / 2_f32 + x4 / 24_f32 - x6 / 720_f32
+}
+
+/// Performs the `tan` operation.
+pub fn tan(x: f32) -> f32 {
+    ret sin(x) / cos(x)
+}
+
+/// Performs the `min` operation.
+pub fn min[T:Lt[T]](lhs: T, rhs: T) -> T {
+    if lhs < rhs {
+        ret lhs
+    }
+    ret rhs
+}
+
+/// Performs the `max` operation.
+pub fn max[T:Gt[T]](lhs: T, rhs: T) -> T {
+    if lhs > rhs {
+        ret lhs
+    }
+    ret rhs
+}
+
+/// Performs the `clamp` operation.
+pub fn clamp[T:Lt[T]+Gt[T]](value: T, low: T, high: T) -> T {
+    if value < low {
+        ret low
+    }
+    if value > high {
+        ret high
+    }
+    ret value
+}

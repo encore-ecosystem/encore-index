@@ -1,0 +1,96 @@
+//! Provides optional values.
+
+import core::fmt::Debug
+
+
+/// Represents either a present value or the absence of a value.
+pub enum Option[T] {
+    Some(T)
+    None
+}
+
+impl[T] for Option[T] {
+    /// Returns whether this option contains a value.
+    pub fn is_some(self: Option[T]) -> bool {
+        ret match self {
+            Some(value) => true
+            None => false
+        }
+    }
+
+    /// Returns whether this option contains no value.
+    pub fn is_none(self: Option[T]) -> bool {
+        ret match self {
+            Some(value) => false
+            None => true
+        }
+    }
+
+    /// Returns the contained value or `default` when this option is empty.
+    pub fn unwrap_or(self: Option[T], default: T) -> T {
+        ret match self {
+            Some(value) => value
+            None => default
+        }
+    }
+
+    /// Returns `rhs` when this option is present, otherwise `None`.
+    pub fn and(self: Option[T], rhs: Option[T]) -> Option[T] {
+        ret match self {
+            Some(value) => rhs
+            None => Option[T]::None
+        }
+    }
+
+    /// Returns this option when present, otherwise returns `rhs`.
+    pub fn or(self: Option[T], rhs: Option[T]) -> Option[T] {
+        ret match self {
+            Some(value) => self
+            None => rhs
+        }
+    }
+
+    /// Returns the only present option, or `None` when both are present.
+    pub fn xor(self: Option[T], rhs: Option[T]) -> Option[T] {
+        ret match self {
+            Some(left) => match rhs {
+                Some(right) => Option[T]::None
+                None => self
+            }
+            None => rhs
+        }
+    }
+}
+
+
+
+/// Removes one level of nesting from an optional option.
+pub fn flatten[T](opt: Option[Option[T]]) -> Option[T] {
+    ret match opt {
+        Some(inner) => inner
+        None => Option[T]::None
+    }
+}
+
+impl[T:Debug] Debug for Option[T] {
+    /// Formats the value as text.
+    pub fn fmt(self: Option[T]) -> str {
+        ret match self {
+            Some(value) => "Some(" + Debug::fmt(value) + ")"
+            None => "None"
+        }
+    }
+}
+
+#attr(test)
+fn option_contract() -> bool {
+    let some = Option[u32]::Some(7_u32)
+    let none = Option[u32]::None
+    ret some.is_some()
+        && !some.is_none()
+        && none.is_none()
+        && !none.is_some()
+        && some.unwrap_or(1_u32) == 7_u32
+        && none.unwrap_or(1_u32) == 1_u32
+        && flatten(Option[Option[u32]]::Some(some)).unwrap_or(0_u32) == 7_u32
+}

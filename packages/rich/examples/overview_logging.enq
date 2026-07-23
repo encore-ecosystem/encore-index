@@ -1,0 +1,29 @@
+import core::os::{file_exists, read_file, write_file}
+import log::Writable
+import rich::{compact_formatter, console_logger_with_formatter, file_logger, writer_logger}
+
+struct CaptureWriter {
+    path: str
+}
+
+impl Writable for CaptureWriter {
+    fn write(self: CaptureWriter, value: str) -> i32 {
+        let mut current = ""
+        if file_exists(self.path) {
+            current = read_file(self.path)
+        }
+        ret write_file(self.path, current + value)
+    }
+}
+
+fn main() -> u32 {
+    let console = console_logger_with_formatter("rich-console", compact_formatter())
+    console.info("console sink ready")
+
+    let file = file_logger("rich-file", "target/rich-example.log")
+    file.warn("file sink ready")
+
+    let writer = writer_logger("rich-writer", CaptureWriter{"target/rich-writer.log"} as dyn Writable)
+    writer.error("writer sink ready")
+    ret 0_u32
+}

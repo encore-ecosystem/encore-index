@@ -1,0 +1,26 @@
+import core::os::{file_exists, read_file, write_file}
+import log::{Logger, Writable}
+
+struct ExampleWriter {
+    path: str
+}
+
+impl Writable for ExampleWriter {
+    fn write(self: ExampleWriter, value: str) -> i32 {
+        let mut current = ""
+        if file_exists(self.path) {
+            current = read_file(self.path)
+        }
+        ret write_file(self.path, current + value)
+    }
+}
+
+fn main() -> u32 {
+    let mut logger = Logger::console("example")
+    logger.add_file_sink("target/example.log")
+    logger.add_writer_sink(ExampleWriter{"target/example-custom.log"} as dyn Writable)
+    logger.info("starting")
+    logger.warn("using custom writer")
+    logger.error("done")
+    ret 0_u32
+}

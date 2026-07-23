@@ -1,0 +1,9 @@
+import refrain::level::LogLevel
+
+pub trait Writable {
+    fn write(self: Self, value: str) -> i32
+}
+
+pub trait LogSink {
+    fn write(self: Self, level: LogLevel, target: str, message: str) -> i32
+}

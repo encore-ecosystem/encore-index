@@ -1,0 +1,441 @@
+import core::option::Option
+import core::vec::Vec
+
+
+pub enum TomlValue {
+    String(str)
+    Integer(i32)
+    Bool(bool)
+    StringArray(Vec[str])
+}
+
+pub struct TomlEntry {
+    key: str
+    value: TomlValue
+}
+
+pub struct TomlSection {
+    name: str
+    entries: Vec[TomlEntry]
+}
+
+pub struct TomlDocument {
+    root: Vec[TomlEntry]
+    sections: Vec[TomlSection]
+}
+
+pub fn toml_parse_document(source: str) -> TomlDocument {
+    let mut index: usize = 0_usize
+    let mut root: Vec[TomlEntry] = Vec[TomlEntry]::new()
+    let mut sections: Vec[TomlSection] = Vec[TomlSection]::new()
+    let mut current_section_name: str = ""
+    let mut current_section_entries: Vec[TomlEntry] = Vec[TomlEntry]::new()
+    let mut in_section: bool = false
+
+    while index < source.len() {
+        let line_end = toml_find_line_end(source, index)
+        let raw_line = source.slice(index, line_end - index)
+        let line = toml_trim(raw_line)
+        index = toml_next_line_index(source, line_end)
+
+        if toml_is_blank_or_comment(line) {
+            continue
+        }
+
+        if toml_is_section_header(line) {
+            if in_section {
+                sections.push(TomlSection{current_section_name, current_section_entries})
+            }
+
+            current_section_name = toml_trim(line.slice(1_usize, line.len() - 2_usize))
+            current_section_entries = Vec[TomlEntry]::new()
+            in_section = true
+            continue
+        }
+
+        let eq = toml_find_char(line, 61_u8, 0_usize)
+        if eq >= line.len() {
+            continue
+        }
+
+        let key = toml_trim(line.slice(0_usize, eq))
+        let mut raw_value = toml_trim(line.slice(eq + 1_usize, line.len() - eq - 1_usize))
+
+        if toml_starts_with_char(raw_value, 91_u8) {
+            while index < source.len() {
+                if toml_ends_with_char(raw_value, 93_u8) {
+                    break
+                }
+
+                let item_end = toml_find_line_end(source, index)
+                let item_raw = source.slice(index, item_end - index)
+                let item_line = toml_trim(item_raw)
+                index = toml_next_line_index(source, item_end)
+
+                if toml_is_blank_or_comment(item_line) {
+                    continue
+                }
+
+                raw_value = raw_value + item_line
+            }
+        }
+
+        let entry = TomlEntry{key, toml_parse_value(raw_value)}
+        if in_section {
+            current_section_entries.push(entry)
+        } else {
+            root.push(entry)
+        }
+    }
+
+    if in_section {
+        sections.push(TomlSection{current_section_name, current_section_entries})
+    }
+
+    ret TomlDocument{root, sections}
+}
+
+pub fn toml_get_root(doc: TomlDocument, key: str) -> Option[TomlValue] {
+    ret toml_find_entry_value(doc.root, key)
+}
+
+pub fn toml_get(doc: TomlDocument, section: str, key: str) -> Option[TomlValue] {
+    ret toml_get_from_sections(doc.sections, section, key, 0_usize)
+}
+
+pub fn toml_get_string(doc: TomlDocument, section: str, key: str) -> Option[str] {
+    ret match toml_get(doc, section, key) {
+        Some(value) => match value {
+            TomlValue::String(text) => Option[str]::Some(text)
+            _ => Option[str]::None
+        }
+        None => Option[str]::None
+    }
+}
+
+pub fn toml_get_bool(doc: TomlDocument, section: str, key: str) -> Option[u1] {
+    ret match toml_get(doc, section, key) {
+        Some(value) => match value {
+            TomlValue::Bool(flag) => Option[u1]::Some(flag)
+            _ => Option[u1]::None
+        }
+        None => Option[u1]::None
+    }
+}
+
+pub fn toml_get_integer(doc: TomlDocument, section: str, key: str) -> Option[i32] {
+    ret match toml_get(doc, section, key) {
+        Some(value) => match value {
+            TomlValue::Integer(number) => Option[i32]::Some(number)
+            _ => Option[i32]::None
+        }
+        None => Option[i32]::None
+    }
+}
+
+pub fn toml_get_string_array(doc: TomlDocument, section: str, key: str) -> Option[Vec[str]] {
+    ret match toml_get(doc, section, key) {
+        Some(value) => match value {
+            TomlValue::StringArray(items) => Option[Vec[str]]::Some(items)
+            _ => Option[Vec[str]]::None
+        }
+        None => Option[Vec[str]]::None
+    }
+}
+
+pub fn toml_section_keys(doc: TomlDocument, section: str) -> Vec[str] {
+    let mut keys = Vec[str]::new()
+    for item in doc.sections {
+        if item.name == section {
+            for entry in item.entries { keys.push(entry.key) }
+            ret keys
+        }
+    }
+    ret keys
+}
+
+fn toml_find_entry_value(entries: Vec[TomlEntry], key: str) -> Option[TomlValue] {
+    ret toml_find_entry_value_from(entries, key, 0_usize)
+}
+
+fn toml_get_from_sections(sections: Vec[TomlSection], section: str, key: str, index: usize) -> Option[TomlValue] {
+    ret match sections.get(index) {
+        Option[TomlSection]::Some(found) => {
+            toml_get_from_sections_step(sections, section, key, index, found)
+        }
+        Option[TomlSection]::None => {
+            Option[TomlValue]::None
+        }
+    }
+}
+
+fn toml_find_entry_value_from(entries: Vec[TomlEntry], key: str, index: usize) -> Option[TomlValue] {
+    ret match entries.get(index) {
+        Option[TomlEntry]::Some(entry) => {
+            toml_find_entry_value_step(entries, key, index, entry)
+        }
+        Option[TomlEntry]::None => {
+            Option[TomlValue]::None
+        }
+    }
+}
+
+fn toml_get_from_sections_step(
+    sections: Vec[TomlSection], section: str, key: str, index: usize, found: TomlSection
+) -> Option[TomlValue] {
+    if found.name == section {
+        ret toml_find_entry_value(found.entries, key)
+    }
+    ret toml_get_from_sections(sections, section, key, index + 1_usize)
+}
+
+fn toml_find_entry_value_step(entries: Vec[TomlEntry], key: str, index: usize, entry: TomlEntry) -> Option[TomlValue] {
+    if entry.key == key {
+        ret Option[TomlValue]::Some(entry.value)
+    }
+    ret toml_find_entry_value_from(entries, key, index + 1_usize)
+}
+
+fn toml_parse_value(raw: str) -> TomlValue {
+    if toml_starts_with_char(raw, 34_u8) {
+        ret TomlValue::String(toml_parse_string_literal(raw))
+    }
+
+    if toml_starts_with_char(raw, 91_u8) {
+        ret TomlValue::StringArray(toml_parse_string_array(raw))
+    }
+
+    if raw == "true" {
+        ret TomlValue::Bool(true)
+    }
+
+    if raw == "false" {
+        ret TomlValue::Bool(false)
+    }
+
+    ret TomlValue::Integer(toml_parse_integer(raw))
+}
+
+fn toml_parse_string_literal(raw: str) -> str {
+    if raw.len() < 2_usize {
+        ret ""
+    }
+
+    ret raw.slice(1_usize, raw.len() - 2_usize)
+}
+
+fn toml_parse_string_array(raw: str) -> Vec[str] {
+    let mut result: Vec[str] = Vec[str]::new()
+    let mut index: usize = 1_usize
+    let limit = raw.len() - 1_usize
+
+    while index < limit {
+        index = toml_skip_array_separators(raw, index, limit)
+        if index >= limit {
+            break
+        }
+
+        if raw.byte_at(index) == 34_u8 {
+            let end = toml_find_char(raw, 34_u8, index + 1_usize)
+            let item = raw.slice(index + 1_usize, end - index - 1_usize)
+            result.push(item)
+            index = end + 1_usize
+            continue
+        }
+
+        index = index + 1_usize
+    }
+
+    ret result
+}
+
+fn toml_parse_integer(raw: str) -> i32 {
+    let mut index: usize = 0_usize
+    let mut negative: bool = false
+    if toml_starts_with_char(raw, 45_u8) {
+        negative = true
+        index = 1_usize
+    }
+
+    let mut value: i32 = 0_i32
+    while index < raw.len() {
+        let digit = raw.byte_at(index) - 48_u8
+        value = value * 10_i32 + toml_digit_to_i32(digit)
+        index = index + 1_usize
+    }
+
+    if negative {
+        ret 0_i32 - value
+    }
+
+    ret value
+}
+
+fn toml_find_line_end(source: str, index: usize) -> usize {
+    if index >= source.len() {
+        ret source.len()
+    }
+
+    if source.byte_at(index) == 10_u8 {
+        ret index
+    }
+
+    if source.byte_at(index) == 13_u8 {
+        ret index
+    }
+
+    ret toml_find_line_end(source, index + 1_usize)
+}
+
+fn toml_next_line_index(source: str, line_end: usize) -> usize {
+    if line_end >= source.len() {
+        ret line_end
+    }
+
+    if source.byte_at(line_end) == 13_u8 {
+        let next = line_end + 1_usize
+        if next < source.len() {
+            if source.byte_at(next) == 10_u8 {
+                ret next + 1_usize
+            }
+        }
+        ret next
+    }
+
+    if source.byte_at(line_end) == 10_u8 {
+        ret line_end + 1_usize
+    }
+
+    ret line_end
+}
+
+fn toml_trim(value: str) -> str {
+    let start = toml_trim_start_index(value, 0_usize)
+    if start >= value.len() {
+        ret ""
+    }
+
+    let end = toml_trim_end_index(value, value.len())
+    if end <= start {
+        ret ""
+    }
+
+    ret value.slice(start, end - start)
+}
+
+fn toml_trim_start_index(value: str, index: usize) -> usize {
+    if index >= value.len() {
+        ret index
+    }
+
+    if toml_is_whitespace(value.byte_at(index)) {
+        ret toml_trim_start_index(value, index + 1_usize)
+    }
+
+    ret index
+}
+
+fn toml_trim_end_index(value: str, end: usize) -> usize {
+    if end == 0_usize {
+        ret 0_usize
+    }
+
+    let index = end - 1_usize
+    if toml_is_whitespace(value.byte_at(index)) {
+        ret toml_trim_end_index(value, index)
+    }
+
+    ret end
+}
+
+fn toml_find_char(value: str, target: u8, index: usize) -> usize {
+    if index >= value.len() {
+        ret value.len()
+    }
+
+    if value.byte_at(index) == target {
+        ret index
+    }
+
+    ret toml_find_char(value, target, index + 1_usize)
+}
+
+fn toml_starts_with_char(value: str, target: u8) -> bool {
+    if value.len() == 0_usize {
+        ret false
+    }
+
+    ret value.byte_at(0_usize) == target
+}
+
+fn toml_ends_with_char(value: str, target: u8) -> bool {
+    if value.len() == 0_usize {
+        ret false
+    }
+
+    ret value.byte_at(value.len() - 1_usize) == target
+}
+
+fn toml_is_section_header(line: str) -> bool {
+    if line.len() < 2_usize {
+        ret false
+    }
+    if !toml_starts_with_char(line, 91_u8) {
+        ret false
+    }
+    ret toml_ends_with_char(line, 93_u8)
+}
+
+fn toml_is_blank_or_comment(line: str) -> bool {
+    if line.len() == 0_usize {
+        ret true
+    }
+
+    ret line.byte_at(0_usize) == 35_u8
+}
+
+fn toml_is_whitespace(ch: u8) -> bool {
+    if ch == 32_u8 {
+        ret true
+    }
+    if ch == 9_u8 {
+        ret true
+    }
+    if ch == 10_u8 {
+        ret true
+    }
+    ret ch == 13_u8
+}
+
+fn toml_skip_array_separators(value: str, index: usize, limit: usize) -> usize {
+    if index >= limit {
+        ret index
+    }
+
+    let ch = value.byte_at(index)
+    if toml_is_whitespace(ch) {
+        ret toml_skip_array_separators(value, index + 1_usize, limit)
+    }
+    if ch == 44_u8 {
+        ret toml_skip_array_separators(value, index + 1_usize, limit)
+    }
+
+    if ch == 35_u8 {
+        ret limit
+    }
+
+    ret index
+}
+
+fn toml_digit_to_i32(digit: u8) -> i32 {
+    if digit == 0_u8 { ret 0_i32 }
+    if digit == 1_u8 { ret 1_i32 }
+    if digit == 2_u8 { ret 2_i32 }
+    if digit == 3_u8 { ret 3_i32 }
+    if digit == 4_u8 { ret 4_i32 }
+    if digit == 5_u8 { ret 5_i32 }
+    if digit == 6_u8 { ret 6_i32 }
+    if digit == 7_u8 { ret 7_i32 }
+    if digit == 8_u8 { ret 8_i32 }
+    ret 9_i32
+}

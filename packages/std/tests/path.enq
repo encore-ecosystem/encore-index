@@ -1,0 +1,126 @@
+import core::testing::*
+import std::os::{home_dir, path_separator}
+import std::path::Path
+
+fn main() -> u32 {
+    let sep = path_separator()
+    let p = Path::new("/tmp/example.tar.gz")
+    if !assert(p.as_str() == sep + "tmp" + sep + "example.tar.gz") {
+        ret 1_u32
+    }
+    if !assert(p.is_absolute()) {
+        ret 1_u32
+    }
+
+    let child = p.join("child.txt")
+    if !assert(child.as_str() == sep + "tmp" + sep + "example.tar.gz" + sep + "child.txt") {
+        ret 1_u32
+    }
+    if !assert(p.join("/var/log").as_str() == sep + "var" + sep + "log") {
+        ret 1_u32
+    }
+
+    match p.name() {
+        Some(name) => {
+            if !assert(name == "example.tar.gz") {
+                ret 1_u32
+            }
+        }
+        None => {
+            ret 1_u32
+        }
+    }
+
+    match p.stem() {
+        Some(stem) => {
+            if !assert(stem == "example.tar") {
+                ret 1_u32
+            }
+        }
+        None => {
+            ret 1_u32
+        }
+    }
+
+    match p.suffix() {
+        Some(suffix) => {
+            if !assert(suffix == ".gz") {
+                ret 1_u32
+            }
+        }
+        None => {
+            ret 1_u32
+        }
+    }
+
+    match p.extension() {
+        Some(extension) => {
+            if !assert(extension == "gz") {
+                ret 1_u32
+            }
+        }
+        None => {
+            ret 1_u32
+        }
+    }
+
+    let replaced = p.with_suffix(".txt")
+    if !assert(replaced.as_str() == sep + "tmp" + sep + "example.tar.txt") {
+        ret 1_u32
+    }
+    if !assert(p.with_name("next.md").as_str() == sep + "tmp" + sep + "next.md") {
+        ret 1_u32
+    }
+
+    match Path::new("/tmp/file.txt").parent() {
+        Some(parent) => {
+            if !assert(parent.as_str() == sep + "tmp") {
+                ret 1_u32
+            }
+        }
+        None => {
+            ret 1_u32
+        }
+    }
+    match Path::new("/tmp").parent() {
+        Some(parent) => {
+            if !assert(parent.as_str() == sep) {
+                ret 1_u32
+            }
+        }
+        None => {
+            ret 1_u32
+        }
+    }
+
+    let rel = Path::new("a//b///c")
+    if !assert(rel.as_str() == "a" + sep + "b" + sep + "c") {
+        ret 1_u32
+    }
+    if !assert(rel.is_relative()) {
+        ret 1_u32
+    }
+
+    let home = home_dir()
+    let tilde = Path::new("~/tmp").expanduser()
+    if !assert(tilde.as_str() == home + sep + "tmp") {
+        ret 1_u32
+    }
+
+    let norm = Path::new("a/./b/../c").normalize()
+    if !assert(norm.as_str() == "a" + sep + "c") {
+        ret 1_u32
+    }
+
+    let abs = Path::new("tmp/x").absolute()
+    if !assert(abs.is_absolute()) {
+        ret 1_u32
+    }
+
+    let resolved = Path::new("~/x/./y/../z").resolve()
+    if !assert(resolved.as_str() == home + sep + "x" + sep + "z") {
+        ret 1_u32
+    }
+
+    ret 0_u32
+}

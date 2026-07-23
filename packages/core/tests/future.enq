@@ -1,0 +1,13 @@
+import core::future::{Future, Poll, Ready, context, ready}
+
+fn main() -> u32 {
+    let future = ready(42_u32)
+    let step = future.poll(context(0_usize))
+    match step {
+        Poll[Ready[u32], u32]::Ready(value) => {
+            if value == 42_u32 { ret 0_u32 }
+            ret 2_u32
+        }
+        Poll[Ready[u32], u32]::Pending(_) => { ret 1_u32 }
+    }
+}

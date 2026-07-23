@@ -1,0 +1,212 @@
+import core::option::Option
+import core::testing::assert
+import core::vec::Vec
+import refrain::theme::Theme
+
+pub struct Table {
+    title: str
+    headers: Vec[str]
+    rows: Vec[str]
+}
+
+impl for Table {
+    pub fn new() -> Self {
+        ret Self{"", Vec[str]::new(), Vec[str]::new()}
+    }
+
+    pub fn with_headers(headers: Vec[str]) -> Self {
+        ret Self{"", headers, Vec[str]::new()}
+    }
+
+    pub fn with_title_headers(title: str, headers: Vec[str]) -> Self {
+        ret Self{title, headers, Vec[str]::new()}
+    }
+
+    pub fn themed(theme: Theme, title: str, headers: Vec[str]) -> Self {
+        ret Self{theme.table_title(title), headers, Vec[str]::new()}
+    }
+
+    pub fn from_pairs(title: str, left_header: str, right_header: str, rows: Vec[(str, str)]) -> Self {
+        let mut headers = Vec[str]::new()
+        headers.push(left_header)
+        headers.push(right_header)
+        let mut table = Self::with_title_headers(title, headers)
+        table.add_kv_rows(rows)
+        ret table
+    }
+
+    pub fn set_title(self: mut Self, title: str) -> () {
+        self.title = title
+        ret ()
+    }
+
+    pub fn title(self: Self) -> str {
+        ret self.title
+    }
+
+    pub fn add_row(self: mut Self, row: Vec[str]) -> () {
+        self.rows.push(join_cells(row))
+        ret ()
+    }
+
+    pub fn add_rows(self: mut Self, rows: Vec[Vec[str]]) -> () {
+        let mut index = 0_usize
+        loop {
+            match rows.get(index) {
+                Option[Vec[str]]::Some(row) => {
+                    self.add_row(row)
+                    index = index + 1_usize
+                }
+                Option[Vec[str]]::None => {
+                    break
+                }
+            }
+        }
+        ret ()
+    }
+
+    pub fn add_kv_row(self: mut Self, left: str, right: str) -> () {
+        let mut row = Vec[str]::new()
+        row.push(left)
+        row.push(right)
+        self.add_row(row)
+        ret ()
+    }
+
+    pub fn add_kv_rows(self: mut Self, rows: Vec[(str, str)]) -> () {
+        let mut index = 0_usize
+        loop {
+            match rows.get(index) {
+                Option[(str, str)]::Some(row) => {
+                    self.add_kv_row(row.0, row.1)
+                    index = index + 1_usize
+                }
+                Option[(str, str)]::None => {
+                    break
+                }
+            }
+        }
+        ret ()
+    }
+
+    pub fn render(self: Self) -> str {
+        ret render_table(self.title, self.headers, self.rows)
+    }
+
+    pub fn themed_render(self: Self, theme: Theme) -> str {
+        ret render_table(theme.table_title(self.title), self.headers, self.rows)
+    }
+}
+
+fn render_table(title: str, headers: Vec[str], rows: Vec[str]) -> str {
+    let mut out = ""
+
+    if title != "" {
+        out += title + "\n"
+    }
+
+    let header_line = join_cells(headers)
+    if header_line != "" {
+        out += header_line + "\n"
+        out += repeat("-", header_line.char_len())
+        if rows.len() > 0_usize {
+            out += "\n"
+        }
+    }
+
+    let mut row_index = 0_usize
+    loop {
+        match rows.get(row_index) {
+            Option[str]::Some(row) => {
+                out += row
+                row_index = row_index + 1_usize
+                if row_index < rows.len() {
+                    out += "\n"
+                }
+            }
+            Option[str]::None => {
+                break
+            }
+        }
+    }
+
+    ret out
+}
+
+fn join_cells(cells: Vec[str]) -> str {
+    let mut out = ""
+    let mut index = 0_usize
+    loop {
+        match cells.get(index) {
+            Option[str]::Some(cell) => {
+                if index > 0_usize {
+                    out += " | "
+                }
+                out += cell
+                index = index + 1_usize
+            }
+            Option[str]::None => {
+                break
+            }
+        }
+    }
+    ret out
+}
+
+fn repeat(ch: str, count: usize) -> str {
+    let mut out = ""
+    let mut index = 0_usize
+    while index < count {
+        out += ch
+        index = index + 1_usize
+    }
+    ret out
+}
+
+#attr(test)
+fn table_renders_headers_and_rows() -> bool {
+    let mut headers = Vec[str]::new()
+    headers.push("module")
+    headers.push("state")
+    let mut table = Table::with_headers(headers)
+    table.set_title("Build")
+    let mut row = Vec[str]::new()
+    row.push("frontend")
+    row.push("ok")
+    table.add_row(row)
+    let mut kv_rows = Vec[(str, str)]::new()
+    kv_rows.push(("backend", "pending"))
+    kv_rows.push(("linker", "ready"))
+    table.add_kv_rows(kv_rows)
+    let mut theme_headers = Vec[str]::new()
+    theme_headers.push("module")
+    let themed = Table::themed(Theme::compiler(), "Compiler", theme_headers)
+    let pairs = Table::from_pairs("Pairs", "name", "value", Vec[(str, str)]::singleton(("jobs", "4")))
+    let rendered = table.render()
+    ret assert(str_contains(rendered, "Build"))
+        && assert(str_contains(rendered, "module"))
+        && assert(str_contains(rendered, "frontend"))
+        && assert(str_contains(rendered, "backend"))
+        && assert(str_contains(themed.themed_render(Theme::compiler()), "Compiler"))
+        && assert(str_contains(pairs.render(), "jobs"))
+}
+
+fn str_contains(value: str, needle: str) -> bool {
+    let needle_len = needle.char_len()
+    let value_len = value.char_len()
+    if needle_len == 0_usize {
+        ret true
+    }
+    if needle_len > value_len {
+        ret false
+    }
+
+    let mut start = 0_usize
+    while start + needle_len <= value_len {
+        if value.slice(start, needle_len) == needle {
+            ret true
+        }
+        start = start + 1_usize
+    }
+    ret false
+}

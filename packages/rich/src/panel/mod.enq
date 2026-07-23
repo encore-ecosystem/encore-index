@@ -1,0 +1,241 @@
+import core::testing::assert
+import core::vec::Vec
+import refrain::theme::Theme
+
+pub struct Panel {
+    title: str
+    body: str
+}
+
+impl for Panel {
+    pub fn new(body: str) -> Self {
+        ret Self{"", body}
+    }
+
+    pub fn titled(title: str, body: str) -> Self {
+        ret Self{title, body}
+    }
+
+    pub fn themed(theme: Theme, title: str, body: str) -> Self {
+        ret Self{theme.panel_title(title), body}
+    }
+
+    pub fn lines(title: str, lines: Vec[str]) -> Self {
+        ret Self{title, join_lines(lines)}
+    }
+
+    pub fn key_values(title: str, fields: Vec[(str, str)]) -> Self {
+        ret Self{title, join_pairs(fields)}
+    }
+
+    pub fn render(self: Self) -> str {
+        let body_width = max_str_width(self.body)
+        let title_width = self.title.char_len()
+        let mut width = body_width
+        if title_width > width {
+            width = title_width
+        }
+
+        let top = "┌" + repeat("─", width + 2_usize) + "┐"
+        let bottom = "└" + repeat("─", width + 2_usize) + "┘"
+        let mut out = top + "\n"
+
+        if self.title != "" {
+            out += "│ " + pad_right(self.title, width) + " │\n"
+            out += "├" + repeat("─", width + 2_usize) + "┤\n"
+        }
+
+        let mut start = 0_usize
+        let total = self.body.char_len()
+        let mut index = 0_usize
+        loop {
+            if index >= total {
+                break
+            }
+
+            match self.body.get(index) {
+                Some(ch) => {
+                    if ch == "\n" {
+                        let line = self.body.slice(start, index - start)
+                        out += "│ " + pad_right(line, width) + " │\n"
+                        start = index + 1_usize
+                    }
+                }
+                None => {
+                    break
+                }
+            }
+            index = index + 1_usize
+        }
+
+        let tail = self.body.slice(start, total - start)
+        out += "│ " + pad_right(tail, width) + " │\n"
+        out += bottom
+        ret out
+    }
+}
+
+fn join_lines(lines: Vec[str]) -> str {
+    let mut out = ""
+    let mut index = 0_usize
+    loop {
+        match lines.get(index) {
+            Some(line) => {
+                out += line
+                index = index + 1_usize
+                if index < lines.len() {
+                    out += "\n"
+                }
+            }
+            None => {
+                break
+            }
+        }
+    }
+    ret out
+}
+
+fn join_pairs(fields: Vec[(str, str)]) -> str {
+    let mut out = ""
+    let mut index = 0_usize
+    loop {
+        match fields.get(index) {
+            Some(field) => {
+                out += field.0 + ": " + field.1
+                index = index + 1_usize
+                if index < fields.len() {
+                    out += "\n"
+                }
+            }
+            None => {
+                break
+            }
+        }
+    }
+    ret out
+}
+
+fn max_str_width(value: str) -> usize {
+    let mut width = 0_usize
+    let mut current = 0_usize
+    let mut escape = false
+    let mut index = 0_usize
+    let total = value.char_len()
+    loop {
+        if index >= total {
+            break
+        }
+        match value.get(index) {
+            Some(ch) => {
+                if escape {
+                    if ch == "m" { escape = false }
+                }
+                elif ch == "\x1b" {
+                    escape = true
+                }
+                elif ch == "\n" {
+                    if current > width {
+                        width = current
+                    }
+                    current = 0_usize
+                }
+                else {
+                    current = current + 1_usize
+                }
+            }
+            None => {
+                break
+            }
+        }
+        index = index + 1_usize
+    }
+    if current > width {
+        width = current
+    }
+    ret width
+}
+
+fn repeat(ch: str, count: usize) -> str {
+    let mut out = ""
+    let mut index = 0_usize
+    while index < count {
+        out += ch
+        index = index + 1_usize
+    }
+    ret out
+}
+
+fn pad_right(value: str, width: usize) -> str {
+    let mut out = value
+    let len = visible_width(value)
+    let mut index = len
+    while index < width {
+        out += " "
+        index = index + 1_usize
+    }
+    ret out
+}
+
+fn visible_width(value: str) -> usize {
+    let mut width = 0_usize
+    let mut escape = false
+    let mut index = 0_usize
+    while index < value.char_len() {
+        match value.get(index) {
+            Some(ch) => {
+                if escape {
+                    if ch == "m" { escape = false }
+                }
+                elif ch == "\x1b" {
+                    escape = true
+                }
+                else {
+                    width += 1_usize
+                }
+            }
+            None => {}
+        }
+        index += 1_usize
+    }
+    ret width
+}
+
+#attr(test)
+fn panel_renders_title_and_body() -> bool {
+    let rendered = Panel::titled("Build", "frontend\nbackend").render()
+    let themed = Panel::themed(Theme::compiler(), "Summary", "ok").render()
+    let mut lines = Vec[str]::new()
+    lines.push("frontend")
+    lines.push("backend")
+    let line_panel = Panel::lines("Lines", lines).render()
+    let mut fields = Vec[(str, str)]::new()
+    fields.push(("module", "frontend"))
+    fields.push(("state", "ready"))
+    let field_panel = Panel::key_values("Fields", fields).render()
+    ret assert(str_contains(rendered, "Build"))
+        && assert(str_contains(rendered, "frontend"))
+        && assert(str_contains(rendered, "backend"))
+        && assert(str_contains(themed, "Summary"))
+        && assert(str_contains(line_panel, "backend"))
+        && assert(str_contains(field_panel, "module: frontend"))
+}
+
+fn str_contains(value: str, needle: str) -> bool {
+    let needle_len = needle.char_len()
+    let value_len = value.char_len()
+    if needle_len == 0_usize {
+        ret true
+    }
+    if needle_len > value_len {
+        ret false
+    }
+
+    let mut start = 0_usize
+    while start + needle_len <= value_len {
+        if value.slice(start, needle_len) == needle {
+            ret true
+        }
+        start = start + 1_usize
+    }
+    ret false
+}

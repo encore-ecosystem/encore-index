@@ -1,0 +1,172 @@
+import colorterm::{styled, Color, Style}
+import core::fmt::Debug
+import core::io::{eprintln, stderr_fd}
+import core::time::perf_counter_ms
+import refrain::native::{is_terminal, terminal_spinner_start, terminal_spinner_update, terminal_spinner_stop}
+import refrain::spinner::Spinner
+
+pub struct BuildProgress {
+    interactive: bool
+    active: bool
+    spinner: Spinner
+    stage: str
+    detail: str
+    last_refrain: str
+    stage_started_ms: u64
+    build_started_ms: u64
+}
+
+impl for BuildProgress {
+    pub fn auto() -> Self {
+        ret Self::with_spinner(is_terminal(stderr_fd()), Spinner::dots())
+    }
+
+    pub fn with_interactive(interactive: bool) -> Self {
+        ret Self::with_spinner(interactive, Spinner::dots())
+    }
+
+    pub fn with_spinner(interactive: bool, spinner: Spinner) -> Self {
+        let now = perf_counter_ms()
+        ret Self{interactive, false, spinner, "", "", "", now, now}
+    }
+
+    pub fn start_build(self: mut Self, project: str, profile: str) -> () {
+        self.build_started_ms = perf_counter_ms()
+        ret ()
+    }
+
+    pub fn start_stage(self: mut Self, stage: str, detail: str) -> () {
+        self.clear_live()
+        self.stage = stage
+        self.detail = detail
+        self.stage_started_ms = perf_counter_ms()
+        self.active = true
+        let message = self.live_message("", 0_usize, 0_usize)
+        if self.interactive {
+            terminal_spinner_start(message, self.spinner.encoded_frames(), self.spinner.interval())
+        }
+        else {
+            eprintln("  " + message)
+        }
+        ret ()
+    }
+
+    pub fn update(self: mut Self, refrain_name: str, module_name: str, current: usize, total: usize) -> () {
+        if !self.active { ret () }
+        self.detail = module_name
+        if self.interactive {
+            let message = self.live_message(refrain_name, current, total)
+            if !terminal_spinner_update(message) {
+                terminal_spinner_start(message, self.spinner.encoded_frames(), self.spinner.interval())
+            }
+        }
+        elif refrain_name != "" && refrain_name != self.last_refrain {
+            eprintln("  " + self.live_message(refrain_name, current, total))
+        }
+        self.last_refrain = refrain_name
+        ret ()
+    }
+
+    pub fn suspend(self: mut Self) -> () {
+        self.clear_live()
+        ret ()
+    }
+
+    pub fn finish_stage(self: mut Self, summary: str) -> () {
+        self.clear_live()
+        let elapsed = perf_counter_ms() - self.stage_started_ms
+        let label = pad_left(completed_label(self.stage), 10_usize)
+        let suffix = if summary == "" { "" } else { " " + summary }
+        let timing = " in " + format_duration(elapsed)
+        if self.interactive {
+            eprintln("  " + styled(label, Color::Green, Style::Normal) + suffix + timing)
+        }
+        else {
+            eprintln("  " + label + suffix + timing)
+        }
+        self.active = false
+        self.last_refrain = ""
+        ret ()
+    }
+
+    pub fn fail_stage(self: mut Self, message: str) -> () {
+        self.clear_live()
+        let label = pad_left("Failed", 10_usize)
+        let output = label + " " + running_label(self.stage) + ": " + message
+        if self.interactive { eprintln("  " + styled(output, Color::Red, Style::Bold)) }
+        else { eprintln("  " + output) }
+        self.active = false
+        ret ()
+    }
+
+    pub fn finish_build(self: mut Self, profile: str, binary_path: str) -> () {
+        self.finish_artifact(profile, "Binary", binary_path)
+        ret ()
+    }
+
+    pub fn finish_artifact(self: mut Self, profile: str, kind: str, path: str) -> () {
+        self.clear_live()
+        let elapsed = perf_counter_ms() - self.build_started_ms
+        let message = "    Finished `" + profile + "` profile in " + format_duration(elapsed)
+        if self.interactive { eprintln(styled(message, Color::Green, Style::Normal)) }
+        else { eprintln(message) }
+        eprintln("      " + kind + " " + path)
+        ret ()
+    }
+
+    fn live_message(self: mut Self, refrain_name: str, current: usize, total: usize) -> str {
+        let mut line = pad_left(running_label(self.stage), 10_usize)
+        if refrain_name != "" { line += " " + refrain_name }
+        elif self.detail != "" { line += " " + self.detail }
+        line += progress_count(current, total)
+        if refrain_name != "" && self.detail != "" { line += "  " + self.detail }
+        ret line
+    }
+
+    fn clear_live(self: mut Self) -> () {
+        if self.interactive { terminal_spinner_stop() }
+        ret ()
+    }
+}
+
+fn running_label(stage: str) -> str {
+    if stage == "Workspace" { ret "Resolving" }
+    if stage == "Check" { ret "Checking" }
+    if stage == "Lower" { ret "Compiling" }
+    if stage == "Codegen" { ret "Generating" }
+    if stage == "Link" { ret "Linking" }
+    if stage == "Prepare" { ret "Preparing" }
+    ret stage
+}
+
+fn completed_label(stage: str) -> str {
+    if stage == "Workspace" { ret "Resolved" }
+    if stage == "Check" { ret "Checked" }
+    if stage == "Lower" { ret "Compiled" }
+    if stage == "Codegen" { ret "Generated" }
+    if stage == "Link" { ret "Linked" }
+    if stage == "Prepare" { ret "Prepared" }
+    ret stage
+}
+
+fn progress_count(current: usize, total: usize) -> str {
+    if total == 0_usize { ret "" }
+    ret " [" + Debug::fmt(current) + "/" + Debug::fmt(total) + "]"
+}
+
+fn pad_left(value: str, width: usize) -> str {
+    let mut out = ""
+    let mut padding = if value.char_len() < width { width - value.char_len() } else { 0_usize }
+    while padding > 0_usize {
+        out += " "
+        padding -= 1_usize
+    }
+    ret out + value
+}
+
+fn format_duration(milliseconds: u64) -> str {
+    if milliseconds < 1000_u64 { ret Debug::fmt(milliseconds) + " ms" }
+    let seconds = milliseconds / 1000_u64
+    let tenths = (milliseconds % 1000_u64) / 100_u64
+    ret Debug::fmt(seconds) + "." + Debug::fmt(tenths) + "s"
+}

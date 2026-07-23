@@ -1,0 +1,395 @@
+//! Provides a synchronous HTTPS/HTTP 1.1 client and protocol codec.
+
+import core::option::Option
+import core::result::Result
+import core::fmt::Debug
+import std::tls::{TlsClientConfig, TlsStream}
+import std::vec::Vec
+
+/// A parsed HTTPS URL.
+pub struct Url {
+    scheme_value: str
+    host_value: str
+    port_value: usize
+    target_value: str
+}
+
+/// One HTTP header. Header lookup is ASCII case-insensitive.
+pub struct HttpHeader {
+    name: str
+    value: str
+}
+
+/// An HTTP/1.1 request.
+pub struct HttpRequest {
+    method: str
+    url: Url
+    headers: Vec[HttpHeader]
+    body_value: str
+}
+
+/// A decoded HTTP/1.1 response.
+pub struct HttpResponse {
+    status_value: u16
+    reason_value: str
+    headers: Vec[HttpHeader]
+    body_value: str
+}
+
+/// Limits redirects and response allocation for an HTTP client.
+pub struct HttpClientConfig {
+    ca_file: str
+    max_redirects: usize
+    max_body_size: usize
+    timeout_ms: usize
+}
+
+/// A blocking HTTPS client.
+pub struct HttpClient {
+    config: HttpClientConfig
+}
+
+impl for Url {
+    pub fn empty() -> Self { ret Self{"", "", 0_usize, ""} }
+    pub fn scheme(self: Self) -> str { ret self.scheme_value }
+    pub fn host(self: Self) -> str { ret self.host_value }
+    pub fn port(self: Self) -> usize { ret self.port_value }
+    pub fn target(self: Self) -> str { ret self.target_value }
+
+    /// Parses an absolute HTTPS URL. User-info and fragments are rejected.
+    pub fn parse(value: str) -> Result[Url, str] {
+        let prefix = "https://"
+        if !starts_with(value, prefix) { ret Result::Err("only https URLs are supported") }
+        let remainder = value.slice(prefix.len(), value.len() - prefix.len())
+        if contains(remainder, "@") { ret Result::Err("URL user-info is not supported") }
+        if contains(remainder, "#") { ret Result::Err("URL fragments are not supported") }
+        let slash = first_of(remainder, "/?")
+        let authority = if slash < remainder.len() { remainder.slice(0_usize, slash) } else { remainder }
+        if authority == "" { ret Result::Err("URL host is empty") }
+        let mut host = authority
+        let mut port = 443_usize
+        let colon = last_index_of(authority, ":")
+        if colon < authority.len() {
+            host = authority.slice(0_usize, colon)
+            let raw_port = authority.slice(colon + 1_usize, authority.len() - colon - 1_usize)
+            match parse_decimal(raw_port) {
+                Option::Some(value) => { if value == 0_usize || value > 65535_usize { ret Result::Err("URL port is out of range") } port = value }
+                Option::None => { ret Result::Err("URL port is invalid") }
+            }
+        }
+        if host == "" || contains(host, "[") || contains(host, "]") { ret Result::Err("URL host is invalid") }
+        let target = if slash == remainder.len() { "/" } elif remainder.slice(slash, 1_usize) == "?" {
+            "/" + remainder.slice(slash, remainder.len() - slash)
+        } else { remainder.slice(slash, remainder.len() - slash) }
+        ret Result::Ok(Self{"https", host, port, target})
+    }
+}
+
+impl for HttpRequest {
+    pub fn get(url: Url) -> Self { ret Self{"GET", url, Vec[HttpHeader]::new(), ""} }
+
+    pub fn with_header(self: mut Self, name: str, value: str) -> Self {
+        self.headers.push(HttpHeader{name, value})
+        ret self
+    }
+
+    /// Encodes the request with safe default Host and Connection headers.
+    pub fn encode(self: Self) -> str {
+        let mut out = self.method + " " + self.url.target_value + " HTTP/1.1\r\n"
+        let authority = if self.url.port_value == 443_usize { self.url.host_value } else { self.url.host_value + ":" + Debug::fmt(self.url.port_value) }
+        if !headers_contain(self.headers, "host") { out += "Host: " + authority + "\r\n" }
+        if !headers_contain(self.headers, "connection") { out += "Connection: close\r\n" }
+        if !headers_contain(self.headers, "user-agent") { out += "User-Agent: encore-http/0.1\r\n" }
+        for header in self.headers {
+            if invalid_header(header.name) || contains(header.value, "\r") || contains(header.value, "\n") { continue }
+            out += header.name + ": " + header.value + "\r\n"
+        }
+        if self.body_value != "" && !headers_contain(self.headers, "content-length") {
+            out += "Content-Length: " + Debug::fmt(self.body_value.len()) + "\r\n"
+        }
+        ret out + "\r\n" + self.body_value
+    }
+}
+
+impl for HttpResponse {
+    pub fn empty() -> Self { ret Self{0_u16, "", Vec[HttpHeader]::new(), ""} }
+    pub fn status(self: Self) -> u16 { ret self.status_value }
+    pub fn reason(self: Self) -> str { ret self.reason_value }
+    pub fn body(self: Self) -> str { ret self.body_value }
+    pub fn header(self: Self, name: str) -> Option[str] {
+        for header in self.headers { if ascii_lower(header.name) == ascii_lower(name) { ret Option::Some(header.value) } }
+        ret Option::None
+    }
+}
+
+impl for HttpClientConfig {
+    pub fn default() -> Self { ret Self{"", 5_usize, 16_usize * 1024_usize * 1024_usize, 30000_usize} }
+    pub fn with_ca_file(self: Self, path: str) -> Self { ret Self{path, self.max_redirects, self.max_body_size, self.timeout_ms} }
+    pub fn with_max_redirects(self: Self, value: usize) -> Self { ret Self{self.ca_file, value, self.max_body_size, self.timeout_ms} }
+    pub fn with_max_body_size(self: Self, value: usize) -> Self { ret Self{self.ca_file, self.max_redirects, value, self.timeout_ms} }
+    pub fn with_timeout_ms(self: Self, value: usize) -> Self { ret Self{self.ca_file, self.max_redirects, self.max_body_size, value} }
+}
+
+impl for HttpClient {
+    pub fn new() -> Self { ret Self{HttpClientConfig::default()} }
+    pub fn with_config(config: HttpClientConfig) -> Self { ret Self{config} }
+    pub fn get(self: Self, value: str) -> Result[HttpResponse, str] { ret self.get_redirected(value, 0_usize) }
+
+    fn get_redirected(self: Self, value: str, redirects: usize) -> Result[HttpResponse, str] {
+        let url = match Url::parse(value) {
+            Result::Ok(parsed) => parsed
+            Result::Err(error) => { ret Result::Err(error) }
+        }
+        let tls_config = TlsClientConfig::system().with_ca_file(self.config.ca_file).with_timeout_ms(self.config.timeout_ms)
+        let stream = match TlsStream::connect(url.host_value, url.port_value, tls_config) {
+            Result::Ok(value) => value
+            Result::Err(error) => { ret Result::Err(error) }
+        }
+        match stream.write_all(HttpRequest::get(url).encode()) {
+            Result::Err(error) => { let _closed = stream.close() ret Result::Err(error) }
+            Result::Ok(written) => { let _ignored = written }
+        }
+        let mut raw = ""
+        let raw_limit = self.config.max_body_size + 65536_usize
+        while raw.len() <= raw_limit {
+            match stream.read(16384_usize) {
+                Result::Err(error) => { let _closed = stream.close() ret Result::Err(error) }
+                Result::Ok(chunk) => {
+                    if chunk == "" { break }
+                    raw += chunk
+                    if explicitly_framed_response_complete(raw, self.config.max_body_size) { break }
+                }
+            }
+        }
+        let _closed = stream.close()
+        if raw.len() > raw_limit { ret Result::Err("HTTP response exceeds configured limit") }
+        let response = match parse_http_response(raw, self.config.max_body_size) {
+            Result::Ok(value) => value
+            Result::Err(error) => { ret Result::Err(error) }
+        }
+        if response.status_value == 301_u16 || response.status_value == 302_u16 || response.status_value == 303_u16 || response.status_value == 307_u16 || response.status_value == 308_u16 {
+            if redirects >= self.config.max_redirects { ret Result::Err("HTTP redirect limit exceeded") }
+            let location = response.header("location").unwrap_or("")
+            if location == "" { ret Result::Err("HTTP redirect is missing Location") }
+            let next = if starts_with(location, "https://") { location } elif starts_with(location, "/") {
+                "https://" + url.host_value + if url.port_value == 443_usize { "" } else { ":" + Debug::fmt(url.port_value) } + location
+            } else { ret Result::Err("relative HTTP redirect is not supported") }
+            ret self.get_redirected(next, redirects + 1_usize)
+        }
+        ret Result::Ok(response)
+    }
+}
+
+/// Decodes one complete HTTP/1.1 response buffer.
+pub fn parse_http_response(raw: str, max_body_size: usize) -> Result[HttpResponse, str] {
+    let header_end = index_of(raw, "\r\n\r\n", 0_usize)
+    if header_end == raw.len() { ret Result::Err("incomplete HTTP response headers") }
+    let status_end = index_of(raw, "\r\n", 0_usize)
+    if status_end == raw.len() || status_end > header_end { ret Result::Err("invalid HTTP status line") }
+    let status_line = raw.slice(0_usize, status_end)
+    if !starts_with(status_line, "HTTP/1.1 ") && !starts_with(status_line, "HTTP/1.0 ") { ret Result::Err("invalid HTTP version") }
+    if status_line.len() < 12_usize { ret Result::Err("invalid HTTP status line") }
+    let status = match parse_decimal(status_line.slice(9_usize, 3_usize)) {
+        Option::Some(value) => {
+            if value >= 100_usize && value <= 999_usize { value as u16 }
+            else { ret Result::Err("invalid HTTP status") }
+        }
+        Option::None => { ret Result::Err("invalid HTTP status") }
+    }
+    let reason = if status_line.len() > 13_usize { status_line.slice(13_usize, status_line.len() - 13_usize) } else { "" }
+    let mut headers = Vec[HttpHeader]::new()
+    let mut cursor = status_end + 2_usize
+    while cursor < header_end {
+        let end = index_of(raw, "\r\n", cursor)
+        if end == raw.len() || end > header_end { ret Result::Err("invalid HTTP header line") }
+        let line = raw.slice(cursor, end - cursor)
+        let colon = index_of(line, ":", 0_usize)
+        if colon == line.len() || colon == 0_usize { ret Result::Err("invalid HTTP header") }
+        let name = line.slice(0_usize, colon)
+        if invalid_header(name) { ret Result::Err("invalid HTTP header name") }
+        let value = trim_ascii(line.slice(colon + 1_usize, line.len() - colon - 1_usize))
+        headers.push(HttpHeader{name, value})
+        cursor = end + 2_usize
+    }
+    let encoded_body = raw.slice(header_end + 4_usize, raw.len() - header_end - 4_usize)
+    let transfer = header_value(headers, "transfer-encoding").unwrap_or("")
+    if header_count(headers, "content-length") > 1_usize { ret Result::Err("duplicate Content-Length") }
+    if transfer != "" && ascii_lower(transfer) != "chunked" { ret Result::Err("unsupported Transfer-Encoding") }
+    if transfer != "" && header_count(headers, "content-length") > 0_usize { ret Result::Err("ambiguous HTTP response framing") }
+    let body = if ascii_lower(transfer) == "chunked" {
+        match decode_chunked(encoded_body, max_body_size) {
+            Result::Ok(value) => value
+            Result::Err(error) => { ret Result::Err(error) }
+        }
+    } else {
+        let content_length = header_value(headers, "content-length")
+        match content_length {
+            Option::Some(raw_length) => {
+                let length = match parse_decimal(raw_length) {
+                    Option::Some(value) => value
+                    Option::None => { ret Result::Err("invalid Content-Length") }
+                }
+                if length > max_body_size { ret Result::Err("response body exceeds limit") }
+                elif encoded_body.len() != length { ret Result::Err("incomplete HTTP response body") }
+                else { encoded_body }
+            }
+            Option::None => {
+                if encoded_body.len() > max_body_size { ret Result::Err("response body exceeds limit") }
+                else { encoded_body }
+            }
+        }
+    }
+    ret Result::Ok(HttpResponse{status, reason, headers, body})
+}
+
+fn explicitly_framed_response_complete(raw: str, max_body_size: usize) -> bool {
+    let header_end = index_of(raw, "\r\n\r\n", 0_usize)
+    if header_end == raw.len() { ret false }
+    let header_block = ascii_lower(raw.slice(0_usize, header_end))
+    if !contains(header_block, "\r\ncontent-length:") && !contains(header_block, "\r\ntransfer-encoding:") { ret false }
+    ret parse_http_response(raw, max_body_size).is_ok()
+}
+
+fn decode_chunked(raw: str, limit: usize) -> Result[str, str] {
+    let mut out = ""
+    let mut cursor = 0_usize
+    while cursor < raw.len() {
+        let line_end = index_of(raw, "\r\n", cursor)
+        if line_end == raw.len() { ret Result::Err("incomplete chunk size") }
+        let size_line = raw.slice(cursor, line_end - cursor)
+        let extension = index_of(size_line, ";", 0_usize)
+        let size_text = if extension < size_line.len() { size_line.slice(0_usize, extension) } else { size_line }
+        let size = match parse_hex(size_text) {
+            Option::Some(value) => value
+            Option::None => { ret Result::Err("invalid chunk size") }
+        }
+        cursor = line_end + 2_usize
+        if size == 0_usize {
+            let trailer_end = index_of(raw, "\r\n\r\n", cursor)
+            if cursor + 2_usize == raw.len() && raw.slice(cursor, 2_usize) == "\r\n" { ret Result::Ok(out) }
+            if trailer_end == raw.len() || trailer_end + 4_usize != raw.len() { ret Result::Err("invalid chunk trailers") }
+            ret Result::Ok(out)
+        }
+        if size > limit || out.len() + size > limit { ret Result::Err("response body exceeds limit") }
+        if cursor + size + 2_usize > raw.len() { ret Result::Err("incomplete chunk data") }
+        out += raw.slice(cursor, size)
+        cursor += size
+        if raw.slice(cursor, 2_usize) != "\r\n" { ret Result::Err("invalid chunk terminator") }
+        cursor += 2_usize
+    }
+    ret Result::Err("missing final chunk")
+}
+
+fn header_value(headers: Vec[HttpHeader], name: str) -> Option[str] {
+    let needle = ascii_lower(name)
+    for header in headers { if ascii_lower(header.name) == needle { ret Option::Some(header.value) } }
+    ret Option::None
+}
+
+fn headers_contain(headers: Vec[HttpHeader], name: str) -> bool { ret header_value(headers, name).is_some() }
+
+fn header_count(headers: Vec[HttpHeader], name: str) -> usize {
+    let needle = ascii_lower(name)
+    let mut count = 0_usize
+    for header in headers { if ascii_lower(header.name) == needle { count += 1_usize } }
+    ret count
+}
+
+fn invalid_header(value: str) -> bool {
+    if value == "" { ret true }
+    let mut index = 0_usize
+    while index < value.len() {
+        let byte = value.byte_at(index)
+        let valid = (byte >= 48_u8 && byte <= 57_u8) || (byte >= 65_u8 && byte <= 90_u8) || (byte >= 97_u8 && byte <= 122_u8) || byte == 45_u8
+        if !valid { ret true }
+        index += 1_usize
+    }
+    ret false
+}
+
+fn ascii_lower(value: str) -> str {
+    let mut out = ""
+    let lower = "abcdefghijklmnopqrstuvwxyz"
+    let mut index = 0_usize
+    while index < value.len() {
+        let byte = value.byte_at(index)
+        if byte >= 65_u8 && byte <= 90_u8 { out += lower.slice((byte - 65_u8) as usize, 1_usize) }
+        else { out += value.slice(index, 1_usize) }
+        index += 1_usize
+    }
+    ret out
+}
+
+fn trim_ascii(value: str) -> str {
+    let mut start = 0_usize
+    let mut end = value.len()
+    while start < end && (value.byte_at(start) == 32_u8 || value.byte_at(start) == 9_u8) { start += 1_usize }
+    while end > start && (value.byte_at(end - 1_usize) == 32_u8 || value.byte_at(end - 1_usize) == 9_u8) { end -= 1_usize }
+    ret value.slice(start, end - start)
+}
+
+fn parse_decimal(value: str) -> Option[usize] {
+    if value == "" { ret Option::None }
+    let mut out = 0_usize
+    let mut index = 0_usize
+    while index < value.len() {
+        let byte = value.byte_at(index)
+        if byte < 48_u8 || byte > 57_u8 { ret Option::None }
+        out = out * 10_usize + (byte - 48_u8) as usize
+        index += 1_usize
+    }
+    ret Option::Some(out)
+}
+
+fn parse_hex(value: str) -> Option[usize] {
+    if value == "" { ret Option::None }
+    let mut out = 0_usize
+    let mut index = 0_usize
+    while index < value.len() {
+        let byte = value.byte_at(index)
+        let digit = if byte >= 48_u8 && byte <= 57_u8 { (byte - 48_u8) as usize }
+            elif byte >= 65_u8 && byte <= 70_u8 { (byte - 55_u8) as usize }
+            elif byte >= 97_u8 && byte <= 102_u8 { (byte - 87_u8) as usize }
+            else { ret Option::None }
+        out = out * 16_usize + digit
+        index += 1_usize
+    }
+    ret Option::Some(out)
+}
+
+fn index_of(value: str, needle: str, start: usize) -> usize {
+    if needle == "" { ret if start <= value.len() { start } else { value.len() } }
+    let mut index = start
+    while index + needle.len() <= value.len() {
+        if value.slice(index, needle.len()) == needle { ret index }
+        index += 1_usize
+    }
+    ret value.len()
+}
+
+fn first_of(value: str, needles: str) -> usize {
+    let mut index = 0_usize
+    while index < value.len() {
+        let mut needle = 0_usize
+        while needle < needles.len() {
+            if value.byte_at(index) == needles.byte_at(needle) { ret index }
+            needle += 1_usize
+        }
+        index += 1_usize
+    }
+    ret value.len()
+}
+
+fn last_index_of(value: str, needle: str) -> usize {
+    if needle.len() != 1_usize { ret value.len() }
+    let mut index = value.len()
+    while index > 0_usize {
+        index -= 1_usize
+        if value.byte_at(index) == needle.byte_at(0_usize) { ret index }
+    }
+    ret value.len()
+}
+
+fn starts_with(value: str, prefix: str) -> bool { ret prefix.len() <= value.len() && value.slice(0_usize, prefix.len()) == prefix }
+
+fn contains(value: str, needle: str) -> bool { ret index_of(value, needle, 0_usize) < value.len() }

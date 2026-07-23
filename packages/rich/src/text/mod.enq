@@ -1,0 +1,39 @@
+import colorterm::{styled, Color, Style}
+
+pub struct Text {
+    value: str
+}
+
+impl for Text {
+    pub fn new(value: str) -> Self {
+        ret Self{value}
+    }
+
+    pub fn plain(self: Self) -> str {
+        ret self.value
+    }
+
+    pub fn bold(self: Self) -> str {
+        ret styled(self.value, Color::White, Style::Bold)
+    }
+
+    pub fn dim(self: Self) -> str {
+        ret styled(self.value, Color::White, Style::Dim)
+    }
+
+    pub fn cyan(self: Self) -> str {
+        ret styled(self.value, Color::Cyan, Style::Normal)
+    }
+
+    pub fn green(self: Self) -> str {
+        ret styled(self.value, Color::Green, Style::Normal)
+    }
+
+    pub fn yellow(self: Self) -> str {
+        ret styled(self.value, Color::Yellow, Style::Bold)
+    }
+
+    pub fn red(self: Self) -> str {
+        ret styled(self.value, Color::Red, Style::Bold)
+    }
+}

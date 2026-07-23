@@ -1,0 +1,12 @@
+import std::fmt::Debug
+import std::process::success_code
+import core::testing::*
+
+fn main() -> u32 {
+    let code = success_code()
+    let message = "process exit_success returned " + Debug::fmt(code)
+    if !assert(message == "process exit_success returned 0") {
+        ret 1_u32
+    }
+    ret 0_u32
+}

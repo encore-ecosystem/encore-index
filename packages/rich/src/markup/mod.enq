@@ -1,0 +1,117 @@
+import core::testing::assert
+
+import refrain::style::{accent, error_text, muted, success_text, warn_text}
+
+pub fn render_markup(source: str) -> str {
+    let mut out = ""
+    let mut index = 0_usize
+    let total = source.char_len()
+    let mut mode = ""
+    let mut buffer = ""
+
+    while index < total {
+        if matches_tag(source, index, "[bold]") {
+            out += flush(mode, buffer)
+            buffer = ""
+            mode = "bold"
+            index = index + 6_usize
+        }
+        elif matches_tag(source, index, "[dim]") {
+            out += flush(mode, buffer)
+            buffer = ""
+            mode = "dim"
+            index = index + 5_usize
+        }
+        elif matches_tag(source, index, "[info]") {
+            out += flush(mode, buffer)
+            buffer = ""
+            mode = "info"
+            index = index + 6_usize
+        }
+        elif matches_tag(source, index, "[ok]") {
+            out += flush(mode, buffer)
+            buffer = ""
+            mode = "ok"
+            index = index + 4_usize
+        }
+        elif matches_tag(source, index, "[warn]") {
+            out += flush(mode, buffer)
+            buffer = ""
+            mode = "warn"
+            index = index + 6_usize
+        }
+        elif matches_tag(source, index, "[error]") {
+            out += flush(mode, buffer)
+            buffer = ""
+            mode = "error"
+            index = index + 7_usize
+        }
+        elif matches_tag(source, index, "[/]") {
+            out += flush(mode, buffer)
+            buffer = ""
+            mode = ""
+            index = index + 3_usize
+        }
+        else {
+            buffer += source.slice(index, 1_usize)
+            index = index + 1_usize
+        }
+    }
+
+    out += flush(mode, buffer)
+    ret out
+}
+
+fn matches_tag(source: str, index: usize, tag: str) -> bool {
+    let tag_len = tag.char_len()
+    if index + tag_len > source.char_len() {
+        ret false
+    }
+    ret source.slice(index, tag_len) == tag
+}
+
+fn flush(mode: str, text: str) -> str {
+    if mode == "bold" || mode == "info" {
+        ret accent(text)
+    }
+    if mode == "dim" {
+        ret muted(text)
+    }
+    if mode == "ok" {
+        ret success_text(text)
+    }
+    if mode == "warn" {
+        ret warn_text(text)
+    }
+    if mode == "error" {
+        ret error_text(text)
+    }
+    ret text
+}
+
+#attr(test)
+fn markup_renders_known_tags() -> bool {
+    let rendered = render_markup("[info]hello[/] [warn]build[/] [error]fail[/]")
+    ret assert(str_contains(rendered, "hello"))
+        && assert(str_contains(rendered, "build"))
+        && assert(str_contains(rendered, "fail"))
+}
+
+fn str_contains(value: str, needle: str) -> bool {
+    let needle_len = needle.char_len()
+    let value_len = value.char_len()
+    if needle_len == 0_usize {
+        ret true
+    }
+    if needle_len > value_len {
+        ret false
+    }
+    let mut start = 0_usize
+    while start + needle_len <= value_len {
+        if value.slice(start, needle_len) == needle {
+            ret true
+        }
+        start = start + 1_usize
+    }
+    ret false
+}

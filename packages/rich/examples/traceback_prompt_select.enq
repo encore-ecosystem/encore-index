@@ -1,0 +1,28 @@
+import core::vec::Vec
+import core::fmt::Debug
+import rich::{Console, Prompt, SelectPrompt, Theme, TraceFrame, Traceback, parse_identifier, parse_usize_or}
+
+fn main() -> u32 {
+    let console = Console::new()
+
+    console.rule("Prompt")
+    let target = console.prompt(Prompt::with_default("Target", "bootstrap"))
+    let mut modes = Vec[str]::new()
+    modes.push("debug")
+    modes.push("release")
+    let mode = console.select(SelectPrompt::with_default("Mode", modes, 0_usize))
+    let module_name = parse_identifier(target, "bootstrap")
+    let jobs = parse_usize_or("6", 4_usize)
+    let theme = Theme::compiler()
+    console.theme_info(theme, "interactive configuration")
+    console.info("target: " + module_name)
+    console.info("mode: " + mode)
+    console.info("jobs: " + Debug::fmt(jobs))
+
+    console.rule("Traceback")
+    let mut tb = Traceback::new("CompileError", "cannot resolve module")
+    tb.push_frame(TraceFrame::with_context("frontend/imports.enq", "resolve_import", 18_usize, 7_usize, "use std::fs", "import foo::bar", "ret manifest"))
+    tb.add_frame("main.enq", "main", 3_usize, 1_usize, "build()")
+    console.traceback(tb)
+    ret 0_u32
+}

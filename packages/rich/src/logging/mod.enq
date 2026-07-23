@@ -1,0 +1,240 @@
+import core::os::{file_exists, read_file, write_file}
+import core::testing::assert
+
+import log::{ConsoleSink, FileSink, Formatter, LogLevel, LogSink, Logger, Writable, WriterSink}
+
+pub struct RichLoggerBuilder {
+    logger: Logger
+}
+
+impl for RichLoggerBuilder {
+    pub fn new(target: str) -> Self {
+        ret Self{Logger::new(target)}
+    }
+
+    pub fn with_min_level(self: mut Self, level: LogLevel) -> () {
+        self.logger = self.logger.with_min_level(level)
+        ret ()
+    }
+
+    pub fn add_console(self: mut Self) -> () {
+        self.logger.add_sink(ConsoleSink::stdout() as dyn LogSink)
+        ret ()
+    }
+
+    pub fn add_plain_console(self: mut Self) -> () {
+        self.logger.add_sink(ConsoleSink::plain_stdout() as dyn LogSink)
+        ret ()
+    }
+
+    pub fn add_console_with_formatter(self: mut Self, formatter: Formatter) -> () {
+        self.logger.add_sink(ConsoleSink::new(formatter, false) as dyn LogSink)
+        ret ()
+    }
+
+    pub fn add_stderr(self: mut Self) -> () {
+        self.logger.add_sink(ConsoleSink::stderr() as dyn LogSink)
+        ret ()
+    }
+
+    pub fn add_plain_stderr(self: mut Self) -> () {
+        self.logger.add_sink(ConsoleSink::plain_stderr() as dyn LogSink)
+        ret ()
+    }
+
+    pub fn add_stderr_with_formatter(self: mut Self, formatter: Formatter) -> () {
+        self.logger.add_sink(ConsoleSink::new(formatter, true) as dyn LogSink)
+        ret ()
+    }
+
+    pub fn add_file(self: mut Self, path: str) -> () {
+        self.logger.add_sink(FileSink::new(path) as dyn LogSink)
+        ret ()
+    }
+
+    pub fn add_file_with_formatter(self: mut Self, path: str, formatter: Formatter) -> () {
+        self.logger.add_sink(FileSink::with_formatter(path, formatter) as dyn LogSink)
+        ret ()
+    }
+
+    pub fn add_writer(self: mut Self, writer: dyn Writable) -> () {
+        self.logger.add_sink(WriterSink::new(writer) as dyn LogSink)
+        ret ()
+    }
+
+    pub fn add_writer_with_formatter(self: mut Self, writer: dyn Writable, formatter: Formatter) -> () {
+        self.logger.add_sink(WriterSink::with_formatter(writer, formatter) as dyn LogSink)
+        ret ()
+    }
+
+    pub fn build(self: Self) -> Logger {
+        ret self.logger
+    }
+}
+
+pub fn console_logger(target: str) -> Logger {
+    ret Logger::console(target)
+}
+
+pub fn console_logger_with_formatter(target: str, formatter: Formatter) -> Logger {
+    let mut logger = Logger::new(target)
+    logger.add_sink(ConsoleSink::new(formatter, false) as dyn LogSink)
+    ret logger
+}
+
+pub fn plain_console_logger(target: str) -> Logger {
+    let mut logger = Logger::new(target)
+    logger.add_sink(ConsoleSink::plain_stdout() as dyn LogSink)
+    ret logger
+}
+
+pub fn stderr_logger(target: str) -> Logger {
+    ret Logger::stderr(target)
+}
+
+pub fn stderr_logger_with_formatter(target: str, formatter: Formatter) -> Logger {
+    let mut logger = Logger::new(target)
+    logger.add_sink(ConsoleSink::new(formatter, true) as dyn LogSink)
+    ret logger
+}
+
+pub fn plain_stderr_logger(target: str) -> Logger {
+    let mut logger = Logger::new(target)
+    logger.add_sink(ConsoleSink::plain_stderr() as dyn LogSink)
+    ret logger
+}
+
+pub fn file_logger(target: str, path: str) -> Logger {
+    let mut logger = Logger::new(target)
+    logger.add_sink(FileSink::new(path) as dyn LogSink)
+    ret logger
+}
+
+pub fn file_logger_with_formatter(target: str, path: str, formatter: Formatter) -> Logger {
+    let mut logger = Logger::new(target)
+    logger.add_sink(FileSink::with_formatter(path, formatter) as dyn LogSink)
+    ret logger
+}
+
+pub fn writer_logger(target: str, writer: dyn Writable) -> Logger {
+    let mut logger = Logger::new(target)
+    logger.add_sink(WriterSink::new(writer) as dyn LogSink)
+    ret logger
+}
+
+pub fn writer_logger_with_formatter(target: str, writer: dyn Writable, formatter: Formatter) -> Logger {
+    let mut logger = Logger::new(target)
+    logger.add_sink(WriterSink::with_formatter(writer, formatter) as dyn LogSink)
+    ret logger
+}
+
+pub fn compact_formatter() -> Formatter {
+    ret Formatter::colored().with_target(false)
+}
+
+pub fn plain_compact_formatter() -> Formatter {
+    ret Formatter::plain().with_target(false)
+}
+
+pub fn console_file_logger(target: str, path: str) -> Logger {
+    let mut builder = RichLoggerBuilder::new(target)
+    builder.add_console()
+    builder.add_file(path)
+    ret builder.build()
+}
+
+pub fn console_file_logger_with_formatters(target: str, path: str, console_formatter: Formatter, file_formatter: Formatter) -> Logger {
+    let mut builder = RichLoggerBuilder::new(target)
+    builder.add_console_with_formatter(console_formatter)
+    builder.add_file_with_formatter(path, file_formatter)
+    ret builder.build()
+}
+
+pub fn console_writer_logger(target: str, writer: dyn Writable) -> Logger {
+    let mut builder = RichLoggerBuilder::new(target)
+    builder.add_console()
+    builder.add_writer(writer)
+    ret builder.build()
+}
+
+pub fn stderr_file_logger(target: str, path: str) -> Logger {
+    let mut builder = RichLoggerBuilder::new(target)
+    builder.add_stderr()
+    builder.add_file(path)
+    ret builder.build()
+}
+
+struct RichCaptureWriter {
+    path: str
+}
+
+impl Writable for RichCaptureWriter {
+    fn write(self: RichCaptureWriter, value: str) -> i32 {
+        let mut current = ""
+        if file_exists(self.path) {
+            current = read_file(self.path)
+        }
+        ret write_file(self.path, current + value)
+    }
+}
+
+#attr(test)
+fn rich_file_logger_writes_records() -> bool {
+    let path = "target/rich_logging_file.log"
+    write_file(path, "")
+    let logger = file_logger("rich", path)
+    logger.info("file sink active")
+    let text = read_file(path)
+    ret assert(str_contains(text, "file sink active")) && assert(str_contains(text, "[rich]"))
+}
+
+#attr(test)
+fn rich_writer_logger_uses_custom_writable() -> bool {
+    let path = "target/rich_logging_writer.log"
+    write_file(path, "")
+    let formatter = Formatter::plain().with_target(false)
+    let logger = writer_logger_with_formatter("rich", RichCaptureWriter{path} as dyn Writable, formatter)
+    logger.log(LogLevel::Warn, "writer sink active")
+    let text = read_file(path)
+    ret assert(str_contains(text, "writer sink active")) && assert(!str_contains(text, "[rich]"))
+}
+
+#attr(test)
+fn rich_logger_builder_can_compose_multiple_sinks() -> bool {
+    let path = "target/rich_logging_builder.log"
+    let writer_path = "target/rich_logging_builder_writer.log"
+    write_file(path, "")
+    write_file(writer_path, "")
+    let mut builder = RichLoggerBuilder::new("builder")
+    builder.with_min_level(LogLevel::Info)
+    builder.add_file(path)
+    builder.add_writer_with_formatter(RichCaptureWriter{writer_path} as dyn Writable, plain_compact_formatter())
+    let logger = builder.build()
+    logger.debug("skip")
+    logger.info("builder active")
+    let text = read_file(path)
+    let writer_text = read_file(writer_path)
+    ret assert(!str_contains(text, "skip"))
+        && assert(str_contains(text, "builder active"))
+        && assert(str_contains(writer_text, "builder active"))
+}
+
+fn str_contains(value: str, needle: str) -> bool {
+    let needle_len = needle.char_len()
+    let value_len = value.char_len()
+    if needle_len == 0_usize {
+        ret true
+    }
+    if needle_len > value_len {
+        ret false
+    }
+
+    let mut start = 0_usize
+    while start + needle_len <= value_len {
+        if value.slice(start, needle_len) == needle {
+            ret true
+        }
+        start = start + 1_usize
+    }
+    ret false
+}

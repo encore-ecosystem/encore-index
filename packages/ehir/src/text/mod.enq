@@ -1,0 +1,964 @@
+import core::option::Option
+import core::fmt::Debug
+import refrain::core::*
+
+extern fn encore_text_builder_new() -> usize
+extern fn encore_text_builder_append(builder: usize, value: str) -> ()
+extern fn encore_text_builder_append_builder(builder: usize, other: usize) -> ()
+extern fn encore_text_builder_finish(builder: usize) -> str
+extern fn encore_text_builder_set_suppressed(suppressed: bool) -> ()
+
+/// Enables or disables allocation-heavy text output for validation-only
+/// compiler passes on the current native thread.
+pub fn suppress_text_builder_output(suppressed: bool) -> () {
+    unsafe { encore_text_builder_set_suppressed(suppressed) }
+    ret ()
+}
+
+pub struct EhirTextBuilder {
+    handle: usize
+}
+
+impl for EhirTextBuilder {
+    pub fn new() -> Self {
+        ret Self {unsafe { encore_text_builder_new() }}
+    }
+
+    pub fn append(self: Self, other: Self) -> Self {
+        unsafe { encore_text_builder_append_builder(self.handle, other.handle) }
+        ret self
+    }
+
+    pub fn append_str(self: Self, value: str) -> Self {
+        if value == "" { ret self }
+        unsafe { encore_text_builder_append(self.handle, value) }
+        ret self
+    }
+
+    pub fn line(self: Self, value: str) -> Self {
+        unsafe {
+            encore_text_builder_append(self.handle, value)
+            encore_text_builder_append(self.handle, "\n")
+        }
+        ret self
+    }
+
+    pub fn instr(self: Self, value: str) -> Self {
+        ret self.line("    " + value)
+    }
+
+    pub fn label(self: Self, value: str) -> Self {
+        ret self.line("  $" + value + ":")
+    }
+
+    pub fn empty_line(self: Self) -> Self {
+        ret self.line("")
+    }
+
+    pub fn finish(self: Self) -> str {
+        ret unsafe { encore_text_builder_finish(self.handle) }
+    }
+}
+
+
+fn newline() -> str {
+    ret "\n"
+}
+
+fn join_strings(items: Vec[str], separator: str) -> str {
+    let mut out = ""
+    let mut index = 0_usize
+
+    loop {
+        match items.get(index) {
+            Option[str]::Some(item) => {
+                if index > 0_usize {
+                    out = out + separator
+                }
+                out = out + item
+                index = index + 1_usize
+            }
+            Option[str]::None => {
+                break
+            }
+        }
+    }
+
+    ret out
+}
+
+fn push_text(items: Vec[str], value: str) -> Vec[str] {
+    let mut out = items
+    out.push(value)
+    ret out
+}
+
+fn collect_type_strings(items: Vec[Type]) -> Vec[str] {
+    let mut out = Vec[str]::new()
+    let mut index = 0_usize
+
+    loop {
+        match items.get(index) {
+            Some(item) => {
+                out = push_text(out, type_to_string(item))
+                index = index + 1_usize
+            }
+            None => {
+                break
+            }
+        }
+    }
+
+    ret out
+}
+
+fn collect_parameter_strings(items: Vec[Parameter]) -> Vec[str] {
+    let mut out = Vec[str]::new()
+    let mut index = 0_usize
+
+    loop {
+        match items.get(index) {
+            Some(item) => {
+                out = push_text(out, parameter_to_string(item))
+                index = index + 1_usize
+            }
+            None => {
+                break
+            }
+        }
+    }
+
+    ret out
+}
+
+fn collect_variable_strings(items: Vec[Variable]) -> Vec[str] {
+    let mut out = Vec[str]::new()
+    let mut index = 0_usize
+
+    loop {
+        match items.get(index) {
+            Option[Variable]::Some(item) => {
+                out = push_text(out, variable_to_string(item))
+                index = index + 1_usize
+            }
+            Option[Variable]::None => {
+                break
+            }
+        }
+    }
+
+    ret out
+}
+
+fn collect_phi_pair_strings(items: Vec[PhiPair]) -> Vec[str] {
+    let mut out = Vec[str]::new()
+    let mut index = 0_usize
+
+    loop {
+        match items.get(index) {
+            Some(item) => {
+                out = push_text(out, phi_pair_to_string(item))
+                index = index + 1_usize
+            }
+            None => {
+                break
+            }
+        }
+    }
+
+    ret out
+}
+
+fn collect_match_arm_strings(items: Vec[MatchArm]) -> Vec[str] {
+    let mut out = Vec[str]::new()
+    let mut index = 0_usize
+
+    loop {
+        match items.get(index) {
+            Some(item) => {
+                out = push_text(out, match_arm_to_string(item))
+                index = index + 1_usize
+            }
+            None => {
+                break
+            }
+        }
+    }
+
+    ret out
+}
+
+fn collect_switch_case_strings(items: Vec[SwitchCase]) -> Vec[str] {
+    let mut out = Vec[str]::new()
+    let mut index = 0_usize
+
+    loop {
+        match items.get(index) {
+            Some(item) => {
+                out = push_text(out, switch_case_to_string(item))
+                index = index + 1_usize
+            }
+            None => {
+                break
+            }
+        }
+    }
+
+    ret out
+}
+
+fn collect_enum_variant_strings(items: Vec[EnumVariant]) -> Vec[str] {
+    let mut out = Vec[str]::new()
+    let mut index = 0_usize
+
+    loop {
+        match items.get(index) {
+            Some(item) => {
+                out = push_text(out, enum_variant_to_string(item))
+                index = index + 1_usize
+            }
+            None => {
+                break
+            }
+        }
+    }
+
+    ret out
+}
+
+fn enum_value_to_string(value: EnumValue) -> str {
+    let mut out = value.name
+    if value.generics.len() > 0_usize {
+        out = out + "["
+        out = out + join_strings(collect_type_strings(value.generics), ", ")
+        out = out + "]"
+    }
+    out = out + "::"
+    out = out + value.variant
+    out = out + "("
+    match value.payload {
+        Some(payload) => {
+            out = out + variable_to_string(payload)
+        }
+        None => {}
+    }
+    out = out + ")"
+    ret out
+}
+
+fn collect_trait_method_strings(items: Vec[TraitMethod]) -> Vec[str] {
+    let mut out = Vec[str]::new()
+    let mut index = 0_usize
+
+    loop {
+        match items.get(index) {
+            Some(item) => {
+                out = push_text(out, trait_method_to_string(item))
+                index = index + 1_usize
+            }
+            None => {
+                break
+            }
+        }
+    }
+
+    ret out
+}
+
+fn collect_fn_strings(items: Vec[FnDirective]) -> Vec[str] {
+    let mut out = Vec[str]::new()
+    let mut index = 0_usize
+
+    loop {
+        match items.get(index) {
+            Some(item) => {
+                out = push_text(out, fn_to_string(item))
+                index = index + 1_usize
+            }
+            None => {
+                break
+            }
+        }
+    }
+
+    ret out
+}
+
+fn collect_directive_strings(items: Vec[Directive]) -> Vec[str] {
+    let mut out = Vec[str]::new()
+    let mut index = 0_usize
+
+    loop {
+        match items.get(index) {
+            Some(item) => {
+                out = push_text(out, directive_to_string(item))
+                index = index + 1_usize
+            }
+            None => {
+                break
+            }
+        }
+    }
+
+    ret out
+}
+
+fn collect_block_strings(items: Vec[Block]) -> Vec[str] {
+    let mut out = Vec[str]::new()
+    let mut index = 0_usize
+
+    loop {
+        match items.get(index) {
+            Some(item) => {
+                out = push_text(out, block_to_string(item))
+                index = index + 1_usize
+            }
+            None => {
+                break
+            }
+        }
+    }
+
+    ret out
+}
+
+fn collect_instruction_lines(items: Vec[Instruction]) -> str {
+    let mut out = ""
+    let mut index = 0_usize
+
+    loop {
+        match items.get(index) {
+            Some(item) => {
+                out = out + "  "
+                out = out + instruction_to_string(item)
+                out = out + newline()
+                index = index + 1_usize
+            }
+            None => {
+                break
+            }
+        }
+    }
+
+    ret out
+}
+
+pub fn type_to_string(typ: Type) -> str {
+    let mut out = typ.name
+
+    if typ.generics.len() > 0_usize {
+        out = out + "["
+        out = out + join_strings(collect_type_strings(typ.generics), ", ")
+        out = out + "]"
+    }
+
+    match typ.pointer {
+        PointerKind::Raw => {
+            ret out + "*"
+        }
+        PointerKind::Heap => {
+            ret out + "<H>"
+        }
+        PointerKind::Stack => {
+            ret out + "<S>"
+        }
+        PointerKind::Plain => {}
+    }
+
+    ret out
+}
+
+pub fn variable_to_string(variable: Variable) -> str {
+    match variable.typ {
+        Some(typ) => {
+            let mut out = variable.name
+            out = out + ": "
+            out = out + type_to_string(typ)
+            ret out
+        }
+        None => {
+            ret variable.name
+        }
+    }
+}
+
+pub fn parameter_to_string(parameter: Parameter) -> str {
+    let mut out = parameter.name
+    out = out + ": "
+    out = out + type_to_string(parameter.typ)
+    ret out
+}
+
+pub fn phi_pair_to_string(pair: PhiPair) -> str {
+    let mut out = variable_to_string(pair.value)
+    out = out + " $"
+    out = out + pair.label
+    ret out
+}
+
+pub fn match_arm_to_string(arm: MatchArm) -> str {
+    let mut out = arm.variant
+    match arm.payload_var {
+        Some(payload) => {
+            out = out + "("
+            out = out + variable_to_string(payload)
+            out = out + ")"
+        }
+        None => {}
+    }
+    out = out + " => $"
+    out = out + arm.label
+    ret out
+}
+
+pub fn switch_case_to_string(case_item: SwitchCase) -> str {
+    let mut out = case_item.value
+    out = out + " => $"
+    out = out + case_item.label
+    ret out
+}
+
+pub fn enum_variant_to_string(variant: EnumVariant) -> str {
+    match variant.payload_type {
+        Some(payload_type) => {
+            let mut out = variant.name
+            out = out + "("
+            out = out + type_to_string(payload_type)
+            out = out + ")"
+            ret out
+        }
+        None => {
+            ret variant.name
+        }
+    }
+}
+
+fn render_assignable(out_var: Variable, opcode: str, args: str) -> str {
+    let mut out = variable_to_string(out_var)
+    out = out + " = "
+    out = out + opcode
+    if args != "" {
+        out = out + " "
+        out = out + args
+    }
+    ret out
+}
+
+fn binary_op_to_string(op: BinaryOpKind) -> str {
+    match op {
+        BinaryOpKind::ADD => { ret "add" }
+        BinaryOpKind::SUB => { ret "sub" }
+        BinaryOpKind::MUL => { ret "mul" }
+        BinaryOpKind::DIV => { ret "div" }
+        BinaryOpKind::MOD => { ret "mod" }
+        BinaryOpKind::SHL => { ret "shl" }
+        BinaryOpKind::SHR => { ret "shr" }
+        BinaryOpKind::LES => { ret "les" }
+        BinaryOpKind::LEQ => { ret "leq" }
+        BinaryOpKind::GRT => { ret "grt" }
+        BinaryOpKind::GEQ => { ret "geq" }
+        BinaryOpKind::IEQ => { ret "ieq" }
+        BinaryOpKind::NEQ => { ret "neq" }
+        BinaryOpKind::AND => { ret "and" }
+        BinaryOpKind::OR => { ret "or" }
+        BinaryOpKind::XOR => { ret "xor" }
+    }
+}
+
+fn format_comment_instruction(comment_instr: CommentInstruction) -> str {
+    let mut out: str = "; "
+    out = out + comment_instr.text
+    ret out
+}
+
+fn format_lcsos_instruction(lcsos_instr: LcsosInstruction) -> str {
+    let mut args: str = type_to_string(lcsos_instr.typ)
+    args = args + "("
+    args = args + join_strings(collect_variable_strings(lcsos_instr.args), ", ")
+    args = args + ")"
+    ret render_assignable(lcsos_instr.out, "lcsos", args)
+}
+
+fn format_call_instruction(call_instr: CallInstruction) -> str {
+    let mut fn_name: str = call_instr.name
+    if call_instr.generics.len() > 0_usize {
+        fn_name = fn_name + "["
+        fn_name = fn_name + join_strings(collect_type_strings(call_instr.generics), ", ")
+        fn_name = fn_name + "]"
+    }
+
+    let mut args: str = fn_name
+    args = args + "("
+    args = args + join_strings(collect_variable_strings(call_instr.args), ", ")
+    args = args + ")"
+
+    let opcode: str = if call_instr.is_unsafe { "unsafe call" } else { "call" }
+    ret render_assignable(call_instr.out, opcode, args)
+}
+
+fn format_store_instruction(store_instr: StoreInstruction) -> str {
+    let mut out: str = "store "
+    out = out + variable_to_string(store_instr.src)
+    out = out + ", "
+    out = out + variable_to_string(store_instr.dst)
+    ret out
+}
+
+fn format_field_instruction(opcode: str, out_var: Variable, src: Variable, field: Variable) -> str {
+    let mut args: str = variable_to_string(src)
+    args = args + ", "
+    args = args + variable_to_string(field)
+    ret render_assignable(out_var, opcode, args)
+}
+
+fn format_gep_instruction(gep_instr: GepInstruction) -> str {
+    let mut args: str = variable_to_string(gep_instr.src)
+    args = args + ", "
+    args = args + variable_to_string(gep_instr.offset)
+    ret render_assignable(gep_instr.out, "gep", args)
+}
+
+fn format_pcast_instruction(pcast_instr: PtrCastInstruction) -> str {
+    let mut args: str = variable_to_string(pcast_instr.src)
+    args = args + ", "
+    args = args + type_to_string(pcast_instr.target_type)
+    ret render_assignable(pcast_instr.out, "pcast", args)
+}
+
+fn format_hrealloc_instruction(hrealloc_instr: HeapReallocInstruction) -> str {
+    let mut args: str = variable_to_string(hrealloc_instr.src)
+    args = args + ", "
+    args = args + variable_to_string(hrealloc_instr.count)
+    ret render_assignable(hrealloc_instr.out, "hrealloc", args)
+}
+
+fn format_hfree_instruction(hfree_instr: HeapFreeInstruction) -> str {
+    let mut out: str = "hfree "
+    out = out + variable_to_string(hfree_instr.src)
+    ret out
+}
+
+fn format_put_instruction(put_instr: PutInstruction) -> str {
+    let mut out: str = "put "
+    out = out + put_instr.primitive
+    out = out + ", "
+    out = out + variable_to_string(put_instr.dst)
+    ret out
+}
+
+fn format_binary_instruction(binary_instr: BinaryInstruction) -> str {
+    let mut args: str = variable_to_string(binary_instr.lhs)
+    args = args + ", "
+    args = args + variable_to_string(binary_instr.rhs)
+    ret render_assignable(binary_instr.out, binary_op_to_string(binary_instr.op), args)
+}
+
+fn format_cfree_instruction(cfree_instr: CfreeInstruction) -> str {
+    let mut out: str = "cfree "
+    out = out + variable_to_string(cfree_instr.value)
+    ret out
+}
+
+fn format_ret_terminator(ret_instr: ReturnInstruction) -> str {
+    let mut out: str = "ret "
+    out = out + variable_to_string(ret_instr.value)
+    ret out
+}
+
+fn format_br_terminator(br_instr: BranchInstruction) -> str {
+    let mut out: str = "br $"
+    out = out + br_instr.label
+    ret out
+}
+
+fn format_cbr_terminator(cbr_instr: ConditionalBranchInstruction) -> str {
+    let mut out: str = "cbr "
+    out = out + variable_to_string(cbr_instr.cond)
+    out = out + ", $"
+    out = out + cbr_instr.true_label
+    out = out + ", $"
+    out = out + cbr_instr.false_label
+    ret out
+}
+
+fn format_match_terminator(match_instr: MatchInstruction) -> str {
+    let mut out: str = "match "
+    out = out + variable_to_string(match_instr.scrutinee)
+    out = out + ", $"
+    out = out + match_instr.default_label
+    out = out + " {"
+    if match_instr.arms.len() == 0_usize {
+        out = out + "}"
+        ret out
+    }
+
+    out = out + newline()
+    out = out + "  "
+    out = out + join_strings(collect_match_arm_strings(match_instr.arms), newline() + "  ")
+    out = out + newline()
+    out = out + "}"
+    ret out
+}
+
+fn format_switch_terminator(switch_instr: SwitchInstruction) -> str {
+    let mut out: str = "switch "
+    out = out + variable_to_string(switch_instr.scrutinee)
+    out = out + ", $"
+    out = out + switch_instr.default_label
+    out = out + " {"
+    if switch_instr.cases.len() == 0_usize {
+        out = out + "}"
+        ret out
+    }
+
+    out = out + newline()
+    out = out + "  "
+    out = out + join_strings(collect_switch_case_strings(switch_instr.cases), newline() + "  ")
+    out = out + newline()
+    out = out + "}"
+    ret out
+}
+
+fn format_struct_directive(struct_dir: StructDirective) -> str {
+    let mut out: str = "struct "
+    out = out + struct_dir.name
+    if struct_dir.generics.len() > 0_usize {
+        out = out + "["
+        out = out + join_strings(collect_type_strings(struct_dir.generics), ", ")
+        out = out + "]"
+    }
+    out = out + " {"
+    if struct_dir.fields.len() == 0_usize {
+        out = out + newline()
+        out = out + "}"
+        ret out
+    }
+    out = out + newline()
+    out = out + "  "
+    out = out + join_strings(collect_parameter_strings(struct_dir.fields), newline() + "  ")
+    out = out + newline()
+    out = out + "}"
+    ret out
+}
+
+fn format_enum_directive(enum_dir: EnumDirective) -> str {
+    let mut out: str = "enum "
+    out = out + enum_dir.name
+    if enum_dir.generics.len() > 0_usize {
+        out = out + "["
+        out = out + join_strings(collect_type_strings(enum_dir.generics), ", ")
+        out = out + "]"
+    }
+    out = out + " {"
+    if enum_dir.variants.len() == 0_usize {
+        out = out + newline()
+        out = out + "}"
+        ret out
+    }
+    out = out + newline()
+    out = out + "  "
+    out = out + join_strings(collect_enum_variant_strings(enum_dir.variants), newline() + "  ")
+    out = out + newline()
+    out = out + "}"
+    ret out
+}
+
+fn format_trait_directive(trait_dir: TraitDirective) -> str {
+    let mut out: str = "trait "
+    out = out + trait_dir.name
+    if trait_dir.generics.len() > 0_usize {
+        out = out + "["
+        out = out + join_strings(collect_type_strings(trait_dir.generics), ", ")
+        out = out + "]"
+    }
+    out = out + " {"
+    if trait_dir.methods.len() == 0_usize {
+        out = out + newline()
+        out = out + "}"
+        ret out
+    }
+    out = out + newline()
+    out = out + "  "
+    out = out + join_strings(collect_trait_method_strings(trait_dir.methods), newline() + "  ")
+    out = out + newline()
+    out = out + "}"
+    ret out
+}
+
+fn format_impl_directive(impl_dir: ImplDirective) -> str {
+    let mut out: str = "impl"
+    if impl_dir.generics.len() > 0_usize {
+        out = out + "["
+        out = out + join_strings(collect_type_strings(impl_dir.generics), ", ")
+        out = out + "]"
+    }
+    out = out + " "
+    out = out + impl_dir.trait_name
+    if impl_dir.trait_args.len() > 0_usize {
+        out = out + "["
+        out = out + join_strings(collect_type_strings(impl_dir.trait_args), ", ")
+        out = out + "]"
+    }
+    out = out + " for "
+    out = out + type_to_string(impl_dir.for_type)
+    out = out + " {"
+    if impl_dir.methods.len() == 0_usize {
+        out = out + newline()
+        out = out + "}"
+        ret out
+    }
+    out = out + newline()
+    out = out + "  "
+    let mut separator: str = newline() + newline()
+    separator = separator + "  "
+    out = out + join_strings(collect_fn_strings(impl_dir.methods), separator)
+    out = out + newline()
+    out = out + "}"
+    ret out
+}
+
+pub fn instruction_to_string(instruction: Instruction) -> str {
+    match instruction {
+        Instruction::Comment(comment_instr) => { ret format_comment_instruction(comment_instr) }
+        Instruction::Lcpos(lcpos_instr) => {
+            ret render_assignable(lcpos_instr.out, "lcpos", lcpos_instr.value)
+        }
+        Instruction::Alias(alias_instr) => {
+            ret render_assignable(alias_instr.out, "alias", variable_to_string(alias_instr.src))
+        }
+        Instruction::Lcsos(lcsos_instr) => { ret format_lcsos_instruction(lcsos_instr) }
+        Instruction::Lceos(lceos_instr) => {
+            ret render_assignable(lceos_instr.out, "lceos", enum_value_to_string(lceos_instr.value))
+        }
+        Instruction::Call(call_instr) => { ret format_call_instruction(call_instr) }
+        Instruction::Await(await_instr) => {
+            ret render_assignable(await_instr.out, "await", variable_to_string(await_instr.future))
+        }
+        Instruction::Store(store_instr) => { ret format_store_instruction(store_instr) }
+        Instruction::Load(load_instr) => {
+            ret render_assignable(load_instr.out, "load", variable_to_string(load_instr.src))
+        }
+        Instruction::GetField(getfield_instr) => { ret format_field_instruction("getfield", getfield_instr.out, getfield_instr.src, getfield_instr.field) }
+        Instruction::SetField(setfield_instr) => {
+            ret "setfield " + variable_to_string(setfield_instr.src) + " > " + variable_to_string(setfield_instr.field) + ", " + variable_to_string(setfield_instr.value)
+        }
+        Instruction::GetFieldPtr(getfieldptr_instr) => { ret format_field_instruction("getfieldptr", getfieldptr_instr.out, getfieldptr_instr.src, getfieldptr_instr.field) }
+        Instruction::SGetField(sgetfield_instr) => { ret format_field_instruction("sgetfield", sgetfield_instr.out, sgetfield_instr.src, sgetfield_instr.field) }
+        Instruction::SGetFieldPtr(sgetfieldptr_instr) => { ret format_field_instruction("sgetfieldptr", sgetfieldptr_instr.out, sgetfieldptr_instr.src, sgetfieldptr_instr.field) }
+        Instruction::GetPtr(getptr_instr) => {
+            ret render_assignable(getptr_instr.out, "getptr", variable_to_string(getptr_instr.src))
+        }
+        Instruction::Gep(gep_instr) => { ret format_gep_instruction(gep_instr) }
+        Instruction::PtrCast(pcast_instr) => { ret format_pcast_instruction(pcast_instr) }
+        Instruction::StackAlloc(salloc_instr) => {
+            ret render_assignable(salloc_instr.out, "salloc", type_to_string(salloc_instr.typ))
+        }
+        Instruction::HeapAlloc(halloc_instr) => {
+            ret render_assignable(halloc_instr.out, "halloc", type_to_string(halloc_instr.typ))
+        }
+        Instruction::HeapRealloc(hrealloc_instr) => { ret format_hrealloc_instruction(hrealloc_instr) }
+        Instruction::HeapFree(hfree_instr) => { ret format_hfree_instruction(hfree_instr) }
+        Instruction::Put(put_instr) => { ret format_put_instruction(put_instr) }
+        Instruction::Binary(binary_instr) => { ret format_binary_instruction(binary_instr) }
+        Instruction::Phi(phi_instr) => {
+            ret render_assignable(phi_instr.out, "phi", join_strings(collect_phi_pair_strings(phi_instr.pairs), ", "))
+        }
+        Instruction::Cfree(cfree_instr) => { ret format_cfree_instruction(cfree_instr) }
+        Instruction::Drop(drop_instr) => { ret "drop " + variable_to_string(drop_instr.value) }
+        Instruction::Retain(retain_instr) => { ret "retain " + variable_to_string(retain_instr.value) }
+    }
+}
+
+pub fn terminator_to_string(terminator: Terminator) -> str {
+    match terminator {
+        Terminator::Unreachable => { ret "unreachable" }
+        Terminator::Ret(ret_instr) => { ret format_ret_terminator(ret_instr) }
+        Terminator::Br(br_instr) => { ret format_br_terminator(br_instr) }
+        Terminator::Cbr(cbr_instr) => { ret format_cbr_terminator(cbr_instr) }
+        Terminator::Match(match_instr) => { ret format_match_terminator(match_instr) }
+        Terminator::Switch(switch_instr) => { ret format_switch_terminator(switch_instr) }
+    }
+}
+
+pub fn block_to_string(block_item: Block) -> str {
+    let mut out = "$"
+    out = out + block_item.name
+    out = out + ":"
+    out = out + newline()
+    out = out + collect_instruction_lines(block_item.instructions)
+    out = out + "  "
+    out = out + terminator_to_string(block_item.terminator)
+    ret out
+}
+
+pub fn trait_method_to_string(method: TraitMethod) -> str {
+    let mut out = "fn "
+    out = out + method.name
+    if method.generics.len() > 0_usize {
+        out = out + "["
+        out = out + join_strings(collect_type_strings(method.generics), ", ")
+        out = out + "]"
+    }
+    out = out + "("
+    out = out + join_strings(collect_parameter_strings(method.params), ", ")
+    out = out + ") -> "
+    out = out + type_to_string(method.ret_type)
+    ret out
+}
+
+pub fn fn_to_string(function: FnDirective) -> str {
+    let mut out = "fn "
+    if function.is_extern {
+        out = "extern fn "
+    } else {
+        if function.is_async { out = "async fn " }
+    }
+    out = out + function.name
+    if function.generics.len() > 0_usize {
+        out = out + "["
+        out = out + join_strings(collect_type_strings(function.generics), ", ")
+        out = out + "]"
+    }
+    out = out + "("
+    out = out + join_strings(collect_parameter_strings(function.params), ", ")
+    out = out + ") -> "
+    out = out + type_to_string(function.ret_type)
+
+    if function.is_extern {
+        ret out
+    }
+
+    out = out + " {"
+    out = out + newline()
+    out = out + join_strings(collect_block_strings(function.blocks), newline() + newline())
+    out = out + newline()
+    out = out + "}"
+    ret out
+}
+
+pub fn directive_to_string(directive: Directive) -> str {
+    match directive {
+        Directive::Struct(struct_dir) => { ret format_struct_directive(struct_dir) }
+        Directive::Enum(enum_dir) => { ret format_enum_directive(enum_dir) }
+        Directive::Function(function_dir) => {
+            ret fn_to_string(function_dir)
+        }
+        Directive::Trait(trait_dir) => { ret format_trait_directive(trait_dir) }
+        Directive::Impl(impl_dir) => { ret format_impl_directive(impl_dir) }
+    }
+}
+
+pub fn module_to_string(module: Module) -> str {
+    let mut chunks = Vec[str]::new()
+    match module.documentation {
+        Option[str]::Some(documentation) => { chunks.push(documentation_comments(documentation, "//!")) }
+        Option[str]::None => {}
+    }
+    for imported in module.imports { chunks.push("import " + imported.module_id) }
+    for directive in module.directives {
+        let mut rendered = directive_to_string(directive)
+        let target = directive_documentation_target(directive)
+        for documentation in module.symbol_documentation {
+            if documentation.target == target {
+                rendered = documentation_comments(documentation.text, "///") + newline() + rendered
+                break
+            }
+        }
+        chunks.push(rendered)
+    }
+    ret join_strings(chunks, newline() + newline())
+}
+
+fn directive_documentation_target(directive: Directive) -> str {
+    match directive {
+        Directive::Struct(item) => { ret item.name }
+        Directive::Enum(item) => { ret item.name }
+        Directive::Function(item) => { ret item.name }
+        Directive::Trait(item) => { ret item.name }
+        Directive::Impl(item) => { ret "impl " + item.for_type.name }
+    }
+}
+
+fn documentation_comments(documentation: str, prefix: str) -> str {
+    let mut out = prefix
+    let mut line_has_text = false
+    let mut index = 0_usize
+    while index < documentation.char_len() {
+        match documentation.get(index) {
+            Option[str]::Some(ch) => {
+                if ch == "\n" {
+                    out = out + "\n" + prefix
+                    line_has_text = false
+                } else {
+                    if !line_has_text { out = out + " " line_has_text = true }
+                    out = out + ch
+                }
+            }
+            Option[str]::None => { break }
+        }
+        index += 1_usize
+    }
+    ret out
+}
+
+pub fn module_bundle_to_string(bundle: ModuleBundle) -> str {
+    let mut builder = EhirTextBuilder::new()
+    builder = builder.line("entry " + bundle.entry_module)
+    builder = builder.empty_line()
+    for module in bundle.modules {
+        builder = builder.line("module " + module.name + " {")
+        builder = builder.append_str(module_to_string(module))
+        builder = builder.line("")
+        builder = builder.line("}")
+        builder = builder.empty_line()
+    }
+    ret builder.finish()
+}
+
+impl Debug for Type {
+    pub fn fmt(self: Type) -> str {
+        ret type_to_string(self)
+    }
+}
+
+impl Debug for Variable {
+    pub fn fmt(self: Variable) -> str {
+        ret variable_to_string(self)
+    }
+}
+
+impl Debug for Instruction {
+    pub fn fmt(self: Instruction) -> str {
+        ret instruction_to_string(self)
+    }
+}
+
+impl Debug for Terminator {
+    pub fn fmt(self: Terminator) -> str {
+        ret terminator_to_string(self)
+    }
+}
+
+impl Debug for Block {
+    pub fn fmt(self: Block) -> str {
+        ret block_to_string(self)
+    }
+}
+
+impl Debug for Directive {
+    pub fn fmt(self: Directive) -> str {
+        ret directive_to_string(self)
+    }
+}
+
+impl Debug for Module {
+    pub fn fmt(self: Module) -> str {
+        ret module_to_string(self)
+    }
+}
+
+impl Debug for ModuleBundle {
+    pub fn fmt(self: ModuleBundle) -> str {
+        ret module_bundle_to_string(self)
+    }
+}

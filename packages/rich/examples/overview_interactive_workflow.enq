@@ -1,0 +1,61 @@
+import core::fmt::Debug
+import core::result::Result
+import core::vec::Vec
+import rich::{Console, LiveFrame, LiveView, Prompt, RetryPolicy, SelectPrompt, Theme, TraceFrame, Traceback}
+
+fn main() -> u32 {
+    let console = Console::new()
+    let theme = Theme::compiler()
+
+    let module_name = console.prompt_identifier_retry_with_policy(
+        Prompt::with_default("Module", "frontend"),
+        "frontend",
+        RetryPolicy::three("module name must be an identifier"),
+    )
+
+    let jobs = match console.prompt_usize_result(Prompt::with_default("Jobs", "4"), 2_usize) {
+        Result[usize, str]::Ok(value) => {
+            value
+        }
+        Result[usize, str]::Err(message) => {
+            console.theme_warn(theme, message)
+            4_usize
+        }
+    }
+
+    let mut profiles = Vec[str]::new()
+    profiles.push("debug")
+    profiles.push("release")
+    let profile = match console.select_result(SelectPrompt::with_default("Profile", profiles, 0_usize), 2_usize) {
+        Result[str, str]::Ok(value) => {
+            value
+        }
+        Result[str, str]::Err(message) => {
+            console.theme_warn(theme, message)
+            "debug"
+        }
+    }
+
+    console.theme_info(theme, "module: " + module_name)
+    console.info("jobs: " + Debug::fmt(jobs))
+    console.info("profile: " + profile)
+
+    let mut live = LiveView::new()
+    live.push(LiveFrame::with_id("collect", "Collect", "scanning modules", "running"))
+    live.push(LiveFrame::with_id("translate", "Translate", "lowering eHIR", "pending"))
+    console.live_replace_by_id(live, "collect", LiveFrame::with_id("collect", "Collect", "scanning modules", "done"))
+    console.live_view(live)
+
+    let mut tb = Traceback::new("CompileError", "unresolved import")
+    tb.push_frame(TraceFrame::with_context(
+        "frontend/imports.enq",
+        "resolve_import",
+        18_usize,
+        7_usize,
+        "use std::fs",
+        "import foo::bar",
+        "ret manifest",
+    ))
+    console.traceback(tb)
+    ret 0_u32
+}

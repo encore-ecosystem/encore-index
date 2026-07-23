@@ -1,0 +1,133 @@
+import core::option::Option
+import std::vec::Vec
+
+import refrain::core::block::Block
+import refrain::core::types::Type
+import refrain::core::variable::Parameter
+
+
+pub struct StructDirective {
+    name: str
+    generics: Vec[Type]
+    fields: Vec[Parameter]
+}
+
+pub struct EnumVariant {
+    name: str
+    payload_type: Option[Type]
+}
+
+pub struct EnumDirective {
+    name: str
+    generics: Vec[Type]
+    variants: Vec[EnumVariant]
+}
+
+pub struct FnDirective {
+    name: str
+    generics: Vec[Type]
+    params: Vec[Parameter]
+    ret_type: Type
+    blocks: Vec[Block]
+    is_extern: bool
+    is_async: bool
+}
+
+pub struct TraitMethod {
+    name: str
+    generics: Vec[Type]
+    params: Vec[Parameter]
+    ret_type: Type
+}
+
+pub struct TraitDirective {
+    name: str
+    generics: Vec[Type]
+    methods: Vec[TraitMethod]
+}
+
+pub struct ImplDirective {
+    trait_name: str
+    trait_args: Vec[Type]
+    for_type: Type
+    generics: Vec[Type]
+    methods: Vec[FnDirective]
+}
+
+pub enum Directive {
+    Struct(StructDirective)
+    Enum(EnumDirective)
+    Function(FnDirective)
+    Trait(TraitDirective)
+    Impl(ImplDirective)
+}
+
+pub fn struct_directive(name: str, generics: Vec[Type], fields: Vec[Parameter]) -> Directive {
+    ret Directive::Struct(StructDirective{name, generics, fields})
+}
+
+pub fn enum_variant(name: str, payload_type: Option[Type]) -> EnumVariant {
+    ret EnumVariant{name, payload_type}
+}
+
+pub fn enum_variant_vec() -> Vec[EnumVariant] {
+    ret Vec[EnumVariant]::new()
+}
+
+pub fn enum_directive(name: str, generics: Vec[Type], variants: Vec[EnumVariant]) -> Directive {
+    ret Directive::Enum(EnumDirective{name, generics, variants})
+}
+
+pub fn trait_method(name: str, generics: Vec[Type], params: Vec[Parameter], ret_type: Type) -> TraitMethod {
+    ret TraitMethod{name, generics, params, ret_type}
+}
+
+pub fn fn_item(name: str, generics: Vec[Type], params: Vec[Parameter], ret_type: Type, blocks: Vec[Block]) -> FnDirective {
+    ret FnDirective{name, generics, params, ret_type, blocks, false, false}
+}
+
+pub fn async_fn_item(name: str, generics: Vec[Type], params: Vec[Parameter], ret_type: Type, blocks: Vec[Block]) -> FnDirective {
+    ret FnDirective{name, generics, params, ret_type, blocks, false, true}
+}
+
+pub fn extern_fn_item(name: str, generics: Vec[Type], params: Vec[Parameter], ret_type: Type) -> FnDirective {
+    ret FnDirective{name, generics, params, ret_type, Vec[Block]::new(), true, false}
+}
+
+pub fn async_fn_directive(
+    name: str,
+    generics: Vec[Type],
+    params: Vec[Parameter],
+    ret_type: Type,
+    blocks: Vec[Block]
+) -> Directive {
+    ret Directive::Function(async_fn_item(name, generics, params, ret_type, blocks))
+}
+
+pub fn fn_directive(
+    name: str,
+    generics: Vec[Type],
+    params: Vec[Parameter],
+    ret_type: Type,
+    blocks: Vec[Block]
+) -> Directive {
+    ret Directive::Function(fn_item(name, generics, params, ret_type, blocks))
+}
+
+pub fn extern_fn_directive(name: str, generics: Vec[Type], params: Vec[Parameter], ret_type: Type) -> Directive {
+    ret Directive::Function(extern_fn_item(name, generics, params, ret_type))
+}
+
+pub fn trait_directive(name: str, generics: Vec[Type], methods: Vec[TraitMethod]) -> Directive {
+    ret Directive::Trait(TraitDirective{name, generics, methods})
+}
+
+pub fn impl_directive(
+    generics: Vec[Type],
+    trait_name: str,
+    trait_args: Vec[Type],
+    for_type: Type,
+    methods: Vec[FnDirective]
+) -> Directive {
+    ret Directive::Impl(ImplDirective{trait_name, trait_args, for_type, generics, methods})
+}

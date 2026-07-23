@@ -1,0 +1,146 @@
+//! Defines value formatting interfaces.
+
+/// Defines the behavior required by `Debug` implementations.
+pub trait Debug {
+    fn fmt(self) -> str
+}
+
+extern fn encore_fmt_u64(value: u64) -> str
+extern fn encore_fmt_i64(value: i64) -> str
+extern fn encore_fmt_f64(value: f64) -> str
+
+impl Debug for str {
+    /// Formats the value as text.
+    pub fn fmt(self: str) -> str {
+        ret self
+    }
+}
+
+impl Debug for bool {
+    /// Formats the value as text.
+    pub fn fmt(self: bool) -> str {
+        if self {
+            ret "true"
+        }
+        ret "false"
+    }
+}
+
+impl Debug for u8 {
+    /// Formats the value as text.
+    pub fn fmt(self: u8) -> str {
+        unsafe {
+            ret encore_fmt_u64(self as u64)
+        }
+    }
+}
+
+impl Debug for u16 {
+    /// Formats the value as text.
+    pub fn fmt(self: u16) -> str {
+        unsafe {
+            ret encore_fmt_u64(self as u64)
+        }
+    }
+}
+
+impl Debug for u32 {
+    /// Formats the value as text.
+    pub fn fmt(self: u32) -> str {
+        unsafe {
+            ret encore_fmt_u64(self as u64)
+        }
+    }
+}
+
+impl Debug for u64 {
+    /// Formats the value as text.
+    pub fn fmt(self: u64) -> str {
+        unsafe {
+            ret encore_fmt_u64(self as u64)
+        }
+    }
+}
+
+impl Debug for usize {
+    /// Formats the value as text.
+    pub fn fmt(self: usize) -> str {
+        unsafe {
+            ret encore_fmt_u64(self as u64)
+        }
+    }
+}
+
+impl Debug for i8 {
+    /// Formats the value as text.
+    pub fn fmt(self: i8) -> str {
+        unsafe {
+            ret encore_fmt_i64(self as i64)
+        }
+    }
+}
+
+impl Debug for i16 {
+    /// Formats the value as text.
+    pub fn fmt(self: i16) -> str {
+        unsafe {
+            ret encore_fmt_i64(self as i64)
+        }
+    }
+}
+
+impl Debug for i32 {
+    /// Formats the value as text.
+    pub fn fmt(self: i32) -> str {
+        unsafe {
+            ret encore_fmt_i64(self as i64)
+        }
+    }
+}
+
+impl Debug for i64 {
+    /// Formats the value as text.
+    pub fn fmt(self: i64) -> str {
+        unsafe {
+            ret encore_fmt_i64(self as i64)
+        }
+    }
+}
+
+impl Debug for isize {
+    /// Formats the value as text.
+    pub fn fmt(self: isize) -> str {
+        unsafe {
+            ret encore_fmt_i64(self as i64)
+        }
+    }
+}
+
+impl Debug for f32 {
+    /// Formats the value as text.
+    pub fn fmt(self: f32) -> str {
+        unsafe {
+            ret encore_fmt_f64(self as f64)
+        }
+    }
+}
+
+impl Debug for f64 {
+    /// Formats the value as text.
+    pub fn fmt(self: f64) -> str {
+        unsafe {
+            ret encore_fmt_f64(self)
+        }
+    }
+}
+
+fn debug_accepts(value: str) -> bool {
+    ret true
+}
+
+#attr(test)
+fn debug_contract() -> bool {
+    ret debug_accepts(Debug::fmt(true))
+        && debug_accepts(Debug::fmt(5_u32))
+        && debug_accepts(Debug::fmt("encore"))
+}

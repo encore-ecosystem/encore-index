@@ -1,0 +1,46 @@
+import core::testing::*
+import std::fs::exists
+import std::fs::read_to_str
+import std::fs::read_to_string
+import std::fs::remove_file
+import std::fs::fs_write
+import std::math::clamp
+import std::math::max
+import std::math::min
+import std::random::Random
+
+fn main() -> u32 {
+    let file = "target/std_fs_test.txt"
+    fs_write(file, "alpha\nbeta")
+
+    if !assert(exists(file)) {
+        ret 1_u32
+    }
+    if !assert(read_to_str(file) == "alpha\nbeta") {
+        ret 1_u32
+    }
+
+    let content = read_to_string(file)
+    if !assert(content.contains("beta")) {
+        ret 1_u32
+    }
+    remove_file(file)
+
+    if !assert(min(3_u32, 5_u32) == 3_u32) {
+        ret 1_u32
+    }
+    if !assert(max(3_u32, 5_u32) == 5_u32) {
+        ret 1_u32
+    }
+    if !assert(clamp(9_u32, 2_u32, 7_u32) == 7_u32) {
+        ret 1_u32
+    }
+
+    let rng = Random::new(1_u64)
+    let pair = rng.next_range(10_u64)
+    if !assert(pair.1 < 10_u64) {
+        ret 1_u32
+    }
+
+    ret 0_u32
+}

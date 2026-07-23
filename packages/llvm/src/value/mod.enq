@@ -1,0 +1,52 @@
+import refrain::types::LLVMType
+import refrain::types::i1_type
+import refrain::types::i32_type
+import refrain::types::i64_type
+import refrain::types::f32_type
+import refrain::types::f64_type
+
+pub struct LLVMValue {
+    text: str
+    typ: LLVMType
+    is_const: bool
+}
+
+pub fn value_text(value: LLVMValue) -> str {
+    ret value.text
+}
+
+pub fn value_type(value: LLVMValue) -> LLVMType {
+    ret value.typ
+}
+
+pub fn reg(name: str, typ: LLVMType) -> LLVMValue {
+    ret LLVMValue{"%" + name, typ, false}
+}
+
+pub fn global(name: str, typ: LLVMType) -> LLVMValue {
+    ret LLVMValue{"@" + name, typ, false}
+}
+
+pub fn const_text(text: str, typ: LLVMType) -> LLVMValue {
+    ret LLVMValue{text, typ, true}
+}
+
+pub fn const_i1(value: str) -> LLVMValue {
+    ret LLVMValue{value, i1_type(), true}
+}
+
+pub fn const_i32(value: str) -> LLVMValue {
+    ret LLVMValue{value, i32_type(), true}
+}
+
+pub fn const_i64(value: str) -> LLVMValue {
+    ret LLVMValue{value, i64_type(), true}
+}
+
+pub fn const_f32(value: str) -> LLVMValue {
+    ret LLVMValue{value, f32_type(), true}
+}
+
+pub fn const_f64(value: str) -> LLVMValue {
+    ret LLVMValue{value, f64_type(), true}
+}

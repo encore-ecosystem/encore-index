@@ -1,0 +1,39 @@
+import std::io::println
+import std::dict::{Dict, Hashable}
+import std::option::Option
+
+fn main() -> u32 {
+    let mut dict = Dict[str, u32]::new()
+    dict = dict.insert("alpha", 1_u32)
+    dict = dict.insert("beta", 2_u32)
+    dict = dict.insert("gamma", 3_u32)
+    dict = dict.insert("alpha", 10_u32)
+
+    if dict.len() != 3_usize {
+        println("len check failed")
+        ret 1_u32
+    }
+
+    match dict.get("alpha") {
+        Option::Some(v) => {
+            if v != 10_u32 {
+                println("get(alpha) mismatch")
+                ret 1_u32
+            }
+        }
+        Option::None => {
+            println("get(alpha) none")
+            ret 1_u32
+        }
+    }
+
+    let removed = dict.remove("beta")
+    dict = removed.0
+    if dict.contains_key("beta") {
+        println("remove(beta) failed")
+        ret 1_u32
+    }
+
+    println("hashmap example: ok")
+    ret 0_u32
+}

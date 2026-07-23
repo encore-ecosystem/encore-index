@@ -1,0 +1,89 @@
+import core::io::println
+import core::testing::assert
+import core::vec::Vec
+
+import refrain::style::{accent, muted}
+
+pub fn pretty(value: str) -> str {
+    ret value
+}
+
+pub fn pretty_kv(label: str, value: str) -> str {
+    ret accent(label) + ": " + value
+}
+
+pub fn pretty_list(values: Vec[str]) -> str {
+    let mut out = ""
+    let mut index = 0_usize
+    loop {
+        match values.get(index) {
+            Some(value) => {
+                out += " - " + value
+                index = index + 1_usize
+                if index < values.len() {
+                    out += "\n"
+                }
+            }
+            None => {
+                break
+            }
+        }
+    }
+    ret out
+}
+
+pub struct PrettyPrinter {}
+
+impl for PrettyPrinter {
+    pub fn new() -> Self {
+        ret Self{}
+    }
+
+    pub fn render(self, value: str) -> str {
+        ret pretty(value)
+    }
+
+    pub fn render_kv(self, label: str, value: str) -> str {
+        ret pretty_kv(label, value)
+    }
+
+    pub fn note(self, label: str, message: str) -> str {
+        ret accent(label) + " " + muted(message)
+    }
+
+    pub fn println(self, value: str) -> () {
+        println(self.render(value))
+        ret ()
+    }
+}
+
+#attr(test)
+fn pretty_formats_scalars_and_lists() -> bool {
+    let mut values = Vec[str]::new()
+    values.push("one")
+    values.push("two")
+    let list_rendered = pretty_list(values)
+    ret assert(pretty("value") == "value")
+        && assert(str_contains(pretty_kv("count", "3"), "count"))
+        && assert(str_contains(list_rendered, "one"))
+        && assert(str_contains(list_rendered, "two"))
+}
+
+fn str_contains(value: str, needle: str) -> bool {
+    let needle_len = needle.char_len()
+    let value_len = value.char_len()
+    if needle_len == 0_usize {
+        ret true
+    }
+    if needle_len > value_len {
+        ret false
+    }
+    let mut start = 0_usize
+    while start + needle_len <= value_len {
+        if value.slice(start, needle_len) == needle {
+            ret true
+        }
+        start = start + 1_usize
+    }
+    ret false
+}

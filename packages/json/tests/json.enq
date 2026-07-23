@@ -1,0 +1,126 @@
+import core::option::Option
+import core::result::Result
+import core::testing::*
+import core::os::read_file
+import json::Json
+import json::ParseError
+import json::field
+import json::parse
+import json::stringify
+
+fn expect_string(value: Json, expected: str) -> bool {
+    match value.as_str() {
+        Option[str]::Some(text) => {
+            ret text == expected
+        }
+        Option[str]::None => {
+            ret false
+        }
+    }
+}
+
+fn expect_number(value: Json, expected: str) -> bool {
+    match value.as_number() {
+        Option[str]::Some(text) => {
+            ret text == expected
+        }
+        Option[str]::None => {
+            ret false
+        }
+    }
+}
+
+fn main() -> u32 {
+    let source = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":\"file:///tmp\",\"items\":[true,false,null,-12.5e+2],\"text\":\"line\\nvalue\"}}" + ""
+    match parse(source) {
+        Result[Json, ParseError]::Ok(root) => {
+            match root.get("method") {
+                Option[Json]::Some(method) => {
+                    if !assert(expect_string(method, "initialize")) {
+                        ret 1_u32
+                    }
+                }
+                Option[Json]::None => {
+                    ret 1_u32
+                }
+            }
+
+            match root.get("id") {
+                Option[Json]::Some(id) => {
+                    if !assert(expect_number(id, "1")) {
+                        ret 1_u32
+                    }
+                }
+                Option[Json]::None => {
+                    ret 1_u32
+                }
+            }
+
+            match root.get("params") {
+                Option[Json]::Some(params) => {
+                    match params.get("items") {
+                        Option[Json]::Some(items) => {
+                            match items.index(3_usize) {
+                                Option[Json]::Some(item) => {
+                                    if !assert(expect_number(item, "-12.5e+2")) {
+                                        ret 1_u32
+                                    }
+                                }
+                                Option[Json]::None => {
+                                    ret 1_u32
+                                }
+                            }
+                        }
+                        Option[Json]::None => {
+                            ret 1_u32
+                        }
+                    }
+                }
+                Option[Json]::None => {
+                    ret 1_u32
+                }
+            }
+        }
+        Result[Json, ParseError]::Err(err) => {
+            ret 1_u32
+        }
+    }
+
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("ok", Json::Bool(true)))
+    fields.push(field("message", Json::String("hello\nworld")))
+    let text = stringify(Json::Object(fields))
+    if !assert(text == "{\"ok\":true,\"message\":\"hello\\nworld\"}") {
+        ret 1_u32
+    }
+
+    match parse("{\"broken\": [1,}") {
+        Result[Json, ParseError]::Ok(value) => {
+            ret 1_u32
+        }
+        Result[Json, ParseError]::Err(err) => {
+            if !assert(err.position() > 0_usize) {
+                ret 1_u32
+            }
+        }
+    }
+
+    match parse("{\"direct\":\"😀\",\"escaped\":\"\\u0416\",\"pair\":\"\\uD83D\\uDE00\"}") {
+        Result[Json, ParseError]::Ok(value) => {
+            if !assert(expect_string(value.get("direct").unwrap_or(Json::Null), "😀")) { ret 1_u32 }
+            if !assert(expect_string(value.get("escaped").unwrap_or(Json::Null), "Ж")) { ret 1_u32 }
+            if !assert(expect_string(value.get("pair").unwrap_or(Json::Null), "😀")) { ret 1_u32 }
+        }
+        Result[Json, ParseError]::Err(_err) => { ret 1_u32 }
+    }
+
+    let scene_source = read_file("tests/scene.json")
+    match parse(scene_source) {
+        Result[Json, ParseError]::Ok(scene) => {
+            if !assert(scene.get("version").unwrap_or(Json::Null).as_number().unwrap_or("") == "1") { ret 1_u32 }
+        }
+        Result[Json, ParseError]::Err(_) => { ret 1_u32 }
+    }
+
+    ret 0_u32
+}

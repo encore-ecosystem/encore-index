@@ -1,0 +1,3 @@
+//! Provides native threads and join handles.
+
+pub import core::thread::JoinHandle

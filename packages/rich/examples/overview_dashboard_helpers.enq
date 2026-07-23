@@ -1,0 +1,30 @@
+import core::vec::Vec
+import rich::{Console, Layout, Panel, Table, Theme}
+
+fn main() -> u32 {
+    let console = Console::new()
+    let theme = Theme::compiler()
+
+    let mut summary_fields = Vec[(str, str)]::new()
+    summary_fields.push(("target", "bootstrap"))
+    summary_fields.push(("backend", "llvm"))
+    summary_fields.push(("cache", "off"))
+    let summary = Panel::key_values("Build Summary", summary_fields)
+    console.panel(summary)
+
+    let mut stage_rows = Vec[(str, str)]::new()
+    stage_rows.push(("parse", "done"))
+    stage_rows.push(("translate", "running"))
+    stage_rows.push(("link", "pending"))
+    let stages = Table::from_pairs("Pipeline", "stage", "state", stage_rows)
+    console.themed_table(theme, stages)
+
+    let mut layout = Layout::themed(theme, "Compiler Dashboard")
+    layout.add_panel_section("summary", Panel::lines("Workers", Vec[str]::singleton("jobs=8")))
+    layout.add_table_section("pipeline", Table::from_pairs("Artifacts", "name", "value", Vec[(str, str)]::singleton(("stdlib", "ready"))))
+    layout.add_columns_section("split", "frontend", "backend", " => ")
+    console.layout(layout)
+
+    console.themed_layout(theme, "Overview", "frontend ready", "backend queued")
+    ret 0_u32
+}

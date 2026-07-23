@@ -1,0 +1,3 @@
+//! Provides success-or-error result values.
+
+pub import core::result::*

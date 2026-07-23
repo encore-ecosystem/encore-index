@@ -1,0 +1,134 @@
+import core::option::Option
+import core::testing::assert
+import core::vec::Vec
+import refrain::panel::Panel
+import refrain::table::Table
+import refrain::theme::Theme
+
+pub struct Layout {
+    title: str
+    sections: Vec[(str, str)]
+}
+
+impl for Layout {
+    pub fn new(title: str) -> Self {
+        ret Self{title, Vec[(str, str)]::new()}
+    }
+
+    pub fn themed(theme: Theme, title: str) -> Self {
+        ret Self{theme.layout_title(title), Vec[(str, str)]::new()}
+    }
+
+    pub fn add_section(self: mut Self, label: str, body: str) -> () {
+        self.sections.push((label, body))
+        ret ()
+    }
+
+    pub fn add_themed_section(self: mut Self, theme: Theme, label: str, body: str) -> () {
+        self.add_section(theme.section_label(label), body)
+        ret ()
+    }
+
+    pub fn add_panel_section(self: mut Self, label: str, panel: Panel) -> () {
+        self.add_section(label, panel.render())
+        ret ()
+    }
+
+    pub fn add_table_section(self: mut Self, label: str, table: Table) -> () {
+        self.add_section(label, table.render())
+        ret ()
+    }
+
+    pub fn add_columns_section(self: mut Self, label: str, left: str, right: str, separator: str) -> () {
+        self.add_section(label, render_columns(left, right, separator))
+        ret ()
+    }
+
+    pub fn render(self) -> str {
+        let mut out = self.title
+        let mut index = 0_usize
+        loop {
+            match self.sections.get(index) {
+                Option[(str, str)]::Some(section) => {
+                    if index == 0_usize {
+                        out += "\n"
+                    }
+                    out += "\n[" + section.0 + "]\n" + section.1
+                    index = index + 1_usize
+                }
+                Option[(str, str)]::None => {
+                    break
+                }
+            }
+        }
+        ret out
+    }
+}
+
+pub fn render_columns(left: str, right: str, separator: str) -> str {
+    ret left + separator + right
+}
+
+pub fn render_stack(items: Vec[str]) -> str {
+    let mut out = ""
+    let mut index = 0_usize
+    loop {
+        match items.get(index) {
+            Option[str]::Some(item) => {
+                out += item
+                index = index + 1_usize
+                if index < items.len() {
+                    out += "\n"
+                }
+            }
+            Option[str]::None => {
+                break
+            }
+        }
+    }
+    ret out
+}
+
+#attr(test)
+fn layout_renders_sections_and_columns() -> bool {
+    let mut layout = Layout::new("Dashboard")
+    layout.add_section("Left", "compiler")
+    layout.add_section("Right", "tests")
+    let mut themed = Layout::themed(Theme::compiler(), "Compiler Dashboard")
+    themed.add_themed_section(Theme::compiler(), "Frontend", "lexer\nparser")
+    themed.add_columns_section("Split", "left", "right", " | ")
+    themed.add_panel_section("Summary", Panel::titled("Build", "ok"))
+    let pairs = Table::from_pairs("Stages", "stage", "state", Vec[(str, str)]::singleton(("parse", "ok")))
+    themed.add_table_section("Stages", pairs)
+    let mut stack = Vec[str]::new()
+    stack.push("a")
+    stack.push("b")
+    let rendered = layout.render()
+    ret assert(str_contains(rendered, "Dashboard"))
+        && assert(str_contains(rendered, "[Left]"))
+        && assert(render_columns("a", "b", " | ") == "a | b")
+        && assert(render_stack(stack) == "a\nb")
+        && assert(str_contains(themed.render(), "Compiler Dashboard"))
+        && assert(str_contains(themed.render(), "Frontend"))
+        && assert(str_contains(themed.render(), "Build"))
+        && assert(str_contains(themed.render(), "parse"))
+}
+
+fn str_contains(value: str, needle: str) -> bool {
+    let needle_len = needle.char_len()
+    let value_len = value.char_len()
+    if needle_len == 0_usize {
+        ret true
+    }
+    if needle_len > value_len {
+        ret false
+    }
+    let mut start = 0_usize
+    while start + needle_len <= value_len {
+        if value.slice(start, needle_len) == needle {
+            ret true
+        }
+        start = start + 1_usize
+    }
+    ret false
+}

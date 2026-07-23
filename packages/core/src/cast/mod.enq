@@ -1,0 +1,33 @@
+//! Provides the `cast` module.
+
+/// Defines the behavior required by `Numeric` implementations.
+pub trait Numeric {
+}
+
+/// Defines the behavior required by `Cast` implementations.
+pub trait Cast[T] {
+    fn cast(self: Self) -> T
+}
+
+impl Numeric for u8 {}
+impl Numeric for u16 {}
+impl Numeric for u32 {}
+impl Numeric for u64 {}
+impl Numeric for usize {}
+impl Numeric for i8 {}
+impl Numeric for i16 {}
+impl Numeric for i32 {}
+impl Numeric for i64 {}
+impl Numeric for isize {}
+impl Numeric for f32 {}
+impl Numeric for f64 {}
+
+impl[S:Numeric, D:Numeric] Cast[D] for S {
+    #attr(safe)
+    fn cast(self: S) -> D {
+        unsafe ehir {
+            out: D = pcast self: S, D
+        }
+        ret out
+    }
+}

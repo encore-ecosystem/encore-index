@@ -1,0 +1,10 @@
+import color::Color
+import core::testing::assert
+
+fn main() -> u32 {
+    let color = Color::rgba(18_u8, 52_u8, 86_u8, 120_u8)
+    if !assert(color.red() == 18_u8 && color.green() == 52_u8) { ret 1_u32 }
+    if !assert(color.blue() == 86_u8 && color.alpha() == 120_u8) { ret 1_u32 }
+    if !assert(color.packed() == 305419896_u32) { ret 1_u32 }
+    ret 0_u32
+}

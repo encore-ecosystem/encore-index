@@ -1,0 +1,224 @@
+import core::fmt::Debug
+import core::option::Option
+import core::testing::assert
+import core::vec::Vec
+
+import refrain::layout::Layout
+import refrain::panel::Panel
+import refrain::progress::StageProgress
+import refrain::table::Table
+import refrain::theme::Theme
+import refrain::traceback::Traceback
+
+pub struct CompilerReport {
+    title: str
+    summary_fields: Vec[(str, str)]
+    stages: Vec[StageProgress]
+    diagnostics: Vec[Traceback]
+    notes: Vec[str]
+}
+
+impl for CompilerReport {
+    pub fn new(title: str) -> Self {
+        ret Self{title, Vec[(str, str)]::new(), Vec[StageProgress]::new(), Vec[Traceback]::new(), Vec[str]::new()}
+    }
+
+    pub fn add_summary(self: mut Self, name: str, value: str) -> () {
+        self.summary_fields.push((name, value))
+        ret ()
+    }
+
+    pub fn add_stage(self: mut Self, stage: StageProgress) -> () {
+        self.stages.push(stage)
+        ret ()
+    }
+
+    pub fn add_traceback(self: mut Self, traceback: Traceback) -> () {
+        self.diagnostics.push(traceback)
+        ret ()
+    }
+
+    pub fn add_note(self: mut Self, note: str) -> () {
+        self.notes.push(note)
+        ret ()
+    }
+
+    pub fn render(self, theme: Theme) -> str {
+        let mut layout = Layout::themed(theme, self.title)
+        if self.summary_fields.len() > 0_usize {
+            layout.add_panel_section(theme.section_label("summary"), Panel::key_values("Summary", self.summary_fields))
+        }
+        if self.stages.len() > 0_usize {
+            layout.add_table_section(theme.section_label("stages"), stage_report_table(theme, "Stages", self.stages))
+        }
+        if self.diagnostics.len() > 0_usize {
+            layout.add_section(theme.section_label("diagnostics"), render_tracebacks(self.diagnostics))
+        }
+        if self.notes.len() > 0_usize {
+            layout.add_panel_section(theme.section_label("notes"), Panel::lines("Notes", self.notes))
+        }
+        ret layout.render()
+    }
+}
+
+pub fn stage_report_table(theme: Theme, title: str, stages: Vec[StageProgress]) -> Table {
+    let mut headers = Vec[str]::new()
+    headers.push("stage")
+    headers.push("progress")
+    headers.push("status")
+    let mut table = Table::themed(theme, title, headers)
+    let mut index = 0_usize
+    loop {
+        match stages.get(index) {
+            Option[StageProgress]::Some(stage) => {
+                let mut row = Vec[str]::new()
+                row.push(stage.label())
+                row.push(Debug::fmt(stage.current()) + "/" + Debug::fmt(stage.total()))
+                row.push(stage_status(stage))
+                table.add_row(row)
+                index = index + 1_usize
+            }
+            Option[StageProgress]::None => {
+                break
+            }
+        }
+    }
+    ret table
+}
+
+pub fn render_tracebacks(tracebacks: Vec[Traceback]) -> str {
+    let mut out = ""
+    let mut index = 0_usize
+    loop {
+        match tracebacks.get(index) {
+            Option[Traceback]::Some(traceback) => {
+                out += traceback.render()
+                index = index + 1_usize
+                if index < tracebacks.len() {
+                    out += "\n\n"
+                }
+            }
+            Option[Traceback]::None => {
+                break
+            }
+        }
+    }
+    ret out
+}
+
+pub fn compiler_report(title: str, summary_fields: Vec[(str, str)], stages: Vec[StageProgress], diagnostics: Vec[Traceback], notes: Vec[str], theme: Theme) -> str {
+    let mut report = CompilerReport::new(title)
+
+    let mut index = 0_usize
+    loop {
+        match summary_fields.get(index) {
+            Option[(str, str)]::Some(field) => {
+                report.add_summary(field.0, field.1)
+                index = index + 1_usize
+            }
+            Option[(str, str)]::None => {
+                break
+            }
+        }
+    }
+
+    index = 0_usize
+    loop {
+        match stages.get(index) {
+            Option[StageProgress]::Some(stage) => {
+                report.add_stage(stage)
+                index = index + 1_usize
+            }
+            Option[StageProgress]::None => {
+                break
+            }
+        }
+    }
+
+    index = 0_usize
+    loop {
+        match diagnostics.get(index) {
+            Option[Traceback]::Some(traceback) => {
+                report.add_traceback(traceback)
+                index = index + 1_usize
+            }
+            Option[Traceback]::None => {
+                break
+            }
+        }
+    }
+
+    index = 0_usize
+    loop {
+        match notes.get(index) {
+            Option[str]::Some(note) => {
+                report.add_note(note)
+                index = index + 1_usize
+            }
+            Option[str]::None => {
+                break
+            }
+        }
+    }
+
+    ret report.render(theme)
+}
+
+fn stage_status(stage: StageProgress) -> str {
+    if stage.footer() != "" {
+        ret stage.footer()
+    }
+    if stage.is_done() {
+        ret "done"
+    }
+    ret "pending"
+}
+
+#attr(test)
+fn compiler_report_renders_sections() -> bool {
+    let mut report = CompilerReport::new("Bootstrap Report")
+    report.add_summary("target", "bootstrap")
+    report.add_summary("backend", "llvm")
+    report.add_stage(StageProgress::with_footer("parse", "Parse", "collecting modules", 3_usize, 3_usize, "done"))
+
+    let mut traceback = Traceback::compiler_error("unknown symbol")
+    traceback.add_context_frame("frontend/checker.enq", "check_symbol", 18_usize, 5_usize, "let ty = resolve(expr)", "ret env.lookup(name)", "ret ty")
+    traceback.add_note("symbol was not introduced by previous passes")
+    report.add_traceback(traceback)
+    report.add_note("cache disabled for reproducible diagnostics")
+
+    let rendered = report.render(Theme::compiler())
+    let mut stages = Vec[StageProgress]::new()
+    stages.push(StageProgress::with_footer("parse", "Parse", "collecting modules", 3_usize, 3_usize, "done"))
+    let mut diagnostics = Vec[Traceback]::new()
+    diagnostics.push(Traceback::compiler_error("missing import"))
+    let rendered_fn = compiler_report("Standalone", Vec[(str, str)]::singleton(("mode", "debug")), stages, diagnostics, Vec[str]::singleton("note"), Theme::compiler())
+
+    ret assert(str_contains(rendered, "Bootstrap Report"))
+        && assert(str_contains(rendered, "target: bootstrap"))
+        && assert(str_contains(rendered, "Parse"))
+        && assert(str_contains(rendered, "unknown symbol"))
+        && assert(str_contains(rendered, "cache disabled"))
+        && assert(str_contains(rendered_fn, "Standalone"))
+        && assert(str_contains(rendered_fn, "missing import"))
+}
+
+fn str_contains(value: str, needle: str) -> bool {
+    let needle_len = needle.char_len()
+    let value_len = value.char_len()
+    if needle_len == 0_usize {
+        ret true
+    }
+    if needle_len > value_len {
+        ret false
+    }
+
+    let mut start = 0_usize
+    while start + needle_len <= value_len {
+        if value.slice(start, needle_len) == needle {
+            ret true
+        }
+        start = start + 1_usize
+    }
+    ret false
+}

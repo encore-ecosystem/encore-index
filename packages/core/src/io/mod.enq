@@ -1,0 +1,104 @@
+//! Provides console and stream input/output helpers.
+
+import core::fmt::Debug
+import core::option::Option
+import core::ops::*
+
+
+extern fn encore_io_read(fd: i32, max_bytes: usize) -> str
+extern fn encore_io_write(fd: i32, value: str) -> i32
+
+/// Performs the `stdin_fd` operation.
+pub fn stdin_fd() -> i32 {
+    ret 0_i32
+}
+
+/// Performs the `stdout_fd` operation.
+pub fn stdout_fd() -> i32 {
+    ret 1_i32
+}
+
+/// Performs the `stderr_fd` operation.
+pub fn stderr_fd() -> i32 {
+    ret 2_i32
+}
+
+/// Performs the `io_read` operation.
+pub fn io_read(fd: i32, max_bytes: usize) -> str {
+    unsafe {
+        ret encore_io_read(fd, max_bytes)
+    }
+}
+
+/// Reads stdin from the underlying resource.
+pub fn read_stdin(max_bytes: usize) -> str {
+    ret io_read(stdin_fd(), max_bytes)
+}
+
+/// Reads exact from the underlying resource.
+pub fn read_exact(fd: i32, size: usize) -> Option[str] {
+    let mut out = ""
+    while out.len() < size {
+        let chunk = io_read(fd, size - out.len())
+        if chunk.len() == 0_usize {
+            ret Option[str]::None
+        }
+        out += chunk
+    }
+    ret Option[str]::Some(out)
+}
+
+/// Reads line from the underlying resource.
+pub fn read_line(fd: i32) -> Option[str] {
+    let mut out = ""
+    loop {
+        let chunk = io_read(fd, 1_usize)
+        if chunk.len() == 0_usize {
+            if out.len() == 0_usize {
+                ret Option[str]::None
+            }
+            ret Option[str]::Some(out)
+        }
+        out += chunk
+        if chunk == "\n" {
+            ret Option[str]::Some(out)
+        }
+    }
+}
+
+/// Performs the `io_write` operation.
+pub fn io_write(fd: i32, value: str) -> i32 {
+    unsafe {
+        ret encore_io_write(fd, value)
+    }
+}
+
+/// Performs the `print` operation.
+pub fn print(value: str) -> i32 {
+    ret io_write(stdout_fd(), value)
+}
+
+/// Performs the `println` operation.
+pub fn println(value: str) -> i32 {
+    ret print(value + "\n")
+}
+
+/// Performs the `eprint` operation.
+pub fn eprint(value: str) -> i32 {
+    ret io_write(stderr_fd(), value)
+}
+
+/// Performs the `eprintln` operation.
+pub fn eprintln(value: str) -> i32 {
+    ret eprint(value + "\n")
+}
+
+/// Performs the `print_debug` operation.
+pub fn print_debug[T:Debug](value: T) -> i32 {
+    ret print(Debug::fmt(value))
+}
+
+/// Performs the `println_debug` operation.
+pub fn println_debug[T:Debug](value: T) -> i32 {
+    ret println(Debug::fmt(value))
+}

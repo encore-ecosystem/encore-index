@@ -1,0 +1,49 @@
+name: Index CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate sparse metadata and immutable archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          count=0
+          while IFS= read -r metadata; do
+            name=$(jq -er '.name' "$metadata")
+            test "$metadata" = "./${name:0:2}/$name.json"
+            test "$(jq '.versions | length' "$metadata")" -gt 0
+            duplicate=$(jq -r '.versions[].version' "$metadata" | sort | uniq -d)
+            test -z "$duplicate"
+            while IFS=$'\t' read -r version archive checksum yanked; do
+              test -n "$version"
+              case "$archive" in https://github.com/*/releases/download/*) ;; *) exit 1 ;; esac
+              case "$checksum" in
+                [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;;
+                *) exit 1 ;;
+              esac
+              test "${#checksum}" = 64
+              test "$yanked" = true -o "$yanked" = false
+              package=$(mktemp)
+              curl --fail --location --silent --show-error "$archive" -o "$package"
+              test "$(sha256sum "$package" | awk '{print $1}')" = "$checksum"
+              listing=$(mktemp)
+              tar -tzf "$package" > "$listing"
+              test "$(sed -n 's#^\./encore.toml$#ok#p' "$listing")" = ok
+              root=$(mktemp -d)
+              tar -xzf "$package" -C "$root" ./encore.toml
+              test "$(sed -n 's/^name = "\([^"]*\)"/\1/p' "$root/encore.toml" | head -n 1)" = "$name"
+              test "$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$root/encore.toml" | head -n 1)" = "$version"
+            done < <(jq -r '.versions[] | [.version,.archive,.checksum,.yanked] | @tsv' "$metadata")
+            count=$((count + 1))
+          done < <(find . -mindepth 2 -maxdepth 2 -name '*.json' -type f | sort)
+          test "$count" -gt 0

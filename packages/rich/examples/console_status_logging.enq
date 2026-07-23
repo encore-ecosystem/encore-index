@@ -1,0 +1,63 @@
+import core::vec::Vec
+import json::{Json, field}
+import rich::{Console, Layout, LiveFrame, LiveView, Panel, ProgressBar, ProgressView, Spinner, Table, TreeNode, console_logger, pretty_kv, status}
+
+fn main() -> u32 {
+    let console = Console::new()
+    console.rule("Build")
+    console.println(status(Spinner::arc(), 1_usize, "compiling bootstrap"))
+    console.println(pretty_kv("target", "bootstrap"))
+    console.markup("[info]frontend[/] [warn]no cache[/]")
+    console.progress(ProgressBar::new(16_usize), 3_usize, 5_usize, "frontend")
+
+    let mut progress = ProgressView::new("Tasks", 12_usize)
+    progress.add_task("frontend", 3_usize, 5_usize)
+    progress.add_task("backend", 1_usize, 3_usize)
+    console.progress_view(progress)
+
+    let mut table = Table::with_headers(Vec[str]::new())
+    let mut headers = Vec[str]::new()
+    headers.push("module")
+    headers.push("state")
+    table = Table::with_headers(headers)
+    let mut row1 = Vec[str]::new()
+    row1.push("frontend")
+    row1.push("ok")
+    table.add_row(row1)
+    let mut row2 = Vec[str]::new()
+    row2.push("backend")
+    row2.push("pending")
+    table.add_row(row2)
+    console.table(table)
+
+    let mut tree = TreeNode::new("bootstrap")
+    tree.branch("frontend")
+    tree.branch("backend")
+    console.tree(tree)
+
+    console.panel(Panel::titled("Summary", "compiler refrain\nrich refrain\nlog refrain"))
+
+    let mut layout = Layout::new("Dashboard")
+    layout.add_section("build", "frontend -> backend")
+    layout.add_section("status", "active")
+    console.layout(layout)
+
+    let mut inspect_fields = Vec[(str, str)]::new()
+    inspect_fields.push(("target", "bootstrap"))
+    inspect_fields.push(("stage", "frontend"))
+    console.inspect_fields("Build State", inspect_fields)
+
+    let mut payload = Vec[(str, Json)]::new()
+    payload.push(field("project", Json::String("encore")))
+    payload.push(field("ok", Json::Bool(true)))
+    console.json(Json::Object(payload))
+
+    let mut live = LiveView::new()
+    live.push(LiveFrame::new("Tick 1", "parse modules"))
+    live.push(LiveFrame::with_footer("Tick 2", "translate eHIR", "done"))
+    console.live_view(live)
+
+    let logger = console_logger("rich-example")
+    logger.info("example complete")
+    ret 0_u32
+}

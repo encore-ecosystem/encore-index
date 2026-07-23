@@ -1,0 +1,7 @@
+[project]
+name = "std"
+version = "1.0.0"
+description = "stdlib for Encore language"
+readme = "README.md"
+licence = "MIT"
+dependencies = []

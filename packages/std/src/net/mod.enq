@@ -1,0 +1,3 @@
+//! Provides synchronous network primitives.
+
+pub import core::net::*

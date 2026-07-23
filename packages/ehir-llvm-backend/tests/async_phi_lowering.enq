@@ -1,0 +1,15 @@
+import core::testing::assert
+
+import ehirlib::parse_module_text
+import refrain::codegen::emit_ir
+
+fn main() -> u32 {
+    let source = "struct Waker {\n  token: usize\n}\n\nstruct Context {\n  waker: Waker\n}\n\nstruct TestFuture {\n}\n\nenum Poll[S, T] {\n  Ready(T)\n  Pending(S)\n}\n\ntrait Future[T] {\n  fn poll(self: Self, context: Context) -> Poll[Self, T]\n}\n\nimpl Future[u32] for TestFuture {\n  fn poll(self: TestFuture, context: Context) -> Poll[TestFuture, u32] {\n    $entry:\n      value: u32 = lcpos 3_u32\n      ready: Poll[TestFuture, u32] = lceos Poll[TestFuture, u32]::Ready(value)\n      ret ready: Poll[TestFuture, u32]\n  }\n}\n\nasync fn choose(flag: bool, future: TestFuture) -> u32 {\n  $entry:\n    cbr flag, $left, $right\n  $left:\n    left_value: u32 = lcpos 10_u32\n    br $merge\n  $right:\n    right_value: u32 = lcpos 20_u32\n    br $merge\n  $merge:\n    selected: u32 = phi left_value: u32 $left, right_value: u32 $right\n    awaited: u32 = await future\n    result: u32 = add selected, awaited\n    ret result: u32\n}\n"
+    let module = parse_module_text("async_phi_lowering", source)
+    let llvm_ir = emit_ir(module)
+    if !assert(llvm_ir.contains("define %__encore_future_choose @choose")) { ret 1_u32 }
+    if !assert(llvm_ir.contains("bb___async_edge_left_to_merge")) { ret 2_u32 }
+    if !assert(llvm_ir.contains("bb___async_edge_right_to_merge")) { ret 3_u32 }
+    if !assert(!llvm_ir.contains("@__ehir_phi")) { ret 4_u32 }
+    ret 0_u32
+}

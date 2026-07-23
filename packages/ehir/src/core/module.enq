@@ -1,0 +1,64 @@
+import std::vec::Vec
+import core::option::Option
+
+import refrain::core::directives::Directive
+
+pub struct EhirImport {
+    module_id: str
+}
+
+pub struct EhirDocumentation {
+    target: str
+    text: str
+}
+
+pub struct Module {
+    name: str
+    imports: Vec[EhirImport]
+    documentation: Option[str]
+    symbol_documentation: Vec[EhirDocumentation]
+    directives: Vec[Directive]
+}
+
+pub struct ModuleBundle {
+    entry_module: str
+    modules: Vec[Module]
+}
+
+pub fn ehir_import(module_id: str) -> EhirImport {
+    ret EhirImport{module_id}
+}
+
+pub fn ehir_documentation(target: str, text: str) -> EhirDocumentation {
+    ret EhirDocumentation{target, text}
+}
+
+pub fn make_module(name: str, directives: Vec[Directive]) -> Module {
+    ret Module{name, Vec[EhirImport]::new(), Option[str]::None, Vec[EhirDocumentation]::new(), directives}
+}
+
+pub fn make_module_with_imports(name: str, imports: Vec[EhirImport], directives: Vec[Directive]) -> Module {
+    ret Module{name, imports, Option[str]::None, Vec[EhirDocumentation]::new(), directives}
+}
+
+pub fn make_module_with_metadata(
+    name: str,
+    imports: Vec[EhirImport],
+    documentation: Option[str],
+    symbol_documentation: Vec[EhirDocumentation],
+    directives: Vec[Directive]
+) -> Module {
+    ret Module{name, imports, documentation, symbol_documentation, directives}
+}
+
+pub fn make_module_bundle(entry_module: str, modules: Vec[Module]) -> ModuleBundle {
+    ret ModuleBundle{entry_module, modules}
+}
+
+pub fn flatten_module_bundle(name: str, bundle: ModuleBundle) -> Module {
+    let mut directives = Vec[Directive]::new()
+    let mut symbol_documentation = Vec[EhirDocumentation]::new()
+    for module in bundle.modules { directives.extend(module.directives) }
+    for module in bundle.modules { symbol_documentation.extend(module.symbol_documentation) }
+    ret make_module_with_metadata(name, Vec[EhirImport]::new(), Option[str]::None, symbol_documentation, directives)
+}

@@ -1,0 +1,390 @@
+import core::option::Option
+import core::result::Result
+import std::vec::Vec
+
+import refrain::core::{Module, Directive, FnDirective, Block, Instruction, Terminator, Variable, Type, PointerKind, BinaryOpKind}
+import refrain::coroutine::validate_coroutine_moves
+
+pub fn validate_module(module: Module) -> Result[Module, str] {
+    for directive in module.directives {
+        match directive {
+            Directive::Function(function) => {
+                match validate_function(function) {
+                    Some(message) => { ret Result[Module, str]::Err(message) }
+                    None => {}
+                }
+            }
+            Directive::Impl(item) => {
+                for method in item.methods {
+                    match validate_function(method) {
+                        Some(message) => { ret Result[Module, str]::Err(message) }
+                        None => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    ret Result[Module, str]::Ok(module)
+}
+
+fn validate_function(function: FnDirective) -> Option[str] {
+    if function.is_extern {
+        if function.is_async { ret invalid(function.name, "extern function must not be async") }
+        if function.blocks.len() > 0_usize {
+            ret invalid(function.name, "extern function must not contain blocks")
+        }
+        ret Option[str]::None
+    }
+    if function.blocks.len() == 0_usize {
+        ret invalid(function.name, "function must contain at least one block")
+    }
+
+    let mut labels = Vec[str]::new()
+    for block_item in function.blocks {
+        if block_item.name == "" { ret invalid(function.name, "block name must not be empty") }
+        if contains(labels, block_item.name) {
+            ret invalid(function.name, "duplicate block '" + block_item.name + "'")
+        }
+        labels.push(block_item.name)
+    }
+
+    match validate_phi_nodes(function) {
+        Some(message) => { ret Option[str]::Some(message) }
+        None => {}
+    }
+    if function.is_async {
+        match validate_coroutine_moves(function) {
+            Some(message) => { ret invalid(function.name, message) }
+            None => {}
+        }
+    }
+
+    let mut definitions = Vec[str]::new()
+    for parameter in function.params {
+        if parameter.name == "" { ret invalid(function.name, "parameter name must not be empty") }
+        if contains(definitions, parameter.name) {
+            ret invalid(function.name, "duplicate value '" + parameter.name + "'")
+        }
+        definitions.push(parameter.name)
+    }
+
+    for block_item in function.blocks {
+        for instruction in block_item.instructions {
+            match instruction_output(instruction) {
+                Some(name) => {
+                    if name == "" { ret invalid(function.name, "instruction output name must not be empty") }
+                    if contains(definitions, name) {
+                        ret invalid(function.name, "duplicate value '" + name + "'")
+                    }
+                    definitions.push(name)
+                }
+                None => {}
+            }
+            match validate_instruction(function.name, function.is_async, instruction) {
+                Some(message) => { ret Option[str]::Some(message) }
+                None => {}
+            }
+        }
+        match validate_terminator(function, block_item, labels) {
+            Some(message) => { ret Option[str]::Some(message) }
+            None => {}
+        }
+    }
+    ret Option[str]::None
+}
+
+fn validate_instruction(function_name: str, is_async: bool, instruction: Instruction) -> Option[str] {
+    match instruction {
+        Instruction::Store(item) => {
+            match required_type(function_name, item.src) { None => { ret missing_type(function_name, item.src.name) } Some(_) => {} }
+            match required_type(function_name, item.dst) {
+                None => { ret missing_type(function_name, item.dst.name) }
+                Some(dst_type) => {
+                    if !is_pointer(dst_type) { ret invalid(function_name, "store destination '" + item.dst.name + "' is not a pointer") }
+                    match required_type(function_name, item.src) {
+                        Some(src_type) => { if !same_value_type(src_type, dst_type) { ret invalid(function_name, "store source and destination types do not match") } }
+                        None => {}
+                    }
+                }
+            }
+        }
+        Instruction::Load(item) => {
+            match required_type(function_name, item.src) {
+                None => { ret missing_type(function_name, item.src.name) }
+                Some(src_type) => {
+                    if !is_pointer(src_type) { ret invalid(function_name, "load source '" + item.src.name + "' is not a pointer") }
+                    match required_type(function_name, item.out) {
+                        Some(out_type) => { if !same_value_type(out_type, src_type) { ret invalid(function_name, "load result and source types do not match") } }
+                        None => { ret missing_type(function_name, item.out.name) }
+                    }
+                }
+            }
+        }
+        Instruction::SetField(item) => {
+            match required_type(function_name, item.src) {
+                None => { ret missing_type(function_name, item.src.name) }
+                Some(src_type) => { if !is_pointer(src_type) { ret invalid(function_name, "setfield target '" + item.src.name + "' is not a pointer") } }
+            }
+            if !has_type(item.value) { ret missing_type(function_name, item.value.name) }
+        }
+        Instruction::Binary(item) => {
+            match required_type(function_name, item.lhs) {
+                None => { ret missing_type(function_name, item.lhs.name) }
+                Some(lhs_type) => {
+                    match required_type(function_name, item.rhs) {
+                        None => { if !is_equality(item.op) { ret missing_type(function_name, item.rhs.name) } }
+                        Some(rhs_type) => { if !same_type(lhs_type, rhs_type) { ret invalid(function_name, "binary operand types do not match") } }
+                    }
+                }
+            }
+            match required_type(function_name, item.out) {
+                None => { ret missing_type(function_name, item.out.name) }
+                Some(out_type) => {
+                    if is_comparison(item.op) && !is_plain_named(out_type, "bool") {
+                        ret invalid(function_name, "comparison result must have type 'bool'")
+                    }
+                }
+            }
+        }
+        Instruction::Alias(item) => { ret validate_same_variables(function_name, item.out, item.src, "alias") }
+        Instruction::Await(item) => {
+            if !is_async { ret invalid(function_name, "await instruction requires an async function") }
+            if !has_type(item.out) { ret missing_type(function_name, item.out.name) }
+            if !has_type(item.future) { ret missing_type(function_name, item.future.name) }
+        }
+        Instruction::HeapFree(item) => {
+            match required_type(function_name, item.src) {
+                Some(src_type) => { if !is_pointer(src_type) { ret invalid(function_name, "hfree operand is not a pointer") } }
+                None => { ret missing_type(function_name, item.src.name) }
+            }
+        }
+        Instruction::Drop(item) => { if !has_type(item.value) { ret missing_type(function_name, item.value.name) } }
+        Instruction::Retain(item) => { if !has_type(item.value) { ret missing_type(function_name, item.value.name) } }
+        _ => {}
+    }
+    ret Option[str]::None
+}
+
+fn validate_phi_nodes(function: FnDirective) -> Option[str] {
+    for block_item in function.blocks {
+        let predecessors = predecessor_names(function.blocks, block_item.name)
+        let mut saw_non_phi = false
+        for instruction in block_item.instructions {
+            match instruction {
+                Instruction::Phi(item) => {
+                    if saw_non_phi { ret invalid(function.name, "phi instructions must appear at the start of block '" + block_item.name + "'") }
+                    if item.pairs.len() != predecessors.len() { ret invalid(function.name, "phi in block '" + block_item.name + "' must have one value for every predecessor") }
+                    let mut out_type = Type{"usize", Vec[Type]::new(), PointerKind::Plain}
+                    match required_type(function.name, item.out) {
+                        Some(typ) => { out_type = typ }
+                        None => { ret missing_type(function.name, item.out.name) }
+                    }
+                    let mut seen = Vec[str]::new()
+                    for pair in item.pairs {
+                        if !contains(predecessors, pair.label) { ret invalid(function.name, "phi references non-predecessor block '" + pair.label + "'") }
+                        if contains(seen, pair.label) { ret invalid(function.name, "phi contains duplicate predecessor '" + pair.label + "'") }
+                        seen.push(pair.label)
+                        match required_type(function.name, pair.value) {
+                            Some(value_type) => { if !same_type(out_type, value_type) { ret invalid(function.name, "phi input and output types do not match") } }
+                            None => { ret missing_type(function.name, pair.value.name) }
+                        }
+                    }
+                }
+                _ => { saw_non_phi = true }
+            }
+        }
+    }
+    ret Option[str]::None
+}
+
+fn predecessor_names(blocks: Vec[Block], target: str) -> Vec[str] {
+    let mut out = Vec[str]::new()
+    for block_item in blocks {
+        if terminator_targets(block_item.terminator, target) { out.push(block_item.name) }
+    }
+    ret out
+}
+
+fn terminator_targets(terminator: Terminator, target: str) -> bool {
+    match terminator {
+        Terminator::Br(item) => { ret item.label == target }
+        Terminator::Cbr(item) => { ret item.true_label == target || item.false_label == target }
+        Terminator::Match(item) => {
+            if item.default_label == target { ret true }
+            for arm in item.arms { if arm.label == target { ret true } }
+        }
+        Terminator::Switch(item) => {
+            if item.default_label == target { ret true }
+            for case_item in item.cases { if case_item.label == target { ret true } }
+        }
+        _ => {}
+    }
+    ret false
+}
+
+fn validate_terminator(function: FnDirective, block_item: Block, labels: Vec[str]) -> Option[str] {
+    match block_item.terminator {
+        Terminator::Ret(item) => {
+            match required_type(function.name, item.value) {
+                None => { ret missing_type(function.name, item.value.name) }
+                Some(value_type) => {
+                    if !same_type(value_type, function.ret_type) {
+                        ret invalid(function.name, "return type does not match function result type")
+                    }
+                }
+            }
+        }
+        Terminator::Br(item) => { if !contains(labels, item.label) { ret invalid(function.name, "branch targets unknown block '" + item.label + "'") } }
+        Terminator::Cbr(item) => {
+            match required_type(function.name, item.cond) {
+                Some(cond_type) => { if !is_plain_named(cond_type, "bool") { ret invalid(function.name, "conditional branch condition must have type 'bool'") } }
+                None => { ret missing_type(function.name, item.cond.name) }
+            }
+            if !contains(labels, item.true_label) { ret invalid(function.name, "branch targets unknown block '" + item.true_label + "'") }
+            if !contains(labels, item.false_label) { ret invalid(function.name, "branch targets unknown block '" + item.false_label + "'") }
+        }
+        Terminator::Match(item) => {
+            if !has_type(item.scrutinee) { ret missing_type(function.name, item.scrutinee.name) }
+            if !contains(labels, item.default_label) { ret invalid(function.name, "match targets unknown block '" + item.default_label + "'") }
+            for arm in item.arms { if !contains(labels, arm.label) { ret invalid(function.name, "match targets unknown block '" + arm.label + "'") } }
+        }
+        Terminator::Switch(item) => {
+            if !has_type(item.scrutinee) { ret missing_type(function.name, item.scrutinee.name) }
+            if !contains(labels, item.default_label) { ret invalid(function.name, "switch targets unknown block '" + item.default_label + "'") }
+            for case_item in item.cases { if !contains(labels, case_item.label) { ret invalid(function.name, "switch targets unknown block '" + case_item.label + "'") } }
+        }
+        Terminator::Unreachable => {}
+    }
+    ret Option[str]::None
+}
+
+fn instruction_output(instruction: Instruction) -> Option[str] {
+    match instruction {
+        Instruction::Lcpos(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::Alias(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::Lcsos(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::Lceos(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::Call(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::Await(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::Load(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::GetField(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::GetFieldPtr(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::SGetField(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::SGetFieldPtr(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::GetPtr(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::Gep(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::PtrCast(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::StackAlloc(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::HeapAlloc(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::HeapRealloc(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::Binary(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::Phi(item) => { ret Option[str]::Some(item.out.name) }
+        _ => { ret Option[str]::None }
+    }
+    ret Option[str]::None
+}
+
+fn validate_same_variables(function_name: str, lhs: Variable, rhs: Variable, operation: str) -> Option[str] {
+    match required_type(function_name, lhs) {
+        None => { ret missing_type(function_name, lhs.name) }
+        Some(lhs_type) => {
+            match required_type(function_name, rhs) {
+                None => { ret missing_type(function_name, rhs.name) }
+                Some(rhs_type) => { if !same_type(lhs_type, rhs_type) { ret invalid(function_name, operation + " operand types do not match") } }
+            }
+        }
+    }
+    ret Option[str]::None
+}
+
+fn required_type(function_name: str, value: Variable) -> Option[Type] {
+    match value.typ { Some(typ) => { ret Option[Type]::Some(typ) } None => {} }
+    ret Option[Type]::None
+}
+
+fn has_type(value: Variable) -> bool {
+    match value.typ { Some(_) => { ret true } None => { ret false } }
+    ret false
+}
+
+fn same_value_type(lhs: Type, rhs: Type) -> bool {
+    if !same_type_name(lhs.name, rhs.name) || lhs.generics.len() != rhs.generics.len() { ret false }
+    let mut index = 0_usize
+    while index < lhs.generics.len() {
+        match lhs.generics.get(index) {
+            Some(lhs_arg) => { match rhs.generics.get(index) { Some(rhs_arg) => { if !same_type(lhs_arg, rhs_arg) { ret false } } None => { ret false } } }
+            None => { ret false }
+        }
+        index = index + 1_usize
+    }
+    ret true
+}
+
+fn same_type_name(lhs: str, rhs: str) -> bool {
+    if lhs == rhs { ret true }
+    if (lhs == "bool" && rhs == "u1") || (lhs == "u1" && rhs == "bool") { ret true }
+    if (lhs == "()" && rhs == "void") || (lhs == "void" && rhs == "()") { ret true }
+    ret false
+}
+
+fn same_type(lhs: Type, rhs: Type) -> bool {
+    if !same_pointer(lhs.pointer, rhs.pointer) { ret false }
+    ret same_value_type(lhs, rhs)
+}
+
+fn same_pointer(lhs: PointerKind, rhs: PointerKind) -> bool {
+    match lhs {
+        PointerKind::Plain => { match rhs { PointerKind::Plain => { ret true } _ => { ret false } } }
+        PointerKind::Stack => { match rhs { PointerKind::Stack => { ret true } _ => { ret false } } }
+        PointerKind::Heap => { match rhs { PointerKind::Heap => { ret true } _ => { ret false } } }
+        PointerKind::Raw => { match rhs { PointerKind::Raw => { ret true } _ => { ret false } } }
+    }
+    ret false
+}
+
+fn is_pointer(typ: Type) -> bool {
+    match typ.pointer { PointerKind::Plain => { ret false } _ => { ret true } }
+    ret false
+}
+
+fn is_plain_named(typ: Type, name: str) -> bool {
+    if typ.name != name { ret false }
+    match typ.pointer { PointerKind::Plain => { ret true } _ => { ret false } }
+    ret false
+}
+
+fn is_comparison(kind: BinaryOpKind) -> bool {
+    match kind {
+        BinaryOpKind::LES => { ret true }
+        BinaryOpKind::LEQ => { ret true }
+        BinaryOpKind::GRT => { ret true }
+        BinaryOpKind::GEQ => { ret true }
+        BinaryOpKind::IEQ => { ret true }
+        BinaryOpKind::NEQ => { ret true }
+        _ => { ret false }
+    }
+    ret false
+}
+
+fn is_equality(kind: BinaryOpKind) -> bool {
+    match kind {
+        BinaryOpKind::IEQ => { ret true }
+        BinaryOpKind::NEQ => { ret true }
+        _ => { ret false }
+    }
+    ret false
+}
+
+fn contains(values: Vec[str], expected: str) -> bool {
+    for value in values { if value == expected { ret true } }
+    ret false
+}
+
+fn missing_type(function_name: str, value_name: str) -> Option[str] {
+    ret invalid(function_name, "value '" + value_name + "' has no resolved type")
+}
+
+fn invalid(function_name: str, message: str) -> Option[str] {
+    ret Option[str]::Some("function '" + function_name + "': " + message)
+}

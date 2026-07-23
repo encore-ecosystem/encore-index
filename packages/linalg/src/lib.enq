@@ -1,0 +1,219 @@
+import core::vec::Vec
+import core::option::Option
+import std::math::{cos, sin, tan}
+
+pub struct Vec3 { x: f32 y: f32 z: f32 }
+
+pub struct Mat4 {
+    m00: f32 m01: f32 m02: f32 m03: f32
+    m10: f32 m11: f32 m12: f32 m13: f32
+    m20: f32 m21: f32 m22: f32 m23: f32
+    m30: f32 m31: f32 m32: f32 m33: f32
+}
+
+fn sqrt(value: f32) -> f32 {
+    if value <= 0.0_f32 { ret 0.0_f32 }
+    let mut estimate = if value > 1.0_f32 { value } else { 1.0_f32 }
+    let mut iteration = 0_u32
+    while iteration < 8_u32 {
+        estimate = 0.5_f32 * (estimate + value / estimate)
+        iteration = iteration + 1_u32
+    }
+    ret estimate
+}
+
+fn normalized_angle(value: f32) -> f32 {
+    let mut angle = value
+    while angle > 3.1415927_f32 { angle = angle - 6.2831855_f32 }
+    while angle < -3.1415927_f32 { angle = angle + 6.2831855_f32 }
+    ret angle
+}
+
+fn absolute(value: f32) -> f32 { ret if value < 0.0_f32 { 0.0_f32 - value } else { value } }
+
+fn atan2_approx(y: f32, x: f32) -> f32 {
+    if x == 0.0_f32 { ret if y >= 0.0_f32 { 1.5707963_f32 } else { -1.5707963_f32 } }
+    let abs_y = absolute(y) + 0.000001_f32
+    let angle = if x >= 0.0_f32 {
+        let ratio = (x - abs_y) / (x + abs_y)
+        0.78539816_f32 + (0.1963_f32 * ratio * ratio - 0.9817_f32) * ratio
+    } else {
+        let ratio = (x + abs_y) / (abs_y - x)
+        2.3561945_f32 + (0.1963_f32 * ratio * ratio - 0.9817_f32) * ratio
+    }
+    ret if y < 0.0_f32 { 0.0_f32 - angle } else { angle }
+}
+
+impl for Vec3 {
+    pub fn new(x: f32, y: f32, z: f32) -> Vec3 { ret Vec3 { x, y, z } }
+    pub fn zero() -> Vec3 { ret Vec3 { 0.0_f32, 0.0_f32, 0.0_f32 } }
+    pub fn from_spherical(yaw: f32, pitch: f32) -> Vec3 {
+        let normalized_yaw = normalized_angle(yaw)
+        let horizontal = cos(pitch)
+        ret Vec3::new(horizontal * sin(normalized_yaw), sin(pitch), horizontal * cos(normalized_yaw))
+    }
+    pub fn x(self: Self) -> f32 { ret self.x }
+    pub fn y(self: Self) -> f32 { ret self.y }
+    pub fn z(self: Self) -> f32 { ret self.z }
+    pub fn add(self: Self, other: Vec3) -> Vec3 { ret Vec3::new(self.x + other.x, self.y + other.y, self.z + other.z) }
+    pub fn sub(self: Self, other: Vec3) -> Vec3 { ret Vec3::new(self.x - other.x, self.y - other.y, self.z - other.z) }
+    pub fn scale(self: Self, factor: f32) -> Vec3 { ret Vec3::new(self.x * factor, self.y * factor, self.z * factor) }
+    pub fn dot(self: Self, other: Vec3) -> f32 { ret self.x * other.x + self.y * other.y + self.z * other.z }
+    pub fn cross(self: Self, other: Vec3) -> Vec3 {
+        ret Vec3::new(self.y * other.z - self.z * other.y,
+            self.z * other.x - self.x * other.z, self.x * other.y - self.y * other.x)
+    }
+    pub fn length(self: Self) -> f32 { ret sqrt(self.dot(self)) }
+    pub fn normalized(self: Self) -> Vec3 {
+        let length = self.length()
+        ret if length > 0.000001_f32 { self.scale(1.0_f32 / length) } else { Vec3::zero() }
+    }
+}
+
+impl for Mat4 {
+    pub fn identity() -> Mat4 {
+        ret Mat4 { 1.0_f32, 0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32, 1.0_f32, 0.0_f32, 0.0_f32,
+            0.0_f32, 0.0_f32, 1.0_f32, 0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32, 1.0_f32 }
+    }
+    pub fn translation(value: Vec3) -> Mat4 {
+        ret Mat4 { 1.0_f32, 0.0_f32, 0.0_f32, value.x, 0.0_f32, 1.0_f32, 0.0_f32, value.y,
+            0.0_f32, 0.0_f32, 1.0_f32, value.z, 0.0_f32, 0.0_f32, 0.0_f32, 1.0_f32 }
+    }
+    pub fn scale(value: Vec3) -> Mat4 {
+        ret Mat4 { value.x, 0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32, value.y, 0.0_f32, 0.0_f32,
+            0.0_f32, 0.0_f32, value.z, 0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32, 1.0_f32 }
+    }
+    pub fn rotation_x(angle: f32) -> Mat4 {
+        let normalized = normalized_angle(angle)
+        let c = cos(normalized) let s = sin(normalized)
+        ret Mat4 { 1.0_f32, 0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32, c, -s, 0.0_f32,
+            0.0_f32, s, c, 0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32, 1.0_f32 }
+    }
+    pub fn rotation_y(angle: f32) -> Mat4 {
+        let normalized = normalized_angle(angle)
+        let c = cos(normalized) let s = sin(normalized)
+        ret Mat4 { c, 0.0_f32, s, 0.0_f32, 0.0_f32, 1.0_f32, 0.0_f32, 0.0_f32,
+            -s, 0.0_f32, c, 0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32, 1.0_f32 }
+    }
+    pub fn rotation_z(angle: f32) -> Mat4 {
+        let normalized = normalized_angle(angle)
+        let c = cos(normalized) let s = sin(normalized)
+        ret Mat4 { c, -s, 0.0_f32, 0.0_f32, s, c, 0.0_f32, 0.0_f32,
+            0.0_f32, 0.0_f32, 1.0_f32, 0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32, 1.0_f32 }
+    }
+    pub fn trs(position: Vec3, rotation: Vec3, scale: Vec3) -> Mat4 {
+        ret Mat4::translation(position)
+            .mul(Mat4::rotation_y(rotation.y))
+            .mul(Mat4::rotation_x(rotation.x))
+            .mul(Mat4::rotation_z(rotation.z))
+            .mul(Mat4::scale(scale))
+    }
+    pub fn perspective(fov_y: f32, aspect: f32, near: f32, far: f32) -> Mat4 {
+        let f = 1.0_f32 / tan(fov_y * 0.5_f32)
+        ret Mat4 { f / aspect, 0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32, -f, 0.0_f32, 0.0_f32,
+            0.0_f32, 0.0_f32, far / (near - far), (near * far) / (near - far),
+            0.0_f32, 0.0_f32, -1.0_f32, 0.0_f32 }
+    }
+    pub fn look_at(eye: Vec3, target: Vec3, up: Vec3) -> Mat4 {
+        let forward = target.sub(eye).normalized()
+        let side = forward.cross(up).normalized()
+        let camera_up = side.cross(forward)
+        ret Mat4 { side.x, side.y, side.z, -side.dot(eye),
+            camera_up.x, camera_up.y, camera_up.z, -camera_up.dot(eye),
+            -forward.x, -forward.y, -forward.z, forward.dot(eye),
+            0.0_f32, 0.0_f32, 0.0_f32, 1.0_f32 }
+    }
+    pub fn mul(self: Self, rhs: Mat4) -> Mat4 {
+        ret Mat4 {
+            self.m00*rhs.m00+self.m01*rhs.m10+self.m02*rhs.m20+self.m03*rhs.m30,
+            self.m00*rhs.m01+self.m01*rhs.m11+self.m02*rhs.m21+self.m03*rhs.m31,
+            self.m00*rhs.m02+self.m01*rhs.m12+self.m02*rhs.m22+self.m03*rhs.m32,
+            self.m00*rhs.m03+self.m01*rhs.m13+self.m02*rhs.m23+self.m03*rhs.m33,
+            self.m10*rhs.m00+self.m11*rhs.m10+self.m12*rhs.m20+self.m13*rhs.m30,
+            self.m10*rhs.m01+self.m11*rhs.m11+self.m12*rhs.m21+self.m13*rhs.m31,
+            self.m10*rhs.m02+self.m11*rhs.m12+self.m12*rhs.m22+self.m13*rhs.m32,
+            self.m10*rhs.m03+self.m11*rhs.m13+self.m12*rhs.m23+self.m13*rhs.m33,
+            self.m20*rhs.m00+self.m21*rhs.m10+self.m22*rhs.m20+self.m23*rhs.m30,
+            self.m20*rhs.m01+self.m21*rhs.m11+self.m22*rhs.m21+self.m23*rhs.m31,
+            self.m20*rhs.m02+self.m21*rhs.m12+self.m22*rhs.m22+self.m23*rhs.m32,
+            self.m20*rhs.m03+self.m21*rhs.m13+self.m22*rhs.m23+self.m23*rhs.m33,
+            self.m30*rhs.m00+self.m31*rhs.m10+self.m32*rhs.m20+self.m33*rhs.m30,
+            self.m30*rhs.m01+self.m31*rhs.m11+self.m32*rhs.m21+self.m33*rhs.m31,
+            self.m30*rhs.m02+self.m31*rhs.m12+self.m32*rhs.m22+self.m33*rhs.m32,
+            self.m30*rhs.m03+self.m31*rhs.m13+self.m32*rhs.m23+self.m33*rhs.m33
+        }
+    }
+    pub fn values(self: Self) -> Vec[f32] {
+        let mut values = Vec[f32]::new()
+        values.push(self.m00) values.push(self.m10) values.push(self.m20) values.push(self.m30)
+        values.push(self.m01) values.push(self.m11) values.push(self.m21) values.push(self.m31)
+        values.push(self.m02) values.push(self.m12) values.push(self.m22) values.push(self.m32)
+        values.push(self.m03) values.push(self.m13) values.push(self.m23) values.push(self.m33)
+        ret values
+    }
+    pub fn transform_point(self: Self, point: Vec3) -> Vec3 {
+        let x = self.m00 * point.x + self.m01 * point.y + self.m02 * point.z + self.m03
+        let y = self.m10 * point.x + self.m11 * point.y + self.m12 * point.z + self.m13
+        let z = self.m20 * point.x + self.m21 * point.y + self.m22 * point.z + self.m23
+        let w = self.m30 * point.x + self.m31 * point.y + self.m32 * point.z + self.m33
+        ret if w > 0.000001_f32 || w < -0.000001_f32 {
+            Vec3::new(x / w, y / w, z / w)
+        } else { Vec3::new(x, y, z) }
+    }
+    pub fn inverse_affine(self: Self) -> Option[Mat4] {
+        let determinant = self.m00 * (self.m11 * self.m22 - self.m12 * self.m21) -
+            self.m01 * (self.m10 * self.m22 - self.m12 * self.m20) +
+            self.m02 * (self.m10 * self.m21 - self.m11 * self.m20)
+        if determinant > -0.000001_f32 && determinant < 0.000001_f32 { ret Option[Mat4]::None }
+        let inverse = 1.0_f32 / determinant
+        let r00 = (self.m11 * self.m22 - self.m12 * self.m21) * inverse
+        let r01 = (self.m02 * self.m21 - self.m01 * self.m22) * inverse
+        let r02 = (self.m01 * self.m12 - self.m02 * self.m11) * inverse
+        let r10 = (self.m12 * self.m20 - self.m10 * self.m22) * inverse
+        let r11 = (self.m00 * self.m22 - self.m02 * self.m20) * inverse
+        let r12 = (self.m02 * self.m10 - self.m00 * self.m12) * inverse
+        let r20 = (self.m10 * self.m21 - self.m11 * self.m20) * inverse
+        let r21 = (self.m01 * self.m20 - self.m00 * self.m21) * inverse
+        let r22 = (self.m00 * self.m11 - self.m01 * self.m10) * inverse
+        let tx = 0.0_f32 - (r00 * self.m03 + r01 * self.m13 + r02 * self.m23)
+        let ty = 0.0_f32 - (r10 * self.m03 + r11 * self.m13 + r12 * self.m23)
+        let tz = 0.0_f32 - (r20 * self.m03 + r21 * self.m13 + r22 * self.m23)
+        ret Option[Mat4]::Some(Mat4 { r00, r01, r02, tx, r10, r11, r12, ty,
+            r20, r21, r22, tz, 0.0_f32, 0.0_f32, 0.0_f32, 1.0_f32 })
+    }
+    pub fn decompose_trs(self: Self) -> Option[(Vec3, Vec3, Vec3)] {
+        if absolute(self.m30) > 0.00001_f32 || absolute(self.m31) > 0.00001_f32 ||
+            absolute(self.m32) > 0.00001_f32 || absolute(self.m33 - 1.0_f32) > 0.00001_f32 {
+            ret Option[(Vec3, Vec3, Vec3)]::None
+        }
+        let mut column_x = Vec3::new(self.m00, self.m10, self.m20)
+        let column_y = Vec3::new(self.m01, self.m11, self.m21)
+        let column_z = Vec3::new(self.m02, self.m12, self.m22)
+        let mut scale_x = column_x.length()
+        let scale_y = column_y.length()
+        let scale_z = column_z.length()
+        if scale_x < 0.000001_f32 || scale_y < 0.000001_f32 || scale_z < 0.000001_f32 {
+            ret Option[(Vec3, Vec3, Vec3)]::None
+        }
+        let determinant = column_x.dot(column_y.cross(column_z))
+        if determinant < 0.0_f32 { scale_x = 0.0_f32 - scale_x column_x = column_x.scale(-1.0_f32) }
+        let axis_x = column_x.scale(1.0_f32 / absolute(scale_x))
+        let axis_y = column_y.scale(1.0_f32 / scale_y)
+        let axis_z = column_z.scale(1.0_f32 / scale_z)
+        if absolute(axis_x.dot(axis_y)) > 0.002_f32 || absolute(axis_x.dot(axis_z)) > 0.002_f32 ||
+            absolute(axis_y.dot(axis_z)) > 0.002_f32 {
+            ret Option[(Vec3, Vec3, Vec3)]::None
+        }
+        let rotation_x = atan2_approx(0.0_f32 - axis_z.y(),
+            sqrt(axis_x.y() * axis_x.y() + axis_y.y() * axis_y.y()))
+        let cos_x = cos(rotation_x)
+        let rotation_y = if absolute(cos_x) > 0.0001_f32 {
+            atan2_approx(axis_z.x(), axis_z.z())
+        } else { atan2_approx(0.0_f32 - axis_x.z(), axis_x.x()) }
+        let rotation_z = if absolute(cos_x) > 0.0001_f32 {
+            atan2_approx(axis_x.y(), axis_y.y())
+        } else { 0.0_f32 }
+        ret Option[(Vec3, Vec3, Vec3)]::Some((Vec3::new(self.m03, self.m13, self.m23),
+            Vec3::new(rotation_x, rotation_y, rotation_z), Vec3::new(scale_x, scale_y, scale_z)))
+    }
+}

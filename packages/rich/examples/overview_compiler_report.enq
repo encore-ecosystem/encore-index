@@ -1,0 +1,31 @@
+import rich::{CompilerReport, Console, StageProgress, Theme, Traceback}
+
+fn main() -> u32 {
+    let console = Console::new()
+    let theme = Theme::compiler()
+
+    let mut report = CompilerReport::new("Bootstrap Report")
+    report.add_summary("target", "bootstrap")
+    report.add_summary("backend", "llvm")
+    report.add_summary("cache", "off")
+    report.add_stage(StageProgress::with_footer("parse", "Parse", "collecting modules", 3_usize, 3_usize, "done"))
+    report.add_stage(StageProgress::with_footer("translate", "Translate", "lowering eHIR", 2_usize, 4_usize, "running"))
+
+    let mut traceback = Traceback::compiler_error("trait method `fmt` is not implemented")
+    traceback.add_context_frame(
+        "frontend/pretty.enq",
+        "render_value",
+        33_usize,
+        15_usize,
+        "let value = lower(expr)",
+        "ret value.fmt()",
+        "ret output",
+    )
+    traceback.add_note("the inferred type does not satisfy the formatting contract")
+    traceback.add_hint("add an explicit formatter or reduce the generic surface")
+    report.add_traceback(traceback)
+    report.add_note("timings profile enabled")
+
+    console.compiler_report(theme, report)
+    ret 0_u32
+}

@@ -1,0 +1,146 @@
+import core::vec::Vec
+import core::os::{read_file, write_file}
+import core::testing::assert
+
+import refrain::console_sink::ConsoleSink
+import refrain::file_sink::FileSink
+import refrain::level::{LogLevel, level_enabled}
+import refrain::record::LogRecord
+import refrain::sink::{LogSink, Writable}
+import refrain::writer_sink::WriterSink
+
+pub struct Logger {
+    target: str
+    minimum: LogLevel
+    sinks: Vec[dyn LogSink]
+}
+
+impl for Logger {
+    pub fn new(target: str) -> Self {
+        ret Self{target, LogLevel::Trace, Vec[dyn LogSink]::new()}
+    }
+
+    pub fn console(target: str) -> Self {
+        let mut logger = Self::new(target)
+        logger.add_sink(ConsoleSink::stdout() as dyn LogSink)
+        ret logger
+    }
+
+    pub fn stderr(target: str) -> Self {
+        let mut logger = Self::new(target)
+        logger.add_sink(ConsoleSink::stderr() as dyn LogSink)
+        ret logger
+    }
+
+    pub fn with_min_level(self: Self, minimum: LogLevel) -> Self {
+        ret Self{self.target, minimum, self.sinks}
+    }
+
+    pub fn set_target(self: mut Self, target: str) -> () {
+        self.target = target
+        ret ()
+    }
+
+    pub fn add_sink(self: mut Self, sink: dyn LogSink) -> () {
+        self.sinks.push(sink)
+        ret ()
+    }
+
+    pub fn add_console_sink(self: mut Self) -> () {
+        self.add_sink(ConsoleSink::stdout() as dyn LogSink)
+        ret ()
+    }
+
+    pub fn add_stderr_sink(self: mut Self) -> () {
+        self.add_sink(ConsoleSink::stderr() as dyn LogSink)
+        ret ()
+    }
+
+    pub fn add_file_sink(self: mut Self, path: str) -> () {
+        self.add_sink(FileSink::new(path) as dyn LogSink)
+        ret ()
+    }
+
+    pub fn add_writer_sink(self: mut Self, writer: dyn Writable) -> () {
+        self.add_sink(WriterSink::new(writer) as dyn LogSink)
+        ret ()
+    }
+
+    pub fn log(self: Self, level: LogLevel, message: str) -> () {
+        if !level_enabled(level, self.minimum) {
+            ret ()
+        }
+
+        for sink in self.sinks {
+            sink.write(level, self.target, message)
+        }
+        ret ()
+    }
+
+    pub fn log_record(self: Self, record: LogRecord) -> () {
+        self.log(record.level, record.message)
+        ret ()
+    }
+
+    pub fn trace(self: Self, message: str) -> () {
+        self.log(LogLevel::Trace, message)
+        ret ()
+    }
+
+    pub fn debug(self: Self, message: str) -> () {
+        self.log(LogLevel::Debug, message)
+        ret ()
+    }
+
+    pub fn info(self: Self, message: str) -> () {
+        self.log(LogLevel::Info, message)
+        ret ()
+    }
+
+    pub fn warn(self: Self, message: str) -> () {
+        self.log(LogLevel::Warn, message)
+        ret ()
+    }
+
+    pub fn error(self: Self, message: str) -> () {
+        self.log(LogLevel::Error, message)
+        ret ()
+    }
+
+    pub fn fatal(self: Self, message: str) -> () {
+        self.log(LogLevel::Fatal, message)
+        ret ()
+    }
+}
+
+#attr(test)
+fn logger_min_level_filters_records() -> bool {
+    let path = "target/log_logger_contract.txt"
+    write_file(path, "")
+    let mut logger = Logger::new("logger").with_min_level(LogLevel::Warn)
+    logger.add_sink(FileSink::new(path) as dyn LogSink)
+    logger.info("skip")
+    logger.error("keep")
+    let text = read_file(path)
+    ret assert(!str_contains(text, "skip")) && assert(str_contains(text, "keep"))
+}
+
+fn str_contains(value: str, needle: str) -> bool {
+    let needle_len = needle.char_len()
+    let value_len = value.char_len()
+    if needle_len == 0_usize {
+        ret true
+    }
+    if needle_len > value_len {
+        ret false
+    }
+
+    let mut start = 0_usize
+    while start + needle_len <= value_len {
+        if value.slice(start, needle_len) == needle {
+            ret true
+        }
+        start = start + 1_usize
+    }
+    ret false
+}

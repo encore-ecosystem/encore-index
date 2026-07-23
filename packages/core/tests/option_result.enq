@@ -1,0 +1,54 @@
+import core::fmt::Debug
+import core::option::Option
+import core::result::Result
+import core::testing::*
+
+fn main() -> u32 {
+    let some = Option[u32]::Some(7_u32)
+    let none = Option[u32]::None
+
+    if !assert(some.is_some()) {
+        ret 1_u32
+    }
+    if !assert(none.is_none()) {
+        ret 1_u32
+    }
+    if !assert(some.unwrap_or(0_u32) == 7_u32) {
+        ret 1_u32
+    }
+    if !assert(none.unwrap_or(9_u32) == 9_u32) {
+        ret 1_u32
+    }
+    if !assert(Debug::fmt(some) == "Some(7)") {
+        ret 1_u32
+    }
+    if !assert(Debug::fmt(none) == "None") {
+        ret 1_u32
+    }
+
+    let ok = Result[u32, str]::Ok(11_u32)
+    let err = Result[u32, str]::Err("fail")
+    if !assert(ok.is_ok()) {
+        ret 1_u32
+    }
+    if !assert(err.is_err()) {
+        ret 1_u32
+    }
+    if !assert(ok.unwrap_or(0_u32) == 11_u32) {
+        ret 1_u32
+    }
+    if !assert(err.unwrap_or(5_u32) == 5_u32) {
+        ret 1_u32
+    }
+    if !assert(err.unwrap_err_or("fallback") == "fail") {
+        ret 1_u32
+    }
+    if !assert(Debug::fmt(ok) == "Ok(11)") {
+        ret 1_u32
+    }
+    if !assert(Debug::fmt(err) == "Err(fail)") {
+        ret 1_u32
+    }
+
+    ret 0_u32
+}

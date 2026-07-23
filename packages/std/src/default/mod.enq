@@ -1,0 +1,6 @@
+//! Provides the `default` module.
+
+/// Defines the behavior required by `Default` implementations.
+pub trait Default {
+    fn default() -> Self
+}
