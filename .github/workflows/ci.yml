@@ -77,7 +77,7 @@ jobs:
           expected=$(awk 'NF {print tolower($1); exit}' "target/compiler/$asset.sha256")
           test "$(sha256sum "target/compiler/$asset" | awk '{print $1}')" = "$expected"
           tar -xzf "target/compiler/$asset" -C target/compiler
-          compiler=$(find target/compiler -type f -path '*/bin/encore' | head -n 1)
+          compiler=$(find "$PWD/target/compiler" -type f -path '*/bin/encore' | head -n 1)
           test -x "$compiler"
           printf '%s\n' "$compiler" > target/compiler-path
 
