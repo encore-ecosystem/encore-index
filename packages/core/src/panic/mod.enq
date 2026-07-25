@@ -1,13 +1,13 @@
 //! Provides the `panic` module.
 
-import core::io::eprint
-import core::io::eprintln
-import core::process::exit
+extern fn encore_io_write(fd: i32, value: str) -> i32
+extern fn encore_proc_exit(code: i32) -> i32
 
 /// Performs the `panic` operation.
 pub fn panic(message: str) -> () {
-    eprint("panic: ")
-    eprintln(message)
-    exit(1_i32)
+    unsafe {
+        encore_io_write(2_i32, "panic: " + message + "\n")
+        encore_proc_exit(1_i32)
+    }
     ret ()
 }

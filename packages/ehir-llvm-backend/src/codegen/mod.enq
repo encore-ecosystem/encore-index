@@ -1,9 +1,9 @@
 import core::option::Option
 import core::fmt::Debug
-import core::thread::JoinHandle
-import core::io::eprintln
-import core::process::exit
-import core::os::env
+import std::thread::JoinHandle
+import std::io::eprintln
+import std::process::exit
+import std::os::env
 import std::vec::Vec
 import std::vec::vec_singleton
 import ehirlib::core::Module
@@ -1574,7 +1574,9 @@ fn lower_type_declarations(directives: Vec[Directive], concrete_types: Vec[Type]
     for directive in directives {
         match directive {
             Directive::Struct(item) => {
-                if item.generics.len() == 0_usize {
+                if item.name == "JoinHandle" {
+                    // Emitted below from the language-defined ABI.
+                } elif item.generics.len() == 0_usize {
                     out.push(struct_declaration_text(item.name, item.generics, item.fields, Type{item.name, Vec[Type]::new(), PointerKind::Plain}))
                 } else {
                     for concrete in concrete_types {
@@ -1602,6 +1604,16 @@ fn lower_type_declarations(directives: Vec[Directive], concrete_types: Vec[Type]
                 out.push("%dyn_" + sanitize_symbol(item.name) + " = type { i8*, i64 }")
             }
             _ => {}
+        }
+    }
+    // `spawn` is a language construct and may produce JoinHandle[T] without
+    // an explicit source import of the platform declaration. Its ABI is one
+    // target-sized token, so materialize the builtin aggregate whenever the
+    // frontend references it and no imported declaration is present.
+    for concrete in concrete_types {
+        if concrete.name == "JoinHandle" && concrete.generics.len() == 1_usize {
+            let token = type_text(lower_type(Type{"usize", Vec[Type]::new(), PointerKind::Plain}))
+            out.push("%" + sanitize_symbol(mangle_type_name(concrete)) + " = type { " + token + " }")
         }
     }
     out.extend(lower_string_globals(directives))
@@ -1910,7 +1922,9 @@ fn collect_instruction_types(out: mut Vec[Type], seen: usize, instruction_handle
             Instruction::Alias(data) => { remember_variable_type(out, seen, data.out) }
             Instruction::Lcsos(data) => { remember_variable_type(out, seen, data.out) }
             Instruction::Lceos(data) => { remember_variable_type(out, seen, data.out) }
-            Instruction::Call(data) => { remember_variable_type(out, seen, data.out) }
+            // Call results can carry their type in the required EHIR
+            // annotation even when Variable.typ has not been populated yet.
+            Instruction::Call(data) => { remember_concrete_type(out, seen, required_variable_type(data.out)) }
             Instruction::Await(data) => { remember_variable_type(out, seen, data.out) }
             Instruction::Load(data) => { remember_variable_type(out, seen, data.out) }
             Instruction::GetField(data) => { remember_variable_type(out, seen, data.out) }

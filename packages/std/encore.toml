@@ -1,7 +1,9 @@
 [project]
 name = "std"
-version = "1.0.0"
+version = "1.0.1"
+repository = "https://github.com/encore-ecosystem/encore-index"
+encore = ">=0.1.5, <0.2.0"
 description = "stdlib for Encore language"
 readme = "README.md"
 licence = "MIT"
-dependencies = []
+dependencies = ["sys@platform"]

@@ -3,17 +3,10 @@
 pub import refrain::cast
 pub import refrain::fmt
 pub import refrain::future
-pub import refrain::io
 pub import refrain::iter
-pub import refrain::net
 pub import refrain::ops
 pub import refrain::option
-pub import refrain::os
 pub import refrain::panic
-pub import refrain::process
 pub import refrain::result
 pub import refrain::testing
-pub import refrain::thread
-pub import refrain::tls
-pub import refrain::time
 pub import refrain::vec

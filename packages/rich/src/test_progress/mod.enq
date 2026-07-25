@@ -1,7 +1,7 @@
 import colorterm::{styled, Color, Style}
 import core::fmt::Debug
-import core::io::{eprintln, stderr_fd}
-import core::time::perf_counter_ms
+import std::io::{eprintln, stderr_fd}
+import std::time::perf_counter_ms
 import refrain::native::{is_terminal, terminal_spinner_start, terminal_spinner_stop}
 import refrain::spinner::Spinner
 import std::vec::Vec

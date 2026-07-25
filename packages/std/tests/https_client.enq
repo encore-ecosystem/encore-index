@@ -1,7 +1,7 @@
 //! Exercises a verified TLS connection against the local integration server.
 
-import core::os::env
-import core::io::println
+import std::os::env
+import std::io::println
 import core::result::Result
 import core::testing::assert
 import std::http::{HttpClient, HttpClientConfig}

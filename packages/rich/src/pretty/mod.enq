@@ -1,4 +1,4 @@
-import core::io::println
+import std::io::println
 import core::testing::assert
 import core::vec::Vec
 

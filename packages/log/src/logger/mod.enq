@@ -1,5 +1,5 @@
 import core::vec::Vec
-import core::os::{read_file, write_file}
+import std::os::{read_file, write_file}
 import core::testing::assert
 
 import refrain::console_sink::ConsoleSink

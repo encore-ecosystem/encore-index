@@ -4,9 +4,9 @@
 normal builds, so user packages can import `core::...` APIs without adding
 `core` to `encore.toml`.
 
-Use `core` when you need primitive language support, process and OS calls, the
-native runtime bridge, or data types that `std` re-exports. Prefer `std` for
-general application code.
+Use `core` for target-independent language primitives. Platform IO, filesystem,
+networking, processes, threads, clocks, and TLS are exposed by `std`; their
+internal implementation comes from the target kit's `platform` refrain.
 
 ## Modules
 
@@ -17,12 +17,7 @@ general application code.
 | `core::vec` | `Vec[T]`, `VecIter[T]`, `new`, `with_capacity`, `singleton`, `len`, `capacity`, `is_empty`, `reserve`, `push`, `set`, `get`, `first`, `last`, `clear`, `pop`, `extend`, `iter` |
 | `core::iter` | `Iterator[T]`, `IntoIterator[T, Iter]`, `Range`, `Enumerate`, `range`, `range_inclusive`, `enumerate` |
 | `core::fmt` | `Debug` for primitive values, `Option`, `Result` and `Vec` |
-| `core::io` | `print`, `println`, `eprint`, `eprintln`, `print_debug`, `println_debug` |
 | `core::ops` | Operator traits for arithmetic, comparison, bitwise operators and `ContextManager` |
-| `core::os` | `argc`, `argv`, `args`, `cwd`, `home_dir`, `os_name`, `path_separator`, low-level file helpers |
-| `core::process` | `exit`, `success_code`, `failure_code`, `exit_success`, `exit_failure` |
-| `core::time` | `time_ms`, `time`, `perf_counter_ms`, `perf_counter`, `sleep_ms` |
-| `core::net` | `TcpStream`, `TcpListener`, `socket_addr` |
 | `core::cast` | `Numeric`, `Cast[T]` for numeric casts |
 | `core::panic` | `panic(message)` |
 | `core::testing` | `assert`, `fail` for executable tests |

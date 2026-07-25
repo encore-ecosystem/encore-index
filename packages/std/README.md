@@ -271,7 +271,8 @@ fn show(count: usize) {
 
 ## Networking
 
-`std::net` re-exports the beta TCP API from `core::net`:
+`std::net` exposes the beta TCP API implemented by the target-selected
+`platform` refrain:
 
 - `socket_addr(host, port) -> str`
 - `TcpStream::connect(addr) -> Result[TcpStream, str]`
@@ -285,7 +286,8 @@ fn show(count: usize) {
 `TcpStream` and `TcpListener` implement `ContextManager`, so they can be used
 with `with` when the program should close them at block exit.
 
-`std::tls` re-exports the verified blocking TLS client from `core::tls`.
+`std::tls` exposes the verified blocking TLS client implemented by the
+target-selected `platform` refrain.
 `std::http` builds a synchronous HTTPS-only HTTP/1.1 client on that stream:
 
 - `Url::parse(value)` parses absolute `https://` URLs;

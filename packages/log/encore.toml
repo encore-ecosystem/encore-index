@@ -1,7 +1,9 @@
 [project]
 name = "log"
-version = "1.0.0"
+version = "1.0.1"
+repository = "https://github.com/encore-ecosystem/encore-index"
+encore = ">=0.1.5, <0.2.0"
 description = "Structured logging primitives for Encore"
 readme = "README.md"
 licence = "MIT"
-dependencies = ["index@colorterm@1.0.0"]
+dependencies = ["index@std@1.0.1", "index@colorterm@1.0.0"]

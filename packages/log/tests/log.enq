@@ -1,4 +1,4 @@
-import core::os::{file_exists, read_file, remove_file, write_file}
+import std::os::{file_exists, read_file, remove_file, write_file}
 import core::testing::*
 import log::{Formatter, LogLevel, Logger, Writable, WriterSink}
 

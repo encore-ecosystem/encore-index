@@ -1,7 +1,7 @@
 import core::option::Option
 import core::result::Result
 import core::testing::*
-import core::os::read_file
+import std::os::read_file
 import json::Json
 import json::ParseError
 import json::field

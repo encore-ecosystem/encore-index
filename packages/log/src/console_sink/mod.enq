@@ -1,4 +1,4 @@
-import core::io::{print, eprint}
+import std::io::{print, eprint}
 
 import refrain::formatter::Formatter
 import refrain::level::LogLevel

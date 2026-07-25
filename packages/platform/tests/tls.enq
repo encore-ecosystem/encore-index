@@ -1,7 +1,7 @@
 //! Verifies TLS configuration invariants without external networking.
 
 import core::testing::assert
-import core::tls::{TlsClientConfig, TlsStream}
+import platform::tls::{TlsClientConfig, TlsStream}
 
 fn main() -> u32 {
     let invalid = TlsStream::connect("localhost", 443_usize, TlsClientConfig::system().with_timeout_ms(0_usize))

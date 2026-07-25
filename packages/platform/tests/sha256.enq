@@ -1,6 +1,6 @@
 //! Verifies the native portable SHA-256 implementation against a known vector.
 
-import core::os::file_sha256
+import platform::os::file_sha256
 import core::testing::assert
 
 fn main() -> u32 {

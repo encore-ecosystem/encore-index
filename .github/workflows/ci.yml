@@ -13,37 +13,88 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Validate sparse metadata and immutable archives
+        with:
+          fetch-depth: 0
+      - name: Test index validation failure modes
+        run: python3 scripts/test-validate-index.py
+      - name: Validate sparse metadata and append-only ownership
         shell: bash
         run: |
           set -euo pipefail
-          count=0
-          while IFS= read -r metadata; do
-            name=$(jq -er '.name' "$metadata")
-            test "$metadata" = "./${name:0:2}/$name.json"
-            test "$(jq '.versions | length' "$metadata")" -gt 0
-            duplicate=$(jq -r '.versions[].version' "$metadata" | sort | uniq -d)
-            test -z "$duplicate"
-            while IFS=$'\t' read -r version archive checksum yanked; do
-              test -n "$version"
-              case "$archive" in https://github.com/*/releases/download/*) ;; *) exit 1 ;; esac
-              case "$checksum" in
-                [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;;
-                *) exit 1 ;;
-              esac
-              test "${#checksum}" = 64
-              test "$yanked" = true -o "$yanked" = false
-              package=$(mktemp)
-              curl --fail --location --silent --show-error "$archive" -o "$package"
-              test "$(sha256sum "$package" | awk '{print $1}')" = "$checksum"
-              listing=$(mktemp)
-              tar -tzf "$package" > "$listing"
-              test "$(sed -n 's#^\./encore.toml$#ok#p' "$listing")" = ok
-              root=$(mktemp -d)
-              tar -xzf "$package" -C "$root" ./encore.toml
-              test "$(sed -n 's/^name = "\([^"]*\)"/\1/p' "$root/encore.toml" | head -n 1)" = "$name"
-              test "$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$root/encore.toml" | head -n 1)" = "$version"
-            done < <(jq -r '.versions[] | [.version,.archive,.checksum,.yanked] | @tsv' "$metadata")
-            count=$((count + 1))
-          done < <(find . -mindepth 2 -maxdepth 2 -name '*.json' -type f | sort)
-          test "$count" -gt 0
+          base=
+          if [[ "${{ github.event_name }}" == pull_request ]]; then
+            git fetch origin "${{ github.base_ref }}"
+            base="origin/${{ github.base_ref }}"
+          elif git rev-parse HEAD^ >/dev/null 2>&1; then
+            base=HEAD^
+          fi
+          args=(--download)
+          if test -n "$base"; then args+=(--base "$base"); fi
+          if test -n "$base"; then args+=(--extract-new target/new-packages); fi
+          python3 scripts/validate-index.py "${args[@]}"
+
+      - name: Install latest stable Encore compiler
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: encore-ecosystem/encore
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d target/new-packages
+          if ! find target/new-packages -mindepth 1 -maxdepth 1 -type d | grep -q .; then
+            echo "No new package versions to build"
+            exit 0
+          fi
+          selected=
+          while IFS= read -r tag; do
+            [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+            assets=$(gh release view "$tag" --json isDraft,isPrerelease,assets)
+            test "$(jq -r '.isDraft or .isPrerelease' <<<"$assets")" = false || continue
+            if jq -e '.assets | map(.name) |
+              index("encore-x86_64-unknown-linux-gnu.tar.gz") != null and
+              index("encore-x86_64-unknown-linux-gnu.tar.gz.sha256") != null' \
+              <<<"$assets" >/dev/null
+            then
+              selected=$tag
+              break
+            fi
+          done < <(gh release list --limit 100 --json tagName,publishedAt \
+            --jq 'sort_by(.publishedAt) | reverse | .[].tagName')
+          test -n "$selected"
+          asset=encore-x86_64-unknown-linux-gnu.tar.gz
+          mkdir -p target/compiler
+          gh release download "$selected" \
+            --pattern "$asset" --pattern "$asset.sha256" --dir target/compiler
+          expected=$(awk 'NF {print tolower($1); exit}' "target/compiler/$asset.sha256")
+          test "$(sha256sum "target/compiler/$asset" | awk '{print $1}')" = "$expected"
+          tar -xzf "target/compiler/$asset" -C target/compiler
+          compiler=$(find target/compiler -type f -path '*/bin/encore' | head -n 1)
+          test -x "$compiler"
+          printf '%s\n' "$compiler" > target/compiler-path
+
+      - name: Build and test every new package on Linux
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! find target/new-packages -mindepth 1 -maxdepth 1 -type d | grep -q .; then
+            exit 0
+          fi
+          compiler=$(cat target/compiler-path)
+          python3 -m http.server 8765 --bind 127.0.0.1 >/tmp/encore-index-http.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          export ENCORE_INDEX_URL=http://127.0.0.1:8765
+          export ENCORE_REGISTRY_CACHE="$PWD/target/registry"
+          while IFS= read -r package; do
+            echo "::group::$(basename "$package")"
+            (
+              cd "$package"
+              "$compiler" sync
+              "$compiler" check
+              "$compiler" test
+              "$compiler" build
+            )
+            echo "::endgroup::"
+          done < <(find target/new-packages -mindepth 1 -maxdepth 1 -type d | LC_ALL=C sort)

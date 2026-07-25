@@ -1,4 +1,4 @@
-import core::os::{file_exists, read_file, write_file}
+import std::os::{file_exists, read_file, write_file}
 import core::testing::assert
 
 import log::{ConsoleSink, FileSink, Formatter, LogLevel, LogSink, Logger, Writable, WriterSink}

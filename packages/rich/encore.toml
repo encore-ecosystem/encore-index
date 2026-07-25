@@ -1,12 +1,14 @@
 [project]
 name = "rich"
-version = "1.0.0"
+version = "1.0.1"
+repository = "https://github.com/encore-ecosystem/encore-index"
+encore = ">=0.1.5, <0.2.0"
 description = "Console rendering helpers inspired by Rich"
 readme = "README.md"
 licence = "MIT"
 dependencies = [
-    "index@std@1.0.0",
+    "index@std@1.0.1",
     "index@colorterm@1.0.0",
-    "index@json@1.0.0",
-    "index@log@1.0.0",
+    "index@json@1.0.1",
+    "index@log@1.0.1",
 ]

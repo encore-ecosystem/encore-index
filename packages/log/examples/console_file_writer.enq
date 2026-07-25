@@ -1,4 +1,4 @@
-import core::os::{file_exists, read_file, write_file}
+import std::os::{file_exists, read_file, write_file}
 import log::{Logger, Writable}
 
 struct ExampleWriter {

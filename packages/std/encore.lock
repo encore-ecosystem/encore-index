@@ -1,6 +1,11 @@
-version = 1
+version = 2
+
+[[packages]]
+name = "platform"
+ref = "sys@platform"
+version = "0.1.0"
+
 [[packages]]
 name = "core"
 ref = "sys@core"
-version = "0.0.0"
-
+version = "0.1.0"

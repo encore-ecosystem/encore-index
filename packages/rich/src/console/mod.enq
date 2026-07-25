@@ -1,4 +1,4 @@
-import core::io::{print, println}
+import std::io::{print, println}
 import core::result::Result
 import core::vec::Vec
 

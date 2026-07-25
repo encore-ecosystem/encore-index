@@ -1,11 +1,11 @@
 //! Provides filesystem operations.
 
 import core::option::Option
-import core::os::file_exists
-import core::os::mkdir
-import core::os::mkdir_all
-import core::os::read_file
-import core::os::write_file
+import std::os::file_exists
+import std::os::mkdir
+import std::os::mkdir_all
+import std::os::read_file
+import std::os::write_file
 import std::string::String
 import std::vec::Vec
 

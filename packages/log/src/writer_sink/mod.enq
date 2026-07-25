@@ -1,7 +1,7 @@
 import refrain::formatter::Formatter
 import refrain::level::LogLevel
 import refrain::sink::{LogSink, Writable}
-import core::os::{file_exists, read_file, write_file}
+import std::os::{file_exists, read_file, write_file}
 import core::testing::assert
 
 pub struct WriterSink {

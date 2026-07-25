@@ -1,5 +1,5 @@
 import core::fmt::Debug
-import core::io::{print, read_line, stdin_fd}
+import std::io::{print, read_line, stdin_fd}
 import core::option::Option
 import core::result::Result
 import core::testing::assert
