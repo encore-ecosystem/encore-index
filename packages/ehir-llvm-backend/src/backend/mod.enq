@@ -20,7 +20,7 @@ pub fn new(config: BackendConfig) -> EHIRLLVMBackend {
 }
 
 pub fn compile_to_file(backend: EHIRLLVMBackend, input: CompiledRefrain, output_path: str) -> BuildArtifact
-{
+    {
     let config = backend.config
     let raw_ir = emit_ir(input.module)
     let optimized_ir = optimize_ir(raw_ir, config.profile)
