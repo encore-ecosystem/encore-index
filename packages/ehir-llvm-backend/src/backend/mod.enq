@@ -1,26 +1,23 @@
-import refrain::archiver::archive_payload
-import refrain::assembler::assemble
-import refrain::codegen::emit_ir
-import refrain::linker::link_payload
-import refrain::optimizer::optimize_ir
 import refrain::types::BackendConfig
 import refrain::types::BackendTarget
-import refrain::types::BuildArtifact
 import refrain::types::CompiledRefrain
+import refrain::types::BuildArtifact
 import refrain::types::build_artifact
+import refrain::codegen::emit_ir
+import refrain::optimizer::optimize_ir
+import refrain::assembler::assemble
+import refrain::archiver::archive_payload
+import refrain::linker::link_payload
 
 pub struct EHIRLLVMBackend {
     config: BackendConfig
 }
 
 pub fn new(config: BackendConfig) -> EHIRLLVMBackend {
-    ret EHIRLLVMBackend {
-        config
-    }
+    ret EHIRLLVMBackend{config}
 }
 
-pub fn compile_to_file(backend: EHIRLLVMBackend, input: CompiledRefrain, output_path: str) -> BuildArtifact
-    {
+pub fn compile_to_file(backend: EHIRLLVMBackend, input: CompiledRefrain, output_path: str) -> BuildArtifact {
     let config = backend.config
     let raw_ir = emit_ir(input.module)
     let optimized_ir = optimize_ir(raw_ir, config.profile)
