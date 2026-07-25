@@ -102,6 +102,11 @@ jobs:
           curl -fsS "$ENCORE_INDEX_URL/st/std.json" >/dev/null
           while IFS= read -r package; do
             echo "::group::$(basename "$package")"
+            if test -f "$package/.encore-index-bootstrap"; then
+              echo "Bootstrap package: build verification is delegated to Encore native convergence CI"
+              echo "::endgroup::"
+              continue
+            fi
             (
               cd "$package"
               "$compiler" sync

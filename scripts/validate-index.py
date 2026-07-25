@@ -92,6 +92,10 @@ def verify_archive(name: str, repository: str, version: dict, extract: Path | No
                 package_root = extract / f"{name}-{version['version']}"
                 package_root.mkdir(parents=True, exist_ok=False)
                 package.extractall(package_root)
+                if version.get("bootstrap") is True:
+                    (package_root / ".encore-index-bootstrap").write_text(
+                        "validated by the compiler self-host pipeline\n"
+                    )
 
 
 def validate(path: Path, base: str | None, download: bool, extract: Path | None) -> None:

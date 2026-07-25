@@ -52,15 +52,20 @@ def metadata(payload: bytes) -> dict:
 class ArchiveValidationTests(unittest.TestCase):
     def test_valid_archive_is_extracted(self) -> None:
         payload = archive("src/lib.enq")
+        version = metadata(payload)
+        version["bootstrap"] = True
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(VALIDATOR.urllib.request, "urlopen", return_value=io.BytesIO(payload)):
                 VALIDATOR.verify_archive(
                     "sample",
                     "https://github.com/example/sample",
-                    metadata(payload),
+                    version,
                     Path(directory),
                 )
             self.assertTrue(Path(directory, "sample-1.2.3", "encore.toml").is_file())
+            self.assertTrue(
+                Path(directory, "sample-1.2.3", ".encore-index-bootstrap").is_file()
+            )
 
     def test_parent_path_is_rejected(self) -> None:
         payload = archive("../escape")
