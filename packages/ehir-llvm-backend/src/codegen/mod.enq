@@ -1,65 +1,66 @@
-import core::option::Option
 import core::fmt::Debug
-import std::thread::JoinHandle
-import std::io::eprintln
-import std::process::exit
-import std::os::env
-import std::vec::Vec
-import std::vec::vec_singleton
+import core::option::Option
+import ehirlib::core::BinaryOpKind
+import ehirlib::core::Block
+import ehirlib::core::CallInstruction
+import ehirlib::core::Directive
+import ehirlib::core::EnumVariant
+import ehirlib::core::FnDirective
+import ehirlib::core::Instruction
+import ehirlib::core::MatchInstruction
 import ehirlib::core::Module
 import ehirlib::core::ModuleBundle
-import ehirlib::core::Directive
-import ehirlib::core::FnDirective
 import ehirlib::core::Parameter
-import ehirlib::core::Block
-import ehirlib::core::Instruction
-import ehirlib::core::Terminator
-import ehirlib::core::Variable
-import ehirlib::core::Type
-import ehirlib::core::PointerKind
-import ehirlib::core::BinaryOpKind
 import ehirlib::core::PhiPair
-import ehirlib::core::EnumVariant
+import ehirlib::core::PointerKind
+import ehirlib::core::Terminator
 import ehirlib::core::TraitMethod
-import ehirlib::core::MatchInstruction
-import ehirlib::core::CallInstruction
-import ehirlib::core::param
-import ehirlib::core::block
-import ehirlib::core::fn_item
-import ehirlib::core::extern_fn_item
-import ehirlib::core::make_module
-import ehirlib::core::make_module_with_metadata
-import ehirlib::core::impl_directive
+import ehirlib::core::Type
+import ehirlib::core::Variable
+import ehirlib::core::alias
 import ehirlib::core::async_fn_item
 import ehirlib::core::await_value
-import ehirlib::core::ret_term
+import ehirlib::core::binary
+import ehirlib::core::block
+import ehirlib::core::call
 import ehirlib::core::cbr_term
+import ehirlib::core::drop_value
+import ehirlib::core::extern_fn_item
+import ehirlib::core::fn_item
+import ehirlib::core::gep
+import ehirlib::core::getfield
+import ehirlib::core::hfree
+import ehirlib::core::hrealloc
+import ehirlib::core::impl_directive
+import ehirlib::core::lceos
+import ehirlib::core::lcpos
+import ehirlib::core::lcsos
+import ehirlib::core::load
+import ehirlib::core::make_module
+import ehirlib::core::make_module_with_metadata
+import ehirlib::core::mangle_type_name
 import ehirlib::core::match_arm
 import ehirlib::core::match_term
-import ehirlib::core::switch_term
-import ehirlib::core::binary
-import ehirlib::core::getfield
-import ehirlib::core::setfield
-import ehirlib::core::lcpos
-import ehirlib::core::alias
-import ehirlib::core::lcsos
-import ehirlib::core::lceos
-import ehirlib::enum_value
-import ehirlib::core::call
-import ehirlib::core::store
-import ehirlib::core::load
-import ehirlib::core::salloc
-import ehirlib::core::gep
-import ehirlib::core::hrealloc
-import ehirlib::core::drop_value
-import ehirlib::core::retain_value
+import ehirlib::core::param
 import ehirlib::core::pcast
-import ehirlib::core::hfree
-import ehirlib::core::mangle_type_name
-import ehirlib::validate_module
+import ehirlib::core::ret_term
+import ehirlib::core::retain_value
+import ehirlib::core::salloc
+import ehirlib::core::setfield
+import ehirlib::core::store
+import ehirlib::core::switch_term
+import ehirlib::enum_value
 import ehirlib::lower_coroutines
+import ehirlib::validate_module
+import std::io::eprintln
+import std::os::env
+import std::process::exit
+import std::thread::JoinHandle
+import std::vec::Vec
+import std::vec::vec_singleton
 
-fn concat_instructions(left: Vec[LLVMInstruction], right: Vec[LLVMInstruction]) -> Vec[LLVMInstruction] {
+fn concat_instructions(left: Vec[LLVMInstruction], right: Vec[LLVMInstruction]) -> Vec[LLVMInstruction]
+{
     let mut out = Vec[LLVMInstruction]::new()
     out.extend(left)
     out.extend(right)
@@ -72,61 +73,63 @@ fn concat_values(left: Vec[LLVMValue], right: Vec[LLVMValue]) -> Vec[LLVMValue] 
     out.extend(right)
     ret out
 }
-import llvm::core::LLVMFunction
-import llvm::core::LLVMParam
-import llvm::core::LLVMBasicBlock
-import llvm::core::LLVMInstruction
-import llvm::core::LLVMTerminator
-import llvm::value::LLVMValue
-import llvm::types::LLVMType
-import llvm::builder::llvm_new
-import llvm::builder::llvm_module_with_types
-import llvm::builder::llvm_to_text
-import llvm::builder::llvm_define_fn
-import llvm::builder::llvm_declare_fn
-import llvm::builder::llvm_with_linkage
-import llvm::builder::llvm_with_attributes
-import llvm::builder::llvm_make_param
 import llvm::builder::llvm_block
+import llvm::builder::llvm_declare_fn
+import llvm::builder::llvm_define_fn
 import llvm::builder::llvm_inst_add
-import llvm::builder::llvm_inst_sub
-import llvm::builder::llvm_inst_binary
-import llvm::builder::llvm_inst_call
 import llvm::builder::llvm_inst_alloca
+import llvm::builder::llvm_inst_binary
+import llvm::builder::llvm_inst_bitcast
+import llvm::builder::llvm_inst_call
+import llvm::builder::llvm_inst_cast
+import llvm::builder::llvm_inst_extractvalue
+import llvm::builder::llvm_inst_gep
+import llvm::builder::llvm_inst_insertvalue
 import llvm::builder::llvm_inst_load
 import llvm::builder::llvm_inst_store
-import llvm::builder::llvm_inst_gep
-import llvm::builder::llvm_inst_bitcast
-import llvm::builder::llvm_inst_cast
-import llvm::builder::llvm_inst_insertvalue
-import llvm::builder::llvm_inst_extractvalue
-import llvm::builder::llvm_term_ret
-import llvm::builder::llvm_term_ret_void
+import llvm::builder::llvm_inst_sub
+import llvm::builder::llvm_make_param
+import llvm::builder::llvm_module_with_types
+import llvm::builder::llvm_new
 import llvm::builder::llvm_term_br
 import llvm::builder::llvm_term_cbr
+import llvm::builder::llvm_term_ret
+import llvm::builder::llvm_term_ret_void
 import llvm::builder::llvm_term_unreachable
-import llvm::ir::{append_builder_line, append_function_to_builder}
-import llvm::types::void_type
-import llvm::types::i1_type
-import llvm::types::i8_type
-import llvm::types::i16_type
-import llvm::types::i32_type
-import llvm::types::i64_type
+import llvm::builder::llvm_to_text
+import llvm::builder::llvm_with_attributes
+import llvm::builder::llvm_with_linkage
+import llvm::core::LLVMBasicBlock
+import llvm::core::LLVMFunction
+import llvm::core::LLVMInstruction
+import llvm::core::LLVMParam
+import llvm::core::LLVMTerminator
+import llvm::ir:: {
+    append_builder_line, append_function_to_builder
+}
+import llvm::types::LLVMType
+import llvm::types::LLVMTypeKind
+import llvm::types::array_type
 import llvm::types::f16_type
 import llvm::types::f32_type
 import llvm::types::f64_type
-import llvm::types::ptr_type
-import llvm::types::named_struct_type
-import llvm::types::array_type
+import llvm::types::i16_type
+import llvm::types::i1_type
+import llvm::types::i32_type
+import llvm::types::i64_type
+import llvm::types::i8_type
 import llvm::types::llvm_raw_type
-import llvm::types::LLVMTypeKind
+import llvm::types::named_struct_type
+import llvm::types::ptr_type
 import llvm::types::type_text
-import llvm::value::reg
+import llvm::types::void_type
+import llvm::value::LLVMValue
 import llvm::value::const_i32
 import llvm::value::const_text
+import llvm::value::reg
 import llvm::value::value_type
 
-extern fn encore_llvm_set_target_pointer_width(bits: usize) -> ()
+extern fn encore_llvm_set_target_pointer_width(bits: usize) ->()
 extern fn encore_llvm_target_pointer_width() -> usize
 
 pub struct LoweredModule {
@@ -145,7 +148,9 @@ struct EmittedIrChunk {
 }
 
 fn odr_function(function: LLVMFunction) -> LLVMFunction {
-    if function.is_extern { ret function }
+    if function.is_extern {
+        ret function
+    }
     ret llvm_with_linkage(function, "linkonce_odr")
 }
 
@@ -172,20 +177,25 @@ extern fn encore_symbol_sanitize(value: str) -> str
 extern fn encore_llvm_float_literal(value: str, is_f32: usize) -> str
 extern fn encore_strset_new() -> usize
 extern fn encore_strset_insert(set: usize, value: str) -> bool
-extern fn encore_strset_free(set: usize) -> ()
+extern fn encore_strset_free(set: usize) ->()
 extern fn encore_text_builder_new() -> usize
 extern fn encore_text_builder_finish(builder: usize) -> str
 extern fn encore_codegen_rss_kb() -> usize
 
-fn profile_codegen_memory(stage: str) -> () {
+fn profile_codegen_memory(stage: str) ->() {
     if env("ENCORE_CODEGEN_PROFILE").is_some() {
-        eprintln("codegen-memory " + stage + ": " + Debug::fmt(unsafe { encore_codegen_rss_kb() }) + " KiB")
+        eprintln("codegen-memory " + stage + ": " + Debug::fmt(unsafe {
+                    encore_codegen_rss_kb()
+                }
+            ) + " KiB")
     }
-    ret ()
+    ret()
 }
 
 fn byte_slice(value: str, start: usize, byte_len: usize) -> str {
-    ret unsafe { encore_str_slice_bytes(value, start, byte_len) }
+    ret unsafe {
+        encore_str_slice_bytes(value, start, byte_len)
+    }
 }
 
 pub fn lower(module: Module) -> LoweredModule {
@@ -203,18 +213,25 @@ fn lower_with_analysis(module: Module, analysis_directives: Vec[Directive]) -> L
     ret lower_with_precomputed_analysis(module, generic_calls, concrete_types)
 }
 
-fn lower_with_precomputed_analysis(module: Module, generic_calls: Vec[GenericCall], concrete_types: Vec[Type]) -> LoweredModule {
+fn lower_with_precomputed_analysis(module: Module, generic_calls: Vec[GenericCall], concrete_types: Vec[Type])
+    -> LoweredModule {
     let directives = module.directives
     let module_name = module.name
     let mut type_declarations = lower_type_declarations(directives, concrete_types)
     type_declarations.extend(thread_context_declarations(directives))
     profile_codegen_memory("types-lowered")
     let safe_module_name = sanitize_symbol(module_name)
-    let builder = unsafe { encore_text_builder_new() }
+    let builder = unsafe {
+        encore_text_builder_new()
+    }
     append_builder_line(builder, "; ModuleID = '" + safe_module_name + "'")
-    for declaration in type_declarations { append_builder_line(builder, declaration) }
+    for declaration in type_declarations {
+        append_builder_line(builder, declaration)
+    }
     append_builder_line(builder, "")
-    let seen = unsafe { encore_strset_new() }
+    let seen = unsafe {
+        encore_strset_new()
+    }
     let mut emitted = false
     emitted = append_lowered_directives(builder, directives, seen, emitted)
     profile_codegen_memory("directives-lowered")
@@ -226,15 +243,27 @@ fn lower_with_precomputed_analysis(module: Module, generic_calls: Vec[GenericCal
     profile_codegen_memory("ownership-lowered")
     emitted = append_unique_functions(builder, thread_trampolines(directives), seen, emitted)
     emitted = append_unique_functions(builder, runtime_declarations(), seen, emitted)
-    unsafe { encore_strset_free(seen) }
-    ret LoweredModule{unsafe { encore_text_builder_finish(builder) }}
+    unsafe {
+        encore_strset_free(seen)
+    }
+    ret LoweredModule {
+        unsafe {
+            encore_text_builder_finish(builder)
+        }
+    }
 }
 
-fn append_unique_functions(builder: usize, functions: Vec[LLVMFunction], seen: usize, emitted: bool) -> bool {
+fn append_unique_functions(builder: usize, functions: Vec[LLVMFunction], seen: usize, emitted: bool)
+    -> bool {
     let mut any = emitted
     for function in functions {
-        if unsafe { encore_strset_insert(seen, function.name) } {
-            if any { append_builder_line(builder, "") }
+        if unsafe {
+            encore_strset_insert(seen, function.name)
+        }
+        {
+            if any {
+                append_builder_line(builder, "")
+            }
             append_function_to_builder(builder, function)
             any = true
         }
@@ -242,34 +271,45 @@ fn append_unique_functions(builder: usize, functions: Vec[LLVMFunction], seen: u
     ret any
 }
 
-fn append_lowered_directives(builder: usize, directives: Vec[Directive], seen: usize, emitted: bool) -> bool {
+fn append_lowered_directives(builder: usize, directives: Vec[Directive], seen: usize, emitted: bool)
+    -> bool {
     let mut any = emitted
-    for directive in directives { any = append_unique_functions(builder, lower_directive(directive), seen, any) }
+    for directive in directives {
+        any = append_unique_functions(builder, lower_directive(directive), seen, any)
+    }
     ret any
 }
 
-fn append_lowered_trait_dispatch_functions(builder: usize, directives: Vec[Directive], concrete_types: Vec[Type],
-    seen: usize, emitted: bool) -> bool {
+fn append_lowered_trait_dispatch_functions(builder: usize, directives: Vec[Directive], concrete_types:
+    Vec[Type],
+    seen: usize, emitted: bool,) -> bool {
     let mut any = emitted
     for directive in directives {
         match directive {
             Directive::Trait(item) => {
                 if trait_is_used_dynamically(concrete_types, item.name) {
-                    any = append_unique_functions(builder, vec_singleton(odr_function(lower_dyn_ownership_function(directives, item.name, false))), seen, any)
-                    any = append_unique_functions(builder, vec_singleton(odr_function(lower_dyn_ownership_function(directives, item.name, true))), seen, any)
+                    any = append_unique_functions(builder, vec_singleton(odr_function(lower_dyn_ownership_function(directives,
+                    item.name, false))), seen, any)
+                    any = append_unique_functions(builder, vec_singleton(odr_function(lower_dyn_ownership_function(directives,
+                    item.name, true))), seen, any)
                     for method in item.methods {
-                        any = append_unique_functions(builder, vec_singleton(odr_function(lower_trait_dispatch_function(directives, item.name, method))), seen, any)
+                        any = append_unique_functions(builder, vec_singleton(odr_function(lower_trait_dispatch_function(directives,
+                        item.name, method))), seen, any)
                     }
                 }
             }
-            _ => {}
+            _ => {
+            }
         }
     }
     ret any
 }
 
-fn lower_dyn_ownership_function(directives: Vec[Directive], trait_name: str, retain: bool) -> LLVMFunction {
-    let dyn_type = Type{"dyn " + trait_name, Vec[Type]::new(), PointerKind::Plain}
+fn lower_dyn_ownership_function(directives: Vec[Directive], trait_name: str, retain: bool) -> LLVMFunction
+    {
+    let dyn_type = Type {
+        "dyn " + trait_name, Vec[Type]::new(), PointerKind::Plain
+    }
     let dyn_llvm_type = lower_type(dyn_type)
     let self_value = reg("self", dyn_llvm_type)
     let raw_data = reg("data", ptr_type(i8_type()))
@@ -281,9 +321,12 @@ fn lower_dyn_ownership_function(directives: Vec[Directive], trait_name: str, ret
     for directive in directives {
         match directive {
             Directive::Impl(item) => {
-                if item.trait_name == trait_name && item.generics.len() == 0_usize { implementations.push(item.for_type) }
+                if item.trait_name == trait_name && item.generics.len() == 0_usize {
+                    implementations.push(item.for_type)
+                }
             }
-            _ => {}
+            _ => {
+            }
         }
     }
     let mut blocks = Vec[LLVMBasicBlock]::new()
@@ -296,36 +339,54 @@ fn lower_dyn_ownership_function(directives: Vec[Directive], trait_name: str, ret
             let suffix = Debug::fmt(index)
             let check_name = "check_" + suffix
             let action_name = "action_" + suffix
-            let next_name = if index + 1_usize < implementations.len() { "check_" + Debug::fmt(index + 1_usize) } else { "done" }
+            let next_name = if index + 1_usize < implementations.len() {
+                "check_" + Debug::fmt(index + 1_usize)
+            } else {
+                "done"
+            }
             let matches = reg("matches_" + suffix, i1_type())
             let expected = const_text(enum_variant_tag(mangle_type_name(concrete)), i64_type())
-            blocks.push(llvm_block(check_name, vec_singleton(llvm_inst_binary("icmp eq", matches, type_id, expected)), llvm_term_cbr(matches, action_name, next_name)))
+            blocks.push(llvm_block(check_name, vec_singleton(llvm_inst_binary("icmp eq", matches, type_id,
+            expected)), llvm_term_cbr(matches, action_name, next_name)))
             let concrete_type = lower_type(concrete)
             let typed_data = reg("typed_data_" + suffix, ptr_type(concrete_type))
             let concrete_value = reg("concrete_" + suffix, concrete_type)
             let mut instructions = Vec[LLVMInstruction]::new()
             instructions.push(llvm_inst_cast("bitcast", typed_data, raw_data))
             instructions.push(llvm_inst_load(concrete_value, typed_data))
-            let callee = if retain { retain_symbol(concrete) } else { drop_symbol(concrete) }
+            let callee = if retain {
+                retain_symbol(concrete)
+            } else {
+                drop_symbol(concrete)
+            }
             instructions.push(llvm_inst_call(Option[LLVMValue]::None, void_type(), callee, vec_singleton(concrete_value)))
             blocks.push(llvm_block(action_name, instructions, llvm_term_ret_void()))
             index = index + 1_usize
         }
         blocks.push(llvm_block("done", Vec[LLVMInstruction]::new(), llvm_term_ret_void()))
     }
-    let name = if retain { retain_symbol(dyn_type) } else { drop_symbol(dyn_type) }
+    let name = if retain {
+        retain_symbol(dyn_type)
+    } else {
+        drop_symbol(dyn_type)
+    }
     ret llvm_define_fn(name, void_type(), vec_singleton(llvm_make_param("self", dyn_llvm_type)), blocks)
 }
 
 fn trait_is_used_dynamically(types: Vec[Type], trait_name: str) -> bool {
     for typ in types {
-        if is_dyn_type(typ) && sanitize_symbol(typ.name) == "dyn_" + sanitize_symbol(trait_name) { ret true }
+        if is_dyn_type(typ) && sanitize_symbol(typ.name) == "dyn_" + sanitize_symbol(trait_name) {
+            ret true
+        }
     }
     ret false
 }
 
-fn lower_trait_dispatch_function(directives: Vec[Directive], trait_name: str, method: TraitMethod) -> LLVMFunction {
-    let dyn_type = Type{"dyn " + trait_name, Vec[Type]::new(), PointerKind::Plain}
+fn lower_trait_dispatch_function(directives: Vec[Directive], trait_name: str, method: TraitMethod) ->
+    LLVMFunction {
+    let dyn_type = Type {
+        "dyn " + trait_name, Vec[Type]::new(), PointerKind::Plain
+    }
     let dyn_llvm_type = lower_type(dyn_type)
     let ret_type = lower_type(method.ret_type)
     let mut params_data = Vec[LLVMParam]::new()
@@ -355,11 +416,14 @@ fn lower_trait_dispatch_function(directives: Vec[Directive], trait_name: str, me
             Directive::Impl(item) => {
                 if item.trait_name == trait_name && item.generics.len() == 0_usize {
                     for impl_method in item.methods {
-                        if impl_method.name == method.name { implementations.push(item.for_type) }
+                        if impl_method.name == method.name {
+                            implementations.push(item.for_type)
+                        }
                     }
                 }
             }
-            _ => {}
+            _ => {
+            }
         }
     }
 
@@ -373,10 +437,15 @@ fn lower_trait_dispatch_function(directives: Vec[Directive], trait_name: str, me
             let suffix = Debug::fmt(index)
             let check_name = "check_" + suffix
             let dispatch_name = "dispatch_" + suffix
-            let next_name = if index + 1_usize < implementations.len() { "check_" + Debug::fmt(index + 1_usize) } else { "missing" }
+            let next_name = if index + 1_usize < implementations.len() {
+                "check_" + Debug::fmt(index + 1_usize)
+            } else {
+                "missing"
+            }
             let matches = reg("matches_" + suffix, i1_type())
             let expected = const_text(enum_variant_tag(mangle_type_name(concrete)), i64_type())
-            blocks.push(llvm_block(check_name, vec_singleton(llvm_inst_binary("icmp eq", matches, type_id, expected)), llvm_term_cbr(matches, dispatch_name, next_name)))
+            blocks.push(llvm_block(check_name, vec_singleton(llvm_inst_binary("icmp eq", matches, type_id,
+            expected)), llvm_term_cbr(matches, dispatch_name, next_name)))
 
             let concrete_llvm_type = lower_type(concrete)
             let concrete_ptr_type = ptr_type(concrete_llvm_type)
@@ -388,12 +457,15 @@ fn lower_trait_dispatch_function(directives: Vec[Directive], trait_name: str, me
             let args = concat_values(vec_singleton(concrete_value), call_tail)
             let callee = sanitize_symbol(concrete.name + "::" + method.name)
             if method.ret_type.name == "void" || method.ret_type.name == "()" {
-                dispatch_instructions.push(llvm_inst_call(Option[LLVMValue]::None, void_type(), callee, args))
+                dispatch_instructions.push(llvm_inst_call(Option[LLVMValue]::None, void_type(), callee,
+                args))
                 blocks.push(llvm_block(dispatch_name, dispatch_instructions, llvm_term_ret_void()))
             } else {
                 let result = reg("result_" + suffix, ret_type)
-                dispatch_instructions.push(llvm_inst_call(Option[LLVMValue]::Some(result), ret_type, callee, args))
-                blocks.push(llvm_block(dispatch_name, dispatch_instructions, llvm_term_ret(Option[LLVMValue]::Some(result), ret_type)))
+                dispatch_instructions.push(llvm_inst_call(Option[LLVMValue]::Some(result), ret_type,
+                callee, args))
+                blocks.push(llvm_block(dispatch_name, dispatch_instructions, llvm_term_ret(Option[LLVMValue]::Some(result),
+                ret_type)))
             }
             index = index + 1_usize
         }
@@ -410,16 +482,26 @@ fn runtime_declarations() -> Vec[LLVMFunction] {
     realloc_params.push(llvm_make_param("ptr", raw_ptr))
     realloc_params.push(llvm_make_param("bytes", usize_type))
     out.push(llvm_declare_fn("__ehir_hrealloc", raw_ptr, realloc_params, Vec[LLVMBasicBlock]::new()))
-    out.push(llvm_declare_fn("__ehir_hfree", void_type(), vec_singleton(llvm_make_param("ptr", raw_ptr)), Vec[LLVMBasicBlock]::new()))
-    out.push(llvm_declare_fn("encore_box_alloc", raw_ptr, vec_singleton(llvm_make_param("bytes", usize_type)), Vec[LLVMBasicBlock]::new()))
-    out.push(llvm_declare_fn("encore_box_retain", void_type(), vec_singleton(llvm_make_param("ptr", raw_ptr)), Vec[LLVMBasicBlock]::new()))
-    out.push(llvm_declare_fn("encore_box_drop", void_type(), vec_singleton(llvm_make_param("ptr", raw_ptr)), Vec[LLVMBasicBlock]::new()))
-    out.push(llvm_declare_fn("encore_heap_retain", void_type(), vec_singleton(llvm_make_param("ptr", raw_ptr)), Vec[LLVMBasicBlock]::new()))
-    out.push(llvm_declare_fn("encore_heap_release", i1_type(), vec_singleton(llvm_make_param("ptr", raw_ptr)), Vec[LLVMBasicBlock]::new()))
-    out.push(llvm_declare_fn("encore_heap_free_released", void_type(), vec_singleton(llvm_make_param("ptr", raw_ptr)), Vec[LLVMBasicBlock]::new()))
-    out.push(llvm_declare_fn("encore_str_drop", void_type(), vec_singleton(llvm_make_param("value", raw_ptr)), Vec[LLVMBasicBlock]::new()))
-    out.push(llvm_declare_fn("encore_str_retain", void_type(), vec_singleton(llvm_make_param("value", raw_ptr)), Vec[LLVMBasicBlock]::new()))
-    out.push(llvm_declare_fn("encore_str_from_cstr", raw_ptr, vec_singleton(llvm_make_param("value", raw_ptr)), Vec[LLVMBasicBlock]::new()))
+    out.push(llvm_declare_fn("__ehir_hfree", void_type(), vec_singleton(llvm_make_param("ptr", raw_ptr)),
+    Vec[LLVMBasicBlock]::new()))
+    out.push(llvm_declare_fn("encore_box_alloc", raw_ptr, vec_singleton(llvm_make_param("bytes", usize_type)),
+    Vec[LLVMBasicBlock]::new()))
+    out.push(llvm_declare_fn("encore_box_retain", void_type(), vec_singleton(llvm_make_param("ptr", raw_ptr)),
+    Vec[LLVMBasicBlock]::new()))
+    out.push(llvm_declare_fn("encore_box_drop", void_type(), vec_singleton(llvm_make_param("ptr", raw_ptr)),
+    Vec[LLVMBasicBlock]::new()))
+    out.push(llvm_declare_fn("encore_heap_retain", void_type(), vec_singleton(llvm_make_param("ptr",
+    raw_ptr)), Vec[LLVMBasicBlock]::new()))
+    out.push(llvm_declare_fn("encore_heap_release", i1_type(), vec_singleton(llvm_make_param("ptr", raw_ptr)),
+    Vec[LLVMBasicBlock]::new()))
+    out.push(llvm_declare_fn("encore_heap_free_released", void_type(), vec_singleton(llvm_make_param("ptr",
+    raw_ptr)), Vec[LLVMBasicBlock]::new()))
+    out.push(llvm_declare_fn("encore_str_drop", void_type(), vec_singleton(llvm_make_param("value", raw_ptr)),
+    Vec[LLVMBasicBlock]::new()))
+    out.push(llvm_declare_fn("encore_str_retain", void_type(), vec_singleton(llvm_make_param("value",
+    raw_ptr)), Vec[LLVMBasicBlock]::new()))
+    out.push(llvm_declare_fn("encore_str_from_cstr", raw_ptr, vec_singleton(llvm_make_param("value",
+    raw_ptr)), Vec[LLVMBasicBlock]::new()))
     let mut str_eq_params = Vec[LLVMParam]::new()
     str_eq_params.push(llvm_make_param("lhs", raw_ptr))
     str_eq_params.push(llvm_make_param("rhs", raw_ptr))
@@ -434,9 +516,12 @@ fn runtime_declarations() -> Vec[LLVMFunction] {
     spawn_params.push(llvm_make_param("payload", raw_ptr))
     spawn_params.push(llvm_make_param("cleanup", fn_ptr))
     out.push(llvm_declare_fn("encore_thread_spawn", usize_type, spawn_params, Vec[LLVMBasicBlock]::new()))
-    out.push(llvm_declare_fn("encore_thread_join", raw_ptr, vec_singleton(llvm_make_param("token", usize_type)), Vec[LLVMBasicBlock]::new()))
-    out.push(llvm_declare_fn("encore_thread_retain", void_type(), vec_singleton(llvm_make_param("token", usize_type)), Vec[LLVMBasicBlock]::new()))
-    out.push(llvm_declare_fn("encore_thread_release", void_type(), vec_singleton(llvm_make_param("token", usize_type)), Vec[LLVMBasicBlock]::new()))
+    out.push(llvm_declare_fn("encore_thread_join", raw_ptr, vec_singleton(llvm_make_param("token", usize_type)),
+    Vec[LLVMBasicBlock]::new()))
+    out.push(llvm_declare_fn("encore_thread_retain", void_type(), vec_singleton(llvm_make_param("token",
+    usize_type)), Vec[LLVMBasicBlock]::new()))
+    out.push(llvm_declare_fn("encore_thread_release", void_type(), vec_singleton(llvm_make_param("token",
+    usize_type)), Vec[LLVMBasicBlock]::new()))
     ret out
 }
 
@@ -446,67 +531,113 @@ fn is_thread_spawn_name(name: str) -> bool {
 
 fn thread_spawn_target(name: str) -> str {
     let prefix_len = 23_usize
-    if name.len() <= prefix_len { ret "" }
+    if name.len() <= prefix_len {
+        ret ""
+    }
     ret name.slice(prefix_len, name.len() - prefix_len)
 }
 
 fn thread_result_type(out: Variable) -> Type {
     let handle = required_variable_type(out)
     match handle.generics.get(0_usize) {
-        Some(result) => { ret result }
+        Some(result) => {
+            ret result
+        }
         None => {
             eprintln("internal compiler error: thread handle '" + handle.name + "' has no result type")
             exit(1_i32)
-            ret Type{"usize", Vec[Type]::new(), PointerKind::Plain}
+            ret Type {
+                "usize", Vec[Type]::new(), PointerKind::Plain
+            }
         }
     }
 }
 
-fn thread_result_is_void(result: Type) -> bool { ret result.name == "void" || result.name == "()" }
+fn thread_result_is_void(result: Type) -> bool {
+    ret result.name == "void" || result.name == "()"
+}
 
 fn thread_result_storage_type(result: Type) -> LLVMType {
-    if thread_result_is_void(result) { ret i8_type() }
+    if thread_result_is_void(result) {
+        ret i8_type()
+    }
     ret lower_type(result)
 }
 
 fn thread_site_key(name: str, out: Variable, generics: Vec[Type], args: Vec[Variable]) -> str {
     let mut raw = thread_spawn_target(name) + "_" + mangle_type_name(thread_result_type(out))
-    for generic in generics { raw = raw + "_g_" + mangle_type_name(generic) }
-    for arg in args { raw = raw + "_a_" + mangle_type_name(required_variable_type(arg)) }
+    for generic in generics {
+        raw = raw + "_g_" + mangle_type_name(generic)
+    }
+    for arg in args {
+        raw = raw + "_a_" + mangle_type_name(required_variable_type(arg))
+    }
     ret sanitize_symbol(raw)
 }
 
-fn thread_context_type(name: str, out: Variable, generics: Vec[Type], args: Vec[Variable]) -> LLVMType {
+fn thread_context_type(name: str, out: Variable, generics: Vec[Type], args: Vec[Variable]) -> LLVMType
+    {
     ret named_struct_type("__encore_thread_context_" + thread_site_key(name, out, generics, args))
 }
 
-fn append_thread_context_declaration(out: mut Vec[str], seen: usize, instruction: Instruction) -> () {
+fn append_thread_context_declaration(out: mut Vec[str], seen: usize, instruction: Instruction) ->() {
     match instruction {
         Instruction::Call(data) => {
-            if required_variable_type(data.out).name != "JoinHandle" { ret () }
-            if !is_thread_spawn_name(data.name) { ret () }
+            if required_variable_type(data.out).name != "JoinHandle" {
+                ret()
+            }
+            if !is_thread_spawn_name(data.name) {
+                ret()
+            }
             let key = thread_site_key(data.name, data.out, data.generics, data.args)
-            if !unsafe { encore_strset_insert(seen, key) } { ret () }
+            if !unsafe {
+                encore_strset_insert(seen, key)
+            }
+            {
+                ret()
+            }
             let mut fields = type_text(thread_result_storage_type(thread_result_type(data.out)))
-            for arg in data.args { fields = fields + ", " + type_text(lower_type(required_variable_type(arg))) }
+            for arg in data.args {
+                fields = fields + ", " + type_text(lower_type(required_variable_type(arg)))
+            }
             out.push("%__encore_thread_context_" + key + " = type { " + fields + " }")
         }
-        _ => {}
+        _ => {
+        }
     }
-    ret ()
+    ret()
 }
 
 fn thread_context_declarations(directives: Vec[Directive]) -> Vec[str] {
     let mut out = Vec[str]::new()
-    let seen = unsafe { encore_strset_new() }
+    let seen = unsafe {
+        encore_strset_new()
+    }
     for directive in directives {
         match directive {
-            Directive::Function(function) => { for block_item in function.blocks { for instruction in block_item.instructions { append_thread_context_declaration(out, seen, instruction) } } }
-            Directive::Impl(item) => { for method in item.methods { for block_item in method.blocks { for instruction in block_item.instructions { append_thread_context_declaration(out, seen, instruction) } } } }
-            _ => {}
+            Directive::Function(function) => {
+                for block_item in function.blocks {
+                    for instruction in block_item.instructions {
+                        append_thread_context_declaration(out, seen, instruction)
+                    }
+                }
+            }
+            Directive::Impl(item) => {
+                for method in item.methods {
+                    for block_item in method.blocks {
+                        for instruction in block_item.instructions {
+                            append_thread_context_declaration(out, seen, instruction)
+                        }
+                    }
+                }
+            }
+            _ => {
+            }
         }
     }
-    unsafe { encore_strset_free(seen) }
+    unsafe {
+        encore_strset_free(seen)
+    }
     ret out
 }
 
@@ -524,14 +655,19 @@ fn make_thread_trampoline(data: CallInstruction) -> LLVMFunction {
         let arg_type = lower_type(required_variable_type(argument))
         let arg_ptr = reg("arg_" + Debug::fmt(index) + "_ptr", ptr_type(arg_type))
         let arg_value = reg("arg_" + Debug::fmt(index), arg_type)
-        instructions.push(llvm_inst_gep(arg_ptr, context_type, context, field_indices(Debug::fmt(index + 1_usize)), true))
+        instructions.push(llvm_inst_gep(arg_ptr, context_type, context, field_indices(Debug::fmt(index
+        + 1_usize)), true))
         instructions.push(llvm_inst_load(arg_value, arg_ptr))
         args.push(arg_value)
         index = index + 1_usize
     }
     let result_ehir_type = thread_result_type(data.out)
     let result_type = lower_type(result_ehir_type)
-    let target = if data.generics.len() > 0_usize { generic_symbol(thread_spawn_target(data.name), data.generics) } else { function_symbol(thread_spawn_target(data.name)) }
+    let target = if data.generics.len() > 0_usize {
+        generic_symbol(thread_spawn_target(data.name), data.generics)
+    } else {
+        function_symbol(thread_spawn_target(data.name))
+    }
     if thread_result_is_void(result_ehir_type) {
         instructions.push(llvm_inst_call(Option[LLVMValue]::None, void_type(), target, args))
     } else {
@@ -564,84 +700,122 @@ fn make_thread_cleanup(data: CallInstruction) -> LLVMFunction {
     instructions.push(llvm_inst_call(Option[LLVMValue]::None, void_type(), "__ehir_hfree", vec_singleton(raw_payload)))
     let params = vec_singleton(llvm_make_param("payload", raw_ptr_type))
     ret llvm_define_fn("__encore_thread_cleanup_" + key, void_type(), params,
-        vec_singleton(llvm_block("entry", instructions, llvm_term_ret_void())))
+        vec_singleton(llvm_block("entry", instructions, llvm_term_ret_void())),)
 }
 
-fn append_thread_trampoline(out: mut Vec[LLVMFunction], seen: usize, instruction: Instruction) -> () {
+fn append_thread_trampoline(out: mut Vec[LLVMFunction], seen: usize, instruction: Instruction) ->() {
     match instruction {
         Instruction::Call(data) => {
             if required_variable_type(data.out).name == "JoinHandle" {
-                if is_thread_spawn_name(data.name) && unsafe { encore_strset_insert(seen, thread_site_key(data.name, data.out, data.generics, data.args)) } {
+                if is_thread_spawn_name(data.name) && unsafe {
+                    encore_strset_insert(seen, thread_site_key(data.name, data.out, data.generics, data.args))
+                }
+                {
                     out.push(odr_function(make_thread_trampoline(data)))
                     out.push(odr_function(make_thread_cleanup(data)))
                 }
             }
         }
-        _ => {}
+        _ => {
+        }
     }
-    ret ()
+    ret()
 }
 
 fn thread_trampolines(directives: Vec[Directive]) -> Vec[LLVMFunction] {
     let mut out = Vec[LLVMFunction]::new()
-    let seen = unsafe { encore_strset_new() }
+    let seen = unsafe {
+        encore_strset_new()
+    }
     for directive in directives {
         match directive {
-            Directive::Function(function) => { for block_item in function.blocks { for instruction in block_item.instructions { append_thread_trampoline(out, seen, instruction) } } }
-            Directive::Impl(item) => { for method in item.methods { for block_item in method.blocks { for instruction in block_item.instructions { append_thread_trampoline(out, seen, instruction) } } } }
-            _ => {}
+            Directive::Function(function) => {
+                for block_item in function.blocks {
+                    for instruction in block_item.instructions {
+                        append_thread_trampoline(out, seen, instruction)
+                    }
+                }
+            }
+            Directive::Impl(item) => {
+                for method in item.methods {
+                    for block_item in method.blocks {
+                        for instruction in block_item.instructions {
+                            append_thread_trampoline(out, seen, instruction)
+                        }
+                    }
+                }
+            }
+            _ => {
+            }
         }
     }
-    unsafe { encore_strset_free(seen) }
+    unsafe {
+        encore_strset_free(seen)
+    }
     ret out
 }
 
 fn append_lowered_drop_pair(builder: usize, drop_function: LLVMFunction, retain_function: LLVMFunction,
-    seen: usize, emitted: bool) -> bool {
-    let mut any = append_unique_functions(builder, vec_singleton(odr_function(drop_function)), seen, emitted)
+    seen: usize, emitted: bool,) -> bool {
+    let mut any = append_unique_functions(builder, vec_singleton(odr_function(drop_function)), seen,
+    emitted)
     any = append_unique_functions(builder, vec_singleton(odr_function(retain_function)), seen, any)
     ret any
 }
 
 fn append_lowered_drop_functions(builder: usize, directives: Vec[Directive], concrete_types: Vec[Type],
-    seen: usize, emitted: bool) -> bool {
+    seen: usize, emitted: bool,) -> bool {
     let mut any = emitted
     for directive in directives {
         match directive {
             Directive::Struct(item) => {
                 if item.generics.len() == 0_usize {
-                    let concrete = Type{item.name, Vec[Type]::new(), PointerKind::Plain}
-                    any = append_lowered_drop_pair(builder, lower_struct_drop_function(item.generics, item.fields, concrete),
-                        lower_struct_retain_function(item.generics, item.fields, concrete), seen, any)
+                    let concrete = Type {
+                        item.name, Vec[Type]::new(), PointerKind::Plain
+                    }
+                    any = append_lowered_drop_pair(builder, lower_struct_drop_function(item.generics,
+                    item.fields, concrete),
+                        lower_struct_retain_function(item.generics, item.fields, concrete), seen, any,)
                 } else {
                     for concrete in concrete_types {
-                        if concrete.name == item.name && concrete.generics.len() == item.generics.len() {
-                            any = append_lowered_drop_pair(builder, lower_struct_drop_function(item.generics, item.fields, concrete),
-                                lower_struct_retain_function(item.generics, item.fields, concrete), seen, any)
+                        if concrete.name == item.name && concrete.generics.len() == item.generics.len()
+                        {
+                            any = append_lowered_drop_pair(builder, lower_struct_drop_function(item.generics,
+                            item.fields, concrete),
+                                lower_struct_retain_function(item.generics, item.fields, concrete), seen,
+                                any,)
                         }
                     }
                 }
             }
             Directive::Enum(item) => {
                 if item.generics.len() == 0_usize {
-                    let concrete = Type{item.name, Vec[Type]::new(), PointerKind::Plain}
-                    any = append_lowered_drop_pair(builder, lower_enum_drop_function(item.generics, item.variants, concrete),
-                        lower_enum_retain_function(item.generics, item.variants, concrete), seen, any)
+                    let concrete = Type {
+                        item.name, Vec[Type]::new(), PointerKind::Plain
+                    }
+                    any = append_lowered_drop_pair(builder, lower_enum_drop_function(item.generics, item.variants,
+                    concrete),
+                        lower_enum_retain_function(item.generics, item.variants, concrete), seen, any,)
                 } else {
                     for concrete in concrete_types {
-                        if concrete.name == item.name && concrete.generics.len() == item.generics.len() {
-                            any = append_lowered_drop_pair(builder, lower_enum_drop_function(item.generics, item.variants, concrete),
-                                lower_enum_retain_function(item.generics, item.variants, concrete), seen, any)
+                        if concrete.name == item.name && concrete.generics.len() == item.generics.len()
+                        {
+                            any = append_lowered_drop_pair(builder, lower_enum_drop_function(item.generics,
+                            item.variants, concrete),
+                                lower_enum_retain_function(item.generics, item.variants, concrete), seen,
+                                any,)
                         }
                     }
                 }
             }
-            _ => {}
+            _ => {
+            }
         }
     }
     for concrete in concrete_types {
         if concrete.pointer == PointerKind::Heap {
-            any = append_lowered_drop_pair(builder, lower_heap_drop_function(concrete), lower_heap_retain_function(concrete), seen, any)
+            any = append_lowered_drop_pair(builder, lower_heap_drop_function(concrete), lower_heap_retain_function(concrete),
+            seen, any)
         }
         if has_prefix(concrete.name, "__tuple_") {
             let mut fields = Vec[Parameter]::new()
@@ -650,8 +824,9 @@ fn append_lowered_drop_functions(builder: usize, directives: Vec[Directive], con
                 fields.push(param("_" + Debug::fmt(index), item_type))
                 index = index + 1_usize
             }
-            any = append_lowered_drop_pair(builder, lower_struct_drop_function(Vec[Type]::new(), fields, concrete),
-                lower_struct_retain_function(Vec[Type]::new(), fields, concrete), seen, any)
+            any = append_lowered_drop_pair(builder, lower_struct_drop_function(Vec[Type]::new(), fields,
+            concrete),
+                lower_struct_retain_function(Vec[Type]::new(), fields, concrete), seen, any,)
         }
     }
     ret any
@@ -659,22 +834,33 @@ fn append_lowered_drop_functions(builder: usize, directives: Vec[Directive], con
 
 fn struct_needs_drop(fields: Vec[Parameter]) -> bool {
     for field in fields {
-        if type_needs_drop(field.typ) { ret true }
+        if type_needs_drop(field.typ) {
+            ret true
+        }
     }
     ret false
 }
 
-fn specialized_struct_needs_drop(params: Vec[Type], fields: Vec[Parameter], args: Vec[Type]) -> bool {
+fn specialized_struct_needs_drop(params: Vec[Type], fields: Vec[Parameter], args: Vec[Type]) -> bool
+    {
     for field in fields {
-        if type_needs_drop(substitute_generic_type(field.typ, params, args)) { ret true }
+        if type_needs_drop(substitute_generic_type(field.typ, params, args)) {
+            ret true
+        }
     }
     ret false
 }
 
 fn type_needs_drop(typ: Type) -> bool {
-    if typ.pointer == PointerKind::Heap { ret true }
-    if typ.pointer != PointerKind::Plain { ret false }
-    if typ.name == "str" { ret true }
+    if typ.pointer == PointerKind::Heap {
+        ret true
+    }
+    if typ.pointer != PointerKind::Plain {
+        ret false
+    }
+    if typ.name == "str" {
+        ret true
+    }
     ret is_aggregate_ehir_type(typ)
 }
 
@@ -694,7 +880,9 @@ fn lower_heap_drop_function(concrete: Type) -> LLVMFunction {
     entry.push(llvm_inst_cast("bitcast", raw, self_value))
     entry.push(llvm_inst_call(Option[LLVMValue]::Some(is_last), i1_type(), "encore_heap_release", vec_singleton(raw)))
 
-    let plain = Type{concrete.name, concrete.generics, PointerKind::Plain}
+    let plain = Type {
+        concrete.name, concrete.generics, PointerKind::Plain
+    }
     let pointee = reg("pointee", lower_type(plain))
     let mut release = vec_singleton(llvm_inst_load(pointee, self_value))
     release.extend(lower_drop_value(pointee, plain, "heap_pointee"))
@@ -704,7 +892,8 @@ fn lower_heap_drop_function(concrete: Type) -> LLVMFunction {
     blocks.push(llvm_block("entry", entry, llvm_term_cbr(is_last, "release", "done")))
     blocks.push(llvm_block("release", release, llvm_term_ret_void()))
     blocks.push(llvm_block("done", Vec[LLVMInstruction]::new(), llvm_term_ret_void()))
-    ret llvm_define_fn(drop_symbol(concrete), void_type(), vec_singleton(llvm_make_param("self", lower_type(concrete))), blocks)
+    ret llvm_define_fn(drop_symbol(concrete), void_type(), vec_singleton(llvm_make_param("self", lower_type(concrete))),
+    blocks)
 }
 
 fn lower_heap_retain_function(concrete: Type) -> LLVMFunction {
@@ -714,18 +903,22 @@ fn lower_heap_retain_function(concrete: Type) -> LLVMFunction {
     instructions.push(llvm_inst_cast("bitcast", raw, self_value))
     instructions.push(llvm_inst_call(Option[LLVMValue]::None, void_type(), "encore_heap_retain", vec_singleton(raw)))
     let body = vec_singleton(llvm_block("entry", instructions, llvm_term_ret_void()))
-    ret llvm_define_fn(retain_symbol(concrete), void_type(), vec_singleton(llvm_make_param("self", lower_type(concrete))), body)
+    ret llvm_define_fn(retain_symbol(concrete), void_type(), vec_singleton(llvm_make_param("self", lower_type(concrete))),
+    body)
 }
 
-fn lower_struct_drop_function(params: Vec[Type], fields: Vec[Parameter], concrete: Type) -> LLVMFunction {
+fn lower_struct_drop_function(params: Vec[Type], fields: Vec[Parameter], concrete: Type) -> LLVMFunction
+    {
     let self_value = reg("self", lower_type(concrete))
     let mut instructions = Vec[LLVMInstruction]::new()
     if concrete.name == "JoinHandle" && concrete.generics.len() == 1_usize {
         let token = reg("token", pointer_int_type())
         instructions.push(llvm_inst_extractvalue(token, self_value, "0"))
-        instructions.push(llvm_inst_call(Option[LLVMValue]::None, void_type(), "encore_thread_release", vec_singleton(token)))
+        instructions.push(llvm_inst_call(Option[LLVMValue]::None, void_type(), "encore_thread_release",
+        vec_singleton(token)))
         let params_data = vec_singleton(llvm_make_param("self", lower_type(concrete)))
-        ret llvm_define_fn(drop_symbol(concrete), void_type(), params_data, vec_singleton(llvm_block("entry", instructions, llvm_term_ret_void())))
+        ret llvm_define_fn(drop_symbol(concrete), void_type(), params_data, vec_singleton(llvm_block("entry",
+        instructions, llvm_term_ret_void())))
     }
     if concrete.name == "Vec" && concrete.generics.len() == 1_usize {
         let element_type = required_generic_type(concrete, 0_usize)
@@ -734,9 +927,11 @@ fn lower_struct_drop_function(params: Vec[Type], fields: Vec[Parameter], concret
         let is_last = reg("is_last", i1_type())
         instructions.push(llvm_inst_extractvalue(typed_data, self_value, "0"))
         instructions.push(llvm_inst_cast("bitcast", raw_data, typed_data))
-        instructions.push(llvm_inst_call(Option[LLVMValue]::Some(is_last), i1_type(), "encore_heap_release", vec_singleton(raw_data)))
+        instructions.push(llvm_inst_call(Option[LLVMValue]::Some(is_last), i1_type(), "encore_heap_release",
+        vec_singleton(raw_data)))
         let mut free_instructions = Vec[LLVMInstruction]::new()
-        free_instructions.push(llvm_inst_call(Option[LLVMValue]::None, void_type(), "encore_heap_free_released", vec_singleton(raw_data)))
+        free_instructions.push(llvm_inst_call(Option[LLVMValue]::None, void_type(), "encore_heap_free_released",
+        vec_singleton(raw_data)))
         let params_data = vec_singleton(llvm_make_param("self", lower_type(concrete)))
         let mut body = Vec[LLVMBasicBlock]::new()
         if type_needs_drop(element_type) {
@@ -755,17 +950,18 @@ fn lower_struct_drop_function(params: Vec[Type], fields: Vec[Parameter], concret
             let element_ptr = reg("element_ptr", ptr_type(lower_type(element_type)))
             let element = reg("element", lower_type(element_type))
             let next_index = reg("next_index", usize_type)
-            let mut drop_instructions = vec_singleton(llvm_inst_gep(element_ptr, lower_type(element_type), typed_data, vec_singleton(index), true))
+            let mut drop_instructions = vec_singleton(llvm_inst_gep(element_ptr, lower_type(element_type),
+            typed_data, vec_singleton(index), true))
             drop_instructions.push(llvm_inst_load(element, element_ptr))
             drop_instructions.extend(lower_drop_value(element, element_type, "element"))
             drop_instructions.push(llvm_inst_add(next_index, index, const_text("1", usize_type)))
             drop_instructions.push(llvm_inst_store(next_index, index_ptr))
 
             body.push(llvm_block("entry", instructions, llvm_term_cbr(is_last, "drop_check", "done")))
-            body.push(llvm_block("drop_check", check_instructions, llvm_term_cbr(has_next, "drop_element", "free")))
+            body.push(llvm_block("drop_check", check_instructions, llvm_term_cbr(has_next, "drop_element",
+            "free")))
             body.push(llvm_block("drop_element", drop_instructions, llvm_term_br("drop_check")))
-        }
-        else {
+        } else {
             body.push(llvm_block("entry", instructions, llvm_term_cbr(is_last, "free", "done")))
         }
         body.push(llvm_block("free", free_instructions, llvm_term_br("done")))
@@ -787,16 +983,18 @@ fn lower_struct_drop_function(params: Vec[Type], fields: Vec[Parameter], concret
     ret llvm_define_fn(drop_symbol(concrete), void_type(), params_data, body)
 }
 
-fn lower_struct_retain_function(params: Vec[Type], fields: Vec[Parameter], concrete: Type) -> LLVMFunction {
+fn lower_struct_retain_function(params: Vec[Type], fields: Vec[Parameter], concrete: Type) -> LLVMFunction
+    {
     let self_value = reg("self", lower_type(concrete))
     let mut instructions = Vec[LLVMInstruction]::new()
     if concrete.name == "JoinHandle" && concrete.generics.len() == 1_usize {
         let token = reg("token", pointer_int_type())
         instructions.push(llvm_inst_extractvalue(token, self_value, "0"))
-        instructions.push(llvm_inst_call(Option[LLVMValue]::None, void_type(), "encore_thread_retain", vec_singleton(token)))
+        instructions.push(llvm_inst_call(Option[LLVMValue]::None, void_type(), "encore_thread_retain",
+        vec_singleton(token)))
         let params_data = vec_singleton(llvm_make_param("self", lower_type(concrete)))
         ret llvm_define_fn(retain_symbol(concrete), void_type(), params_data,
-            vec_singleton(llvm_block("entry", instructions, llvm_term_ret_void())))
+            vec_singleton(llvm_block("entry", instructions, llvm_term_ret_void())),)
     }
     if concrete.name == "Vec" && concrete.generics.len() == 1_usize {
         let element_type = required_generic_type(concrete, 0_usize)
@@ -804,7 +1002,8 @@ fn lower_struct_retain_function(params: Vec[Type], fields: Vec[Parameter], concr
         let raw_data = reg("data_raw", ptr_type(i8_type()))
         instructions.push(llvm_inst_extractvalue(typed_data, self_value, "0"))
         instructions.push(llvm_inst_cast("bitcast", raw_data, typed_data))
-        instructions.push(llvm_inst_call(Option[LLVMValue]::None, void_type(), "encore_heap_retain", vec_singleton(raw_data)))
+        instructions.push(llvm_inst_call(Option[LLVMValue]::None, void_type(), "encore_heap_retain",
+        vec_singleton(raw_data)))
         let params_data = vec_singleton(llvm_make_param("self", lower_type(concrete)))
         let body = vec_singleton(llvm_block("entry", instructions, llvm_term_ret_void()))
         ret llvm_define_fn(retain_symbol(concrete), void_type(), params_data, body)
@@ -824,7 +1023,8 @@ fn lower_struct_retain_function(params: Vec[Type], fields: Vec[Parameter], concr
     ret llvm_define_fn(retain_symbol(concrete), void_type(), params_data, body)
 }
 
-fn lower_enum_drop_function(params: Vec[Type], variants: Vec[EnumVariant], concrete: Type) -> LLVMFunction {
+fn lower_enum_drop_function(params: Vec[Type], variants: Vec[EnumVariant], concrete: Type) -> LLVMFunction
+    {
     let self_value = reg("self", lower_type(concrete))
     let tag = reg("tag", i32_type())
     let mut blocks = Vec[LLVMBasicBlock]::new()
@@ -837,7 +1037,8 @@ fn lower_enum_drop_function(params: Vec[Type], variants: Vec[EnumVariant], concr
                     droppable.push(variant)
                 }
             }
-            Option[Type]::None => {}
+            Option[Type]::None => {
+            }
         }
     }
     let entry_instructions = vec_singleton(llvm_inst_extractvalue(tag, self_value, "0"))
@@ -849,24 +1050,32 @@ fn lower_enum_drop_function(params: Vec[Type], variants: Vec[EnumVariant], concr
         for variant in droppable {
             let check_name = "check_" + Debug::fmt(index)
             let drop_name = "drop_" + Debug::fmt(index)
-            let next_name = if index + 1_usize < droppable.len() { "check_" + Debug::fmt(index + 1_usize) } else { "done" }
+            let next_name = if index + 1_usize < droppable.len() {
+                "check_" + Debug::fmt(index + 1_usize)
+            } else {
+                "done"
+            }
             let matches = reg("matches_" + Debug::fmt(index), i1_type())
             let compare = llvm_inst_binary("icmp eq", matches, tag, const_i32(enum_variant_tag(variant.name)))
-            blocks.push(llvm_block(check_name, vec_singleton(compare), llvm_term_cbr(matches, drop_name, next_name)))
+            blocks.push(llvm_block(check_name, vec_singleton(compare), llvm_term_cbr(matches, drop_name,
+            next_name)))
             match variant.payload_type {
                 Option[Type]::Some(raw_payload_type) => {
                     let payload_type = substitute_generic_type(raw_payload_type, params, concrete.generics)
                     let payload = reg("payload_" + Debug::fmt(index), lower_type(payload_type))
                     let raw = reg("payload_raw_" + Debug::fmt(index), ptr_type(i8_type()))
                     let typed = reg("payload_ptr_" + Debug::fmt(index), ptr_type(lower_type(payload_type)))
-                    let mut drop_instructions = vec_singleton(llvm_inst_extractvalue(raw, self_value, "1"))
+                    let mut drop_instructions = vec_singleton(llvm_inst_extractvalue(raw, self_value,
+                    "1"))
                     drop_instructions.push(llvm_inst_cast("bitcast", typed, raw))
                     drop_instructions.push(llvm_inst_load(payload, typed))
                     drop_instructions.extend(lower_drop_value(payload, payload_type, "payload_" + Debug::fmt(index)))
-                    drop_instructions.push(llvm_inst_call(Option[LLVMValue]::None, void_type(), "encore_box_drop", vec_singleton(raw)))
+                    drop_instructions.push(llvm_inst_call(Option[LLVMValue]::None, void_type(), "encore_box_drop",
+                    vec_singleton(raw)))
                     blocks.push(llvm_block(drop_name, drop_instructions, llvm_term_ret_void()))
                 }
-                Option[Type]::None => {}
+                Option[Type]::None => {
+                }
             }
             index = index + 1_usize
         }
@@ -876,7 +1085,8 @@ fn lower_enum_drop_function(params: Vec[Type], variants: Vec[EnumVariant], concr
     ret llvm_define_fn(drop_symbol(concrete), void_type(), params_data, blocks)
 }
 
-fn lower_enum_retain_function(params: Vec[Type], variants: Vec[EnumVariant], concrete: Type) -> LLVMFunction {
+fn lower_enum_retain_function(params: Vec[Type], variants: Vec[EnumVariant], concrete: Type) -> LLVMFunction
+    {
     let self_value = reg("self", lower_type(concrete))
     let tag = reg("tag", i32_type())
     let mut blocks = Vec[LLVMBasicBlock]::new()
@@ -889,7 +1099,8 @@ fn lower_enum_retain_function(params: Vec[Type], variants: Vec[EnumVariant], con
                     retainable.push(variant)
                 }
             }
-            Option[Type]::None => {}
+            Option[Type]::None => {
+            }
         }
     }
     let entry_instructions = vec_singleton(llvm_inst_extractvalue(tag, self_value, "0"))
@@ -901,24 +1112,32 @@ fn lower_enum_retain_function(params: Vec[Type], variants: Vec[EnumVariant], con
         for variant in retainable {
             let check_name = "check_" + Debug::fmt(index)
             let retain_name = "retain_" + Debug::fmt(index)
-            let next_name = if index + 1_usize < retainable.len() { "check_" + Debug::fmt(index + 1_usize) } else { "done" }
+            let next_name = if index + 1_usize < retainable.len() {
+                "check_" + Debug::fmt(index + 1_usize)
+            } else {
+                "done"
+            }
             let matches = reg("matches_" + Debug::fmt(index), i1_type())
             let compare = llvm_inst_binary("icmp eq", matches, tag, const_i32(enum_variant_tag(variant.name)))
-            blocks.push(llvm_block(check_name, vec_singleton(compare), llvm_term_cbr(matches, retain_name, next_name)))
+            blocks.push(llvm_block(check_name, vec_singleton(compare), llvm_term_cbr(matches, retain_name,
+            next_name)))
             match variant.payload_type {
                 Option[Type]::Some(raw_payload_type) => {
                     let payload_type = substitute_generic_type(raw_payload_type, params, concrete.generics)
                     let payload = reg("payload_" + Debug::fmt(index), lower_type(payload_type))
                     let raw = reg("payload_raw_" + Debug::fmt(index), ptr_type(i8_type()))
                     let typed = reg("payload_ptr_" + Debug::fmt(index), ptr_type(lower_type(payload_type)))
-                    let mut retain_instructions = vec_singleton(llvm_inst_extractvalue(raw, self_value, "1"))
+                    let mut retain_instructions = vec_singleton(llvm_inst_extractvalue(raw, self_value,
+                    "1"))
                     retain_instructions.push(llvm_inst_cast("bitcast", typed, raw))
                     retain_instructions.push(llvm_inst_load(payload, typed))
                     retain_instructions.extend(lower_retain_value(payload, payload_type))
-                    retain_instructions.push(llvm_inst_call(Option[LLVMValue]::None, void_type(), "encore_box_retain", vec_singleton(raw)))
+                    retain_instructions.push(llvm_inst_call(Option[LLVMValue]::None, void_type(), "encore_box_retain",
+                    vec_singleton(raw)))
                     blocks.push(llvm_block(retain_name, retain_instructions, llvm_term_ret_void()))
                 }
-                Option[Type]::None => {}
+                Option[Type]::None => {
+                }
             }
             index = index + 1_usize
         }
@@ -932,7 +1151,9 @@ fn lower_drop_value(value: LLVMValue, typ: Type, suffix: str) -> Vec[LLVMInstruc
     if typ.pointer == PointerKind::Heap {
         ret vec_singleton(llvm_inst_call(Option[LLVMValue]::None, void_type(), drop_symbol(typ), vec_singleton(value)))
     }
-    if typ.pointer != PointerKind::Plain { ret Vec[LLVMInstruction]::new() }
+    if typ.pointer != PointerKind::Plain {
+        ret Vec[LLVMInstruction]::new()
+    }
     if typ.name == "str" {
         ret vec_singleton(llvm_inst_call(Option[LLVMValue]::None, void_type(), "encore_str_drop", vec_singleton(value)))
     }
@@ -946,7 +1167,9 @@ fn lower_retain_value(value: LLVMValue, typ: Type) -> Vec[LLVMInstruction] {
     if typ.pointer == PointerKind::Heap {
         ret vec_singleton(llvm_inst_call(Option[LLVMValue]::None, void_type(), retain_symbol(typ), vec_singleton(value)))
     }
-    if typ.pointer != PointerKind::Plain { ret Vec[LLVMInstruction]::new() }
+    if typ.pointer != PointerKind::Plain {
+        ret Vec[LLVMInstruction]::new()
+    }
     if typ.name == "str" {
         ret vec_singleton(llvm_inst_call(Option[LLVMValue]::None, void_type(), "encore_str_retain", vec_singleton(value)))
     }
@@ -967,23 +1190,28 @@ fn collect_generic_calls(directives: Vec[Directive]) -> Vec[GenericCall] {
             }
             Directive::Impl(item) => {
                 if item.generics.len() == 0_usize {
-                    for method in item.methods { collect_direct_generic_calls(out, method) }
+                    for method in item.methods {
+                        collect_direct_generic_calls(out, method)
+                    }
                 }
             }
-            _ => {}
+            _ => {
+            }
         }
     }
     ret out
 }
 
-fn collect_direct_generic_calls(out: mut Vec[GenericCall], function: FnDirective) -> () {
+fn collect_direct_generic_calls(out: mut Vec[GenericCall], function: FnDirective) ->() {
     let mut block_index = 0_usize
     while block_index < function.blocks.len() {
-        let block_handle = unsafe { function.blocks.get_handle(block_index) }
+        let block_handle = unsafe {
+            function.blocks.get_handle(block_index)
+        }
         unsafe {
             unsafe ehir {
-                block_ptr: Block* = pcast block_handle: usize, Block*
-                block_item: Block = load block_ptr: Block*
+                block_ptr: Block * = pcast block_handle: usize, Block *
+                block_item: Block = load block_ptr: Block *
             }
             let mut instruction_index = 0_usize
             while instruction_index < block_item.instructions.len() {
@@ -993,30 +1221,35 @@ fn collect_direct_generic_calls(out: mut Vec[GenericCall], function: FnDirective
         }
         block_index = block_index + 1_usize
     }
-    ret ()
+    ret()
 }
 
-fn collect_direct_generic_call(out: mut Vec[GenericCall], instruction_handle: usize) -> () {
+fn collect_direct_generic_call(out: mut Vec[GenericCall], instruction_handle: usize) ->() {
     unsafe {
         unsafe ehir {
-            instruction_ptr: Instruction* = pcast instruction_handle: usize, Instruction*
-            instruction: Instruction = load instruction_ptr: Instruction*
+            instruction_ptr: Instruction * = pcast instruction_handle: usize, Instruction *
+            instruction: Instruction = load instruction_ptr: Instruction *
         }
         match instruction {
             Instruction::Call(data) => {
                 if data.generics.len() > 0_usize {
                     let is_spawn = required_variable_type(data.out).name == "JoinHandle" && is_thread_spawn_name(data.name)
-                    let name = if is_spawn { thread_spawn_target(data.name) } else { data.name }
+                    let name = if is_spawn {
+                        thread_spawn_target(data.name)
+                    } else {
+                        data.name
+                    }
                     remember_generic_call(out, name, data.generics)
                 }
             }
-            _ => {}
+            _ => {
+            }
         }
     }
-    ret ()
+    ret()
 }
 
-fn expand_generic_calls(directives: Vec[Directive], calls: mut Vec[GenericCall]) -> () {
+fn expand_generic_calls(directives: Vec[Directive], calls: mut Vec[GenericCall]) ->() {
     let mut index = 0_usize
     while index < calls.len() {
         match calls.get(index) {
@@ -1025,29 +1258,35 @@ fn expand_generic_calls(directives: Vec[Directive], calls: mut Vec[GenericCall])
                 // Snapshot the item before passing its arguments into that walk.
                 let current_name = current.name
                 let mut current_args = Vec[Type]::new()
-                for arg in current.args { current_args.push(arg) }
+                for arg in current.args {
+                    current_args.push(arg)
+                }
                 let mut directive_index = 0_usize
                 while directive_index < directives.len() {
-                    expand_generic_call_in_directive(calls, directives.get_handle(directive_index), current_name, current_args)
+                    expand_generic_call_in_directive(calls, directives.get_handle(directive_index), current_name,
+                    current_args)
                     directive_index = directive_index + 1_usize
                 }
             }
-            Option[GenericCall]::None => {}
+            Option[GenericCall]::None => {
+            }
         }
         index = index + 1_usize
     }
-    ret ()
+    ret()
 }
 
-fn expand_generic_call_in_directive(out: mut Vec[GenericCall], directive_handle: usize, name: str, args: Vec[Type]) -> () {
+fn expand_generic_call_in_directive(out: mut Vec[GenericCall], directive_handle: usize, name: str, args:
+    Vec[Type]) ->() {
     unsafe {
         unsafe ehir {
-            directive_ptr: Directive* = pcast directive_handle: usize, Directive*
-            directive: Directive = load directive_ptr: Directive*
+            directive_ptr: Directive * = pcast directive_handle: usize, Directive *
+            directive: Directive = load directive_ptr: Directive *
         }
         match directive {
             Directive::Function(function) => {
-                if generic_function_name_matches(function.name, name) && function.generics.len() == args.len() {
+                if generic_function_name_matches(function.name, name) && function.generics.len() == args.len()
+                {
                     collect_nested_generic_calls(out, function, function.generics, args)
                 }
             }
@@ -1056,58 +1295,72 @@ fn expand_generic_call_in_directive(out: mut Vec[GenericCall], directive_handle:
                 while method_index < item.methods.len() {
                     let method_handle = item.methods.get_handle(method_index)
                     unsafe ehir {
-                        method_ptr: FnDirective* = pcast method_handle: usize, FnDirective*
-                        method: FnDirective = load method_ptr: FnDirective*
+                        method_ptr: FnDirective * = pcast method_handle: usize, FnDirective *
+                        method: FnDirective = load method_ptr: FnDirective *
                     }
                     let full_name = item.for_type.name + "::" + method.name
                     if method.generics.len() == 0_usize {
-                        if full_name == name && item.generics.len() == args.len() { collect_nested_generic_calls(out, method, item.generics, args) }
+                        if full_name == name && item.generics.len() == args.len() {
+                            collect_nested_generic_calls(out, method, item.generics, args)
+                        }
                     } elif item.generics.len() == 0_usize {
-                        if full_name == name && method.generics.len() == args.len() { collect_nested_generic_calls(out, method, method.generics, args) }
+                        if full_name == name && method.generics.len() == args.len() {
+                            collect_nested_generic_calls(out, method, method.generics, args)
+                        }
                     } else {
                         let params = combined_impl_method_generics(item.generics, method.generics)
-                        if full_name == name && params.len() == args.len() { collect_nested_generic_calls(out, method, params, args) }
+                        if full_name == name && params.len() == args.len() {
+                            collect_nested_generic_calls(out, method, params, args)
+                        }
                     }
                     method_index = method_index + 1_usize
                 }
             }
-            _ => {}
+            _ => {
+            }
         }
     }
-    ret ()
+    ret()
 }
 
-fn collect_nested_generic_calls(out: mut Vec[GenericCall], function: FnDirective, params: Vec[Type], args: Vec[Type]) -> () {
+fn collect_nested_generic_calls(out: mut Vec[GenericCall], function: FnDirective, params: Vec[Type],
+    args: Vec[Type]) ->() {
     let mut block_index = 0_usize
     while block_index < function.blocks.len() {
-        let block_handle = unsafe { function.blocks.get_handle(block_index) }
+        let block_handle = unsafe {
+            function.blocks.get_handle(block_index)
+        }
         unsafe {
             unsafe ehir {
-                block_ptr: Block* = pcast block_handle: usize, Block*
-                block_item: Block = load block_ptr: Block*
+                block_ptr: Block * = pcast block_handle: usize, Block *
+                block_item: Block = load block_ptr: Block *
             }
             let mut instruction_index = 0_usize
             while instruction_index < block_item.instructions.len() {
-                collect_nested_generic_call(out, block_item.instructions.get_handle(instruction_index), params, args)
+                collect_nested_generic_call(out, block_item.instructions.get_handle(instruction_index),
+                params, args)
                 instruction_index = instruction_index + 1_usize
             }
         }
         block_index = block_index + 1_usize
     }
-    ret ()
+    ret()
 }
 
-fn collect_nested_generic_call(out: mut Vec[GenericCall], instruction_handle: usize, params: Vec[Type], args: Vec[Type]) -> () {
+fn collect_nested_generic_call(out: mut Vec[GenericCall], instruction_handle: usize, params: Vec[Type],
+    args: Vec[Type]) ->() {
     unsafe {
         unsafe ehir {
-            instruction_ptr: Instruction* = pcast instruction_handle: usize, Instruction*
-            instruction: Instruction = load instruction_ptr: Instruction*
+            instruction_ptr: Instruction * = pcast instruction_handle: usize, Instruction *
+            instruction: Instruction = load instruction_ptr: Instruction *
         }
         match instruction {
             Instruction::Call(data) => {
                 if data.generics.len() > 0_usize {
                     let mut concrete = Vec[Type]::new()
-                    for generic in data.generics { concrete.push(substitute_generic_type(generic, params, args)) }
+                    for generic in data.generics {
+                        concrete.push(substitute_generic_type(generic, params, args))
+                    }
                     remember_generic_call(out, data.name, concrete)
                 }
                 let mut owner_index = 0_usize
@@ -1119,45 +1372,57 @@ fn collect_nested_generic_call(out: mut Vec[GenericCall], instruction_handle: us
                                 match args.get(owner_index) {
                                     Some(concrete_owner) => {
                                         if concrete_owner.generics.len() > 0_usize {
-                                            let concrete_name = concrete_owner.name + data.name.slice(param_type.name.len(), data.name.len() - param_type.name.len())
+                                            let concrete_name = concrete_owner.name + data.name.slice(param_type.name.len(),
+                                            data.name.len() - param_type.name.len())
                                             remember_generic_call(out, concrete_name, concrete_owner.generics)
                                         }
                                     }
-                                    None => {}
+                                    None => {
+                                    }
                                 }
                             }
                         }
-                        None => {}
+                        None => {
+                        }
                     }
                     owner_index = owner_index + 1_usize
                 }
             }
-            _ => {}
+            _ => {
+            }
         }
     }
-    ret ()
+    ret()
 }
 
-fn remember_generic_call(out: mut Vec[GenericCall], name: str, args: Vec[Type]) -> () {
+fn remember_generic_call(out: mut Vec[GenericCall], name: str, args: Vec[Type]) ->() {
     let key = generic_symbol(name, args)
     for item in out {
-        if item.key == key { ret () }
+        if item.key == key {
+            ret()
+        }
     }
-    out.push(GenericCall{name, args, key})
-    ret ()
+    out.push(GenericCall {
+            name, args, key
+        }
+    )
+    ret()
 }
 
-fn append_lowered_generic_functions(builder: usize, directives: Vec[Directive], calls: Vec[GenericCall], seen: usize, emitted: bool) -> bool {
+fn append_lowered_generic_functions(builder: usize, directives: Vec[Directive], calls: Vec[GenericCall],
+    seen: usize, emitted: bool) -> bool {
     let mut any = emitted
     for directive in directives {
         match directive {
             Directive::Function(function) => {
                 if function.generics.len() > 0_usize {
                     for call_data in calls {
-                        if generic_function_name_matches(function.name, call_data.name) && call_data.args.len() == function.generics.len() {
+                        if generic_function_name_matches(function.name, call_data.name) && call_data.args.len()
+                        == function.generics.len() {
                             let template = generic_function_template_for_call(function, call_data.name)
                             any = append_unique_functions(builder,
-                                vec_singleton(odr_function(lower_function(specialize_function(template, call_data.args)))), seen, any)
+                                vec_singleton(odr_function(lower_function(specialize_function(template,
+                                call_data.args)))), seen, any,)
                         }
                     }
                 }
@@ -1167,56 +1432,81 @@ fn append_lowered_generic_functions(builder: usize, directives: Vec[Directive], 
                     let full_name = item.for_type.name + "::" + method.name
                     if method.generics.len() == 0_usize && item.generics.len() > 0_usize {
                         for call_data in calls {
-                            if call_data.name == full_name && call_data.args.len() == item.generics.len() {
-                                let template = fn_item(full_name, item.generics, method.params, method.ret_type, method.blocks)
+                            if call_data.name == full_name && call_data.args.len() == item.generics.len()
+                            {
+                                let template = fn_item(full_name, item.generics, method.params, method.ret_type,
+                                method.blocks)
                                 any = append_unique_functions(builder,
-                                    vec_singleton(odr_function(lower_function(specialize_function(template, call_data.args)))), seen, any)
+                                    vec_singleton(odr_function(lower_function(specialize_function(template,
+                                    call_data.args)))), seen, any,)
                             }
                         }
                     } elif item.generics.len() == 0_usize && method.generics.len() > 0_usize {
                         for call_data in calls {
-                            if call_data.name == full_name && call_data.args.len() == method.generics.len() {
-                                let template = fn_item(full_name, method.generics, method.params, method.ret_type, method.blocks)
+                            if call_data.name == full_name && call_data.args.len() == method.generics.len()
+                            {
+                                let template = fn_item(full_name, method.generics, method.params, method.ret_type,
+                                method.blocks)
                                 any = append_unique_functions(builder,
-                                    vec_singleton(odr_function(lower_function(specialize_function(template, call_data.args)))), seen, any)
+                                    vec_singleton(odr_function(lower_function(specialize_function(template,
+                                    call_data.args)))), seen, any,)
                             }
                         }
                     } elif item.generics.len() > 0_usize && method.generics.len() > 0_usize {
                         let params = combined_impl_method_generics(item.generics, method.generics)
                         for call_data in calls {
                             if call_data.name == full_name && call_data.args.len() == params.len() {
-                                let template = fn_item(full_name, params, method.params, method.ret_type, method.blocks)
+                                let template = fn_item(full_name, params, method.params, method.ret_type,
+                                method.blocks)
                                 any = append_unique_functions(builder,
-                                    vec_singleton(odr_function(lower_function(specialize_function(template, call_data.args)))), seen, any)
+                                    vec_singleton(odr_function(lower_function(specialize_function(template,
+                                    call_data.args)))), seen, any,)
                             }
                         }
                     }
                 }
             }
-            _ => {}
+            _ => {
+            }
         }
     }
     ret any
 }
 
 fn generic_function_name_matches(template_name: str, call_name: str) -> bool {
-    if template_name == call_name { ret true }
-    if call_name.contains("::") { ret false }
+    if template_name == call_name {
+        ret true
+    }
+    if call_name.contains("::") {
+        ret false
+    }
     ret str_ends_with(template_name, "__" + call_name)
 }
 
 fn generic_function_template_for_call(function: FnDirective, call_name: str) -> FnDirective {
-    if function.name == call_name { ret function }
-    if function.is_async { ret async_fn_item(call_name, function.generics, function.params, function.ret_type, function.blocks) }
+    if function.name == call_name {
+        ret function
+    }
+    if function.is_async {
+        ret async_fn_item(call_name, function.generics, function.params, function.ret_type, function.blocks)
+    }
     ret fn_item(call_name, function.generics, function.params, function.ret_type, function.blocks)
 }
 
 fn combined_impl_method_generics(impl_generics: Vec[Type], method_generics: Vec[Type]) -> Vec[Type] {
-    if method_generics.len() == 0_usize { ret impl_generics }
-    if impl_generics.len() == 0_usize { ret method_generics }
+    if method_generics.len() == 0_usize {
+        ret impl_generics
+    }
+    if impl_generics.len() == 0_usize {
+        ret method_generics
+    }
     let mut out = Vec[Type]::new()
-    for generic in impl_generics { out.push(generic) }
-    for generic in method_generics { out.push(generic) }
+    for generic in impl_generics {
+        out.push(generic)
+    }
+    for generic in method_generics {
+        out.push(generic)
+    }
     ret out
 }
 
@@ -1224,7 +1514,8 @@ fn specialize_function(function: FnDirective, args: Vec[Type]) -> FnDirective {
     let params = function.generics
     let mut specialized_params = Vec[Parameter]::new()
     for parameter in function.params {
-        specialized_params.push(param(parameter.name, substitute_generic_type(parameter.typ, params, args)))
+        specialized_params.push(param(parameter.name, substitute_generic_type(parameter.typ, params,
+        args)))
     }
     let mut specialized_blocks = Vec[Block]::new()
     for block_item in function.blocks {
@@ -1241,36 +1532,57 @@ fn specialize_function(function: FnDirective, args: Vec[Type]) -> FnDirective {
             Vec[Type]::new(),
             specialized_params,
             substitute_generic_type(function.ret_type, params, args),
-            specialized_blocks
+            specialized_blocks,
         )
     }
-    ret fn_item(generic_symbol(function.name, args), Vec[Type]::new(), specialized_params, substitute_generic_type(function.ret_type, params, args), specialized_blocks)
+    ret fn_item(generic_symbol(function.name, args), Vec[Type]::new(), specialized_params, substitute_generic_type(function.ret_type,
+    params, args), specialized_blocks)
 }
 
-fn specialize_instruction(instruction: Instruction, params: Vec[Type], args: Vec[Type]) -> Instruction {
+fn specialize_instruction(instruction: Instruction, params: Vec[Type], args: Vec[Type]) -> Instruction
+    {
     match instruction {
-        Instruction::Lcpos(data) => { ret lcpos(specialize_variable(data.out, params, args), data.value) }
-        Instruction::Alias(data) => { ret alias(specialize_variable(data.out, params, args), specialize_variable(data.src, params, args)) }
+        Instruction::Lcpos(data) => {
+            ret lcpos(specialize_variable(data.out, params, args), data.value)
+        }
+        Instruction::Alias(data) => {
+            ret alias(specialize_variable(data.out, params, args), specialize_variable(data.src, params,
+            args))
+        }
         Instruction::Lcsos(data) => {
             let mut values = Vec[Variable]::new()
-            for value in data.args { values.push(specialize_variable(value, params, args)) }
-            ret lcsos(specialize_variable(data.out, params, args), substitute_generic_type(data.typ, params, args), values)
+            for value in data.args {
+                values.push(specialize_variable(value, params, args))
+            }
+            ret lcsos(specialize_variable(data.out, params, args), substitute_generic_type(data.typ,
+            params, args), values)
         }
         Instruction::Lceos(data) => {
             let value = data.value
             let payload = match value.payload {
-                Option[Variable]::Some(item) => { Option[Variable]::Some(specialize_variable(item, params, args)) }
-                Option[Variable]::None => { Option[Variable]::None }
+                Option[Variable]::Some(item) => {
+                    Option[Variable]::Some(specialize_variable(item, params, args))
+                }
+                Option[Variable]::None => {
+                    Option[Variable]::None
+                }
             }
             let mut generics = Vec[Type]::new()
-            for generic in value.generics { generics.push(substitute_generic_type(generic, params, args)) }
-            ret lceos(specialize_variable(data.out, params, args), enum_value(value.name, generics, value.variant, payload))
+            for generic in value.generics {
+                generics.push(substitute_generic_type(generic, params, args))
+            }
+            ret lceos(specialize_variable(data.out, params, args), enum_value(value.name, generics, value.variant,
+            payload))
         }
         Instruction::Call(data) => {
             let mut values = Vec[Variable]::new()
-            for value in data.args { values.push(specialize_variable(value, params, args)) }
+            for value in data.args {
+                values.push(specialize_variable(value, params, args))
+            }
             let mut generics = Vec[Type]::new()
-            for generic in data.generics { generics.push(substitute_generic_type(generic, params, args)) }
+            for generic in data.generics {
+                generics.push(substitute_generic_type(generic, params, args))
+            }
             let mut call_name = data.name
             let mut owner_index = 0_usize
             while owner_index < params.len() && owner_index < args.len() {
@@ -1280,16 +1592,21 @@ fn specialize_instruction(instruction: Instruction, params: Vec[Type], args: Vec
                         if has_prefix(call_name, prefix) {
                             match args.get(owner_index) {
                                 Some(concrete_owner) => {
-                                    call_name = concrete_owner.name + call_name.slice(param_type.name.len(), call_name.len() - param_type.name.len())
+                                    call_name = concrete_owner.name + call_name.slice(param_type.name.len(),
+                                    call_name.len() - param_type.name.len())
                                     if generics.len() == 0_usize {
-                                        for concrete_generic in concrete_owner.generics { generics.push(concrete_generic) }
+                                        for concrete_generic in concrete_owner.generics {
+                                            generics.push(concrete_generic)
+                                        }
                                     }
                                 }
-                                None => {}
+                                None => {
+                                }
                             }
                         }
                     }
-                    None => {}
+                    None => {
+                    }
                 }
                 owner_index = owner_index + 1_usize
             }
@@ -1297,89 +1614,120 @@ fn specialize_instruction(instruction: Instruction, params: Vec[Type], args: Vec
                 match values.get(0_usize) {
                     Some(value) => {
                         match value.typ {
-                            Some(typ) => { call_name = typ.name + "::fmt" }
-                            None => {}
+                            Some(typ) => {
+                                call_name = typ.name + "::fmt"
+                            }
+                            None => {
+                            }
                         }
                     }
-                    None => {}
+                    None => {
+                    }
                 }
             }
             if call_name.len() == 5_usize && call_name.slice(1_usize, 4_usize) == "::op" {
                 match values.get(0_usize) {
                     Some(value) => {
                         match value.typ {
-                            Some(typ) => { call_name = typ.name + "::op" }
-                            None => {}
+                            Some(typ) => {
+                                call_name = typ.name + "::op"
+                            }
+                            None => {
+                            }
                         }
                     }
-                    None => {}
+                    None => {
+                    }
                 }
             }
             if call_name.len() == 6_usize && call_name.slice(1_usize, 5_usize) == "::pow" {
                 match values.get(0_usize) {
                     Some(value) => {
                         match value.typ {
-                            Some(typ) => { call_name = typ.name + "::pow" }
-                            None => {}
+                            Some(typ) => {
+                                call_name = typ.name + "::pow"
+                            }
+                            None => {
+                            }
                         }
                     }
-                    None => {}
+                    None => {
+                    }
                 }
             }
-            if data.name.len() == 5_usize && data.name.slice(1_usize, 4_usize) == "::op" && values.len() == 2_usize {
+            if data.name.len() == 5_usize && data.name.slice(1_usize, 4_usize) == "::op" && values.len()
+            == 2_usize {
                 match values.get(0_usize) {
                     Some(first) => {
                         match first.typ {
                             Some(first_type) => {
                                 if is_numeric_ehir_type(first_type) {
                                     match values.get(1_usize) {
-                                        Some(second) => { ret binary(specialize_variable(data.out, params, args), first, second, BinaryOpKind::ADD) }
-                                        None => {}
+                                        Some(second) => {
+                                            ret binary(specialize_variable(data.out, params, args), first,
+                                            second, BinaryOpKind::ADD)
+                                        }
+                                        None => {
+                                        }
                                     }
                                 }
                             }
-                            None => {}
+                            None => {
+                            }
                         }
                     }
-                    None => {}
+                    None => {
+                    }
                 }
             }
             ret call(specialize_variable(data.out, params, args), call_name, generics, values, data.is_unsafe)
         }
         Instruction::Await(data) => {
-            ret await_value(specialize_variable(data.out, params, args), specialize_variable(data.future, params, args))
+            ret await_value(specialize_variable(data.out, params, args), specialize_variable(data.future,
+            params, args))
         }
-        Instruction::Store(data) => { ret store(specialize_variable(data.src, params, args), specialize_variable(data.dst, params, args)) }
-        Instruction::Load(data) => { ret load(specialize_variable(data.out, params, args), specialize_variable(data.src, params, args)) }
+        Instruction::Store(data) => {
+            ret store(specialize_variable(data.src, params, args), specialize_variable(data.dst, params,
+            args))
+        }
+        Instruction::Load(data) => {
+            ret load(specialize_variable(data.out, params, args), specialize_variable(data.src, params,
+            args))
+        }
         Instruction::Binary(data) => {
             ret binary(
                 specialize_variable(data.out, params, args),
                 specialize_variable(data.lhs, params, args),
                 specialize_variable(data.rhs, params, args),
-                data.op
+                data.op,
             )
         }
         Instruction::GetField(data) => {
             ret getfield(
                 specialize_variable(data.out, params, args),
                 specialize_variable(data.src, params, args),
-                data.field
+                data.field,
             )
         }
         Instruction::SetField(data) => {
-            ret setfield(specialize_variable(data.src, params, args), data.field, specialize_variable(data.value, params, args))
+            ret setfield(specialize_variable(data.src, params, args), data.field, specialize_variable(data.value,
+            params, args))
         }
         Instruction::StackAlloc(data) => {
-            ret salloc(specialize_variable(data.out, params, args), substitute_generic_type(data.typ, params, args))
+            ret salloc(specialize_variable(data.out, params, args), substitute_generic_type(data.typ,
+            params, args))
         }
         Instruction::Gep(data) => {
-            ret gep(specialize_variable(data.out, params, args), specialize_variable(data.src, params, args), specialize_variable(data.offset, params, args))
+            ret gep(specialize_variable(data.out, params, args), specialize_variable(data.src, params,
+            args), specialize_variable(data.offset, params, args))
         }
         Instruction::PtrCast(data) => {
-            ret pcast(specialize_variable(data.out, params, args), specialize_variable(data.src, params, args), substitute_generic_type(data.target_type, params, args))
+            ret pcast(specialize_variable(data.out, params, args), specialize_variable(data.src, params,
+            args), substitute_generic_type(data.target_type, params, args))
         }
         Instruction::HeapRealloc(data) => {
-            ret hrealloc(specialize_variable(data.out, params, args), specialize_variable(data.src, params, args), specialize_variable(data.count, params, args))
+            ret hrealloc(specialize_variable(data.out, params, args), specialize_variable(data.src, params,
+            args), specialize_variable(data.count, params, args))
         }
         Instruction::Drop(data) => {
             ret drop_value(specialize_variable(data.value, params, args))
@@ -1387,21 +1735,33 @@ fn specialize_instruction(instruction: Instruction, params: Vec[Type], args: Vec
         Instruction::Retain(data) => {
             ret retain_value(specialize_variable(data.value, params, args))
         }
-        Instruction::HeapFree(data) => { ret hfree(specialize_variable(data.src, params, args)) }
-        _ => { ret instruction }
+        Instruction::HeapFree(data) => {
+            ret hfree(specialize_variable(data.src, params, args))
+        }
+        _ => {
+            ret instruction
+        }
     }
 }
 
 fn specialize_terminator(terminator: Terminator, params: Vec[Type], args: Vec[Type]) -> Terminator {
     match terminator {
-        Terminator::Ret(data) => { ret ret_term(specialize_variable(data.value, params, args)) }
-        Terminator::Cbr(data) => { ret cbr_term(specialize_variable(data.cond, params, args), data.true_label, data.false_label) }
+        Terminator::Ret(data) => {
+            ret ret_term(specialize_variable(data.value, params, args))
+        }
+        Terminator::Cbr(data) => {
+            ret cbr_term(specialize_variable(data.cond, params, args), data.true_label, data.false_label)
+        }
         Terminator::Match(data) => {
             let mut arms = Vec[MatchArm]::new()
             for arm in data.arms {
                 let payload = match arm.payload_var {
-                    Option[Variable]::Some(value) => { Option[Variable]::Some(specialize_variable(value, params, args)) }
-                    Option[Variable]::None => { Option[Variable]::None }
+                    Option[Variable]::Some(value) => {
+                        Option[Variable]::Some(specialize_variable(value, params, args))
+                    }
+                    Option[Variable]::None => {
+                        Option[Variable]::None
+                    }
                 }
                 arms.push(match_arm(arm.variant, payload, arm.label))
             }
@@ -1410,16 +1770,22 @@ fn specialize_terminator(terminator: Terminator, params: Vec[Type], args: Vec[Ty
         Terminator::Switch(data) => {
             ret switch_term(specialize_variable(data.scrutinee, params, args), data.default_label, data.cases)
         }
-        _ => { ret terminator }
+        _ => {
+            ret terminator
+        }
     }
 }
 
 fn specialize_variable(value: Variable, params: Vec[Type], args: Vec[Type]) -> Variable {
     match value.typ {
         Option[Type]::Some(typ) => {
-            ret Variable{value.name, Option[Type]::Some(substitute_generic_type(typ, params, args))}
+            ret Variable {
+                value.name, Option[Type]::Some(substitute_generic_type(typ, params, args))
+            }
         }
-        Option[Type]::None => { ret value }
+        Option[Type]::None => {
+            ret value
+        }
     }
 }
 
@@ -1427,7 +1793,9 @@ fn generic_symbol(name: str, args: Vec[Type]) -> str {
     let mut out = sanitize_symbol(name) + "__"
     let mut index = 0_usize
     for arg in args {
-        if index > 0_usize { out = out + "_" }
+        if index > 0_usize {
+            out = out + "_"
+        }
         out = out + sanitize_symbol(mangle_type_name(arg))
         index = index + 1_usize
     }
@@ -1467,23 +1835,34 @@ fn prepare_module_for_codegen(module: Module) -> Module {
 }
 
 pub fn emit_ir_for_target(module: Module, triple: str, pointer_width: usize) -> str {
-    unsafe { encore_llvm_set_target_pointer_width(pointer_width) }
+    unsafe {
+        encore_llvm_set_target_pointer_width(pointer_width)
+    }
     let ir = emit_ir(module)
-    if triple == "" { ret ir }
+    if triple == "" {
+        ret ir
+    }
     ret "target triple = \"" + triple + "\"\n\n" + ir
 }
 
-pub fn emit_ir_bundle_for_target(bundle: ModuleBundle, triple: str, pointer_width: usize) -> Vec[EmittedIrModule] {
+pub fn emit_ir_bundle_for_target(bundle: ModuleBundle, triple: str, pointer_width: usize) -> Vec[EmittedIrModule]
+    {
     ret emit_ir_bundle_for_target_parallel(bundle, triple, pointer_width, 1_usize)
 }
 
 pub fn emit_ir_bundle_for_target_parallel(bundle: ModuleBundle, triple: str, pointer_width: usize,
-    requested_jobs: usize) -> Vec[EmittedIrModule] {
-    unsafe { encore_llvm_set_target_pointer_width(pointer_width) }
+    requested_jobs: usize,) -> Vec[EmittedIrModule] {
+    unsafe {
+        encore_llvm_set_target_pointer_width(pointer_width)
+    }
     let mut prepared = Vec[Module]::new()
-    for module in bundle.modules { prepared.push(prepare_module_for_codegen(module)) }
+    for module in bundle.modules {
+        prepared.push(prepare_module_for_codegen(module))
+    }
     let mut analysis_directives = Vec[Directive]::new()
-    for module in prepared { analysis_directives.extend(module.directives) }
+    for module in prepared {
+        analysis_directives.extend(module.directives)
+    }
     let mut generic_calls = collect_generic_calls(analysis_directives)
     expand_generic_calls(analysis_directives, generic_calls)
     let concrete_types = collect_concrete_types(analysis_directives, generic_calls)
@@ -1491,16 +1870,21 @@ pub fn emit_ir_bundle_for_target_parallel(bundle: ModuleBundle, triple: str, poi
     let mut pending = Vec[JoinHandle[Vec[EmittedIrChunk]]]::new()
     let mut worker = 0_usize
     while worker < worker_count {
-        pending.push(spawn emit_ir_module_batch(prepared, generic_calls, concrete_types, triple, worker, worker_count))
+        pending.push(spawn emit_ir_module_batch(prepared, generic_calls, concrete_types, triple, worker,
+        worker_count))
         worker = worker + 1_usize
     }
     let mut chunks = Vec[EmittedIrChunk]::new()
-    for handle in pending { chunks.extend(handle.join()) }
+    for handle in pending {
+        chunks.extend(handle.join())
+    }
     let mut out = Vec[EmittedIrModule]::new()
     let mut index = 0_usize
     while index < prepared.len() {
         for chunk in chunks {
-            if chunk.index == index { out.push(chunk.module) }
+            if chunk.index == index {
+                out.push(chunk.module)
+            }
         }
         index = index + 1_usize
     }
@@ -1508,13 +1892,19 @@ pub fn emit_ir_bundle_for_target_parallel(bundle: ModuleBundle, triple: str, poi
 }
 
 fn min_codegen_jobs(requested: usize, count: usize) -> usize {
-    let jobs = if requested == 0_usize { 1_usize } else { requested }
-    if count == 0_usize || jobs < count { ret jobs }
+    let jobs = if requested == 0_usize {
+        1_usize
+    } else {
+        requested
+    }
+    if count == 0_usize || jobs < count {
+        ret jobs
+    }
     ret count
 }
 
 fn emit_ir_module_batch(prepared: Vec[Module], generic_calls: Vec[GenericCall], concrete_types: Vec[Type],
-    triple: str, worker_index: usize, worker_count: usize) -> Vec[EmittedIrChunk] {
+    triple: str, worker_index: usize, worker_count: usize,) -> Vec[EmittedIrChunk] {
     let mut out = Vec[EmittedIrChunk]::new()
     let mut index = worker_index
     while index < prepared.len() {
@@ -1522,10 +1912,20 @@ fn emit_ir_module_batch(prepared: Vec[Module], generic_calls: Vec[GenericCall], 
             Some(module) => {
                 let view = module_codegen_view(module, prepared)
                 let lowered = lower_with_precomputed_analysis(view, generic_calls, concrete_types)
-                let ir = if triple == "" { lowered.ir } else { "target triple = \"" + triple + "\"\n\n" + lowered.ir }
-                out.push(EmittedIrChunk{index, EmittedIrModule{module.name, ir, ir.len()}})
+                let ir = if triple == "" {
+                    lowered.ir
+                } else {
+                    "target triple = \"" + triple + "\"\n\n" + lowered.ir
+                }
+                out.push(EmittedIrChunk {
+                        index, EmittedIrModule {
+                            module.name, ir, ir.len()
+                        }
+                    }
+                )
             }
-            None => {}
+            None => {
+            }
         }
         index = index + worker_count
     }
@@ -1542,25 +1942,32 @@ fn module_codegen_view(current: Module, modules: Vec[Module]) -> Module {
                     if local || function.generics.len() > 0_usize {
                         directives.push(Directive::Function(function))
                     } else {
-                        directives.push(Directive::Function(extern_fn_item(function.name, function.generics, function.params, function.ret_type)))
+                        directives.push(Directive::Function(extern_fn_item(function.name, function.generics,
+                        function.params, function.ret_type)))
                     }
                 }
                 Directive::Impl(item) => {
                     let mut methods = Vec[FnDirective]::new()
                     for method in item.methods {
-                        if local || item.generics.len() > 0_usize || method.generics.len() > 0_usize {
+                        if local || item.generics.len() > 0_usize || method.generics.len() > 0_usize
+                        {
                             methods.push(method)
                         } else {
-                            methods.push(extern_fn_item(method.name, method.generics, method.params, method.ret_type))
+                            methods.push(extern_fn_item(method.name, method.generics, method.params,
+                            method.ret_type))
                         }
                     }
-                    directives.push(impl_directive(item.generics, item.trait_name, item.trait_args, item.for_type, methods))
+                    directives.push(impl_directive(item.generics, item.trait_name, item.trait_args, item.for_type,
+                    methods))
                 }
-                _ => { directives.push(directive) }
+                _ => {
+                    directives.push(directive)
+                }
             }
         }
     }
-    ret make_module_with_metadata(current.name, current.imports, current.documentation, current.symbol_documentation, directives)
+    ret make_module_with_metadata(current.name, current.imports, current.documentation, current.symbol_documentation,
+    directives)
 }
 
 fn str_len(value: str) -> usize {
@@ -1577,10 +1984,14 @@ fn lower_type_declarations(directives: Vec[Directive], concrete_types: Vec[Type]
                 if item.name == "JoinHandle" {
                     // Emitted below from the language-defined ABI.
                 } elif item.generics.len() == 0_usize {
-                    out.push(struct_declaration_text(item.name, item.generics, item.fields, Type{item.name, Vec[Type]::new(), PointerKind::Plain}))
+                    out.push(struct_declaration_text(item.name, item.generics, item.fields, Type {
+                                item.name, Vec[Type]::new(), PointerKind::Plain
+                            }
+                        ))
                 } else {
                     for concrete in concrete_types {
-                        if concrete.name == item.name && concrete.generics.len() == item.generics.len() {
+                        if concrete.name == item.name && concrete.generics.len() == item.generics.len()
+                        {
                             out.push(struct_declaration_text(item.name, item.generics, item.fields, concrete))
                         }
                     }
@@ -1588,10 +1999,14 @@ fn lower_type_declarations(directives: Vec[Directive], concrete_types: Vec[Type]
             }
             Directive::Enum(item) => {
                 if item.generics.len() == 0_usize {
-                    out.push(enum_declaration_text(item.name, item.generics, item.variants, Type{item.name, Vec[Type]::new(), PointerKind::Plain}))
+                    out.push(enum_declaration_text(item.name, item.generics, item.variants, Type {
+                                item.name, Vec[Type]::new(), PointerKind::Plain
+                            }
+                        ))
                 } else {
                     for concrete in concrete_types {
-                        if concrete.name == item.name && concrete.generics.len() == item.generics.len() {
+                        if concrete.name == item.name && concrete.generics.len() == item.generics.len()
+                        {
                             out.push(enum_declaration_text(item.name, item.generics, item.variants, concrete))
                         }
                     }
@@ -1603,7 +2018,8 @@ fn lower_type_declarations(directives: Vec[Directive], concrete_types: Vec[Type]
                 // for the generated dispatch thunks.
                 out.push("%dyn_" + sanitize_symbol(item.name) + " = type { i8*, i64 }")
             }
-            _ => {}
+            _ => {
+            }
         }
     }
     // `spawn` is a language construct and may produce JoinHandle[T] without
@@ -1612,7 +2028,10 @@ fn lower_type_declarations(directives: Vec[Directive], concrete_types: Vec[Type]
     // frontend references it and no imported declaration is present.
     for concrete in concrete_types {
         if concrete.name == "JoinHandle" && concrete.generics.len() == 1_usize {
-            let token = type_text(lower_type(Type{"usize", Vec[Type]::new(), PointerKind::Plain}))
+            let token = type_text(lower_type(Type {
+                        "usize", Vec[Type]::new(), PointerKind::Plain
+                    }
+                ))
             out.push("%" + sanitize_symbol(mangle_type_name(concrete)) + " = type { " + token + " }")
         }
     }
@@ -1622,7 +2041,9 @@ fn lower_type_declarations(directives: Vec[Directive], concrete_types: Vec[Type]
 
 fn lower_string_globals(directives: Vec[Directive]) -> Vec[str] {
     let mut out = Vec[str]::new()
-    let seen = unsafe { encore_strset_new() }
+    let seen = unsafe {
+        encore_strset_new()
+    }
     for directive in directives {
         match directive {
             Directive::Function(function) => {
@@ -1632,13 +2053,19 @@ fn lower_string_globals(directives: Vec[Directive]) -> Vec[str] {
                             Instruction::Lcpos(data) => {
                                 if is_string_literal(data.value) {
                                     let body = string_literal_body(data.value)
-                                    if unsafe { encore_strset_insert(seen, body) } {
+                                    if unsafe {
+                                        encore_strset_insert(seen, body)
+                                    }
+                                    {
                                         let name = string_literal_global_name(body)
-                                        out.push("@" + name + " = private unnamed_addr constant [" + Debug::fmt(string_literal_byte_len(body) + 1_usize) + " x i8] c\"" + llvm_string_body(body) + "\\00\"")
+                                        out.push("@" + name + " = private unnamed_addr constant [" +
+                                        Debug::fmt(string_literal_byte_len(body) + 1_usize) + " x i8] c\""
+                                        + llvm_string_body(body) + "\\00\"")
                                     }
                                 }
                             }
-                            _ => {}
+                            _ => {
+                            }
                         }
                     }
                 }
@@ -1651,29 +2078,40 @@ fn lower_string_globals(directives: Vec[Directive]) -> Vec[str] {
                                 Instruction::Lcpos(data) => {
                                     if is_string_literal(data.value) {
                                         let body = string_literal_body(data.value)
-                                        if unsafe { encore_strset_insert(seen, body) } {
+                                        if unsafe {
+                                            encore_strset_insert(seen, body)
+                                        }
+                                        {
                                             let name = string_literal_global_name(body)
-                                            out.push("@" + name + " = private unnamed_addr constant [" + Debug::fmt(string_literal_byte_len(body) + 1_usize) + " x i8] c\"" + llvm_string_body(body) + "\\00\"")
+                                            out.push("@" + name + " = private unnamed_addr constant ["
+                                            + Debug::fmt(string_literal_byte_len(body) + 1_usize) + " x i8] c\""
+                                            + llvm_string_body(body) + "\\00\"")
                                         }
                                     }
                                 }
-                                _ => {}
+                                _ => {
+                                }
                             }
                         }
                     }
                 }
             }
-            _ => {}
+            _ => {
+            }
         }
     }
 
-    unsafe { encore_strset_free(seen) }
+    unsafe {
+        encore_strset_free(seen)
+    }
     ret out
 }
 
-fn sort_string_globals(entries: mut Vec[StringGlobal], low: usize, high: usize) -> () {
-    if low >= high { ret () }
-    let pivot = match entries.get(low + (high - low) / 2_usize) {
+fn sort_string_globals(entries: mut Vec[StringGlobal], low: usize, high: usize) ->() {
+    if low >= high {
+        ret()
+    }
+    let pivot = match entries.get(low +(high - low) / 2_usize) {
         Option[StringGlobal]::Some(entry) => entry.tag
         Option[StringGlobal]::None => 0_usize
     }
@@ -1683,36 +2121,56 @@ fn sort_string_globals(entries: mut Vec[StringGlobal], low: usize, high: usize) 
         loop {
             match entries.get(left) {
                 Option[StringGlobal]::Some(entry) => {
-                    if entry.tag < pivot { left = left + 1_usize }
-                    else { break }
+                    if entry.tag < pivot {
+                        left = left + 1_usize
+                    } else {
+                        break
+                    }
                 }
-                Option[StringGlobal]::None => { break }
+                Option[StringGlobal]::None => {
+                    break
+                }
             }
         }
         loop {
             match entries.get(right) {
                 Option[StringGlobal]::Some(entry) => {
-                    if entry.tag > pivot && right > 0_usize { right = right - 1_usize }
-                    else { break }
+                    if entry.tag > pivot && right > 0_usize {
+                        right = right - 1_usize
+                    } else {
+                        break
+                    }
                 }
-                Option[StringGlobal]::None => { break }
+                Option[StringGlobal]::None => {
+                    break
+                }
             }
         }
-        if left > right { break }
+        if left > right {
+            break
+        }
         let left_value = match entries.get(left) {
             Option[StringGlobal]::Some(entry) => entry
-            Option[StringGlobal]::None => StringGlobal{"", 0_usize}
+            Option[StringGlobal]::None => StringGlobal {
+                "", 0_usize
+            }
         }
         let right_value = match entries.get(right) {
             Option[StringGlobal]::Some(entry) => entry
-            Option[StringGlobal]::None => StringGlobal{"", 0_usize}
+            Option[StringGlobal]::None => StringGlobal {
+                "", 0_usize
+            }
         }
         entries.set(left, right_value)
         entries.set(right, left_value)
         left = left + 1_usize
-        if right == 0_usize { break }
+        if right == 0_usize {
+            break
+        }
         right = right - 1_usize
-        if left > right { break }
+        if left > right {
+            break
+        }
     }
     if low < right {
         sort_string_globals(entries, low, right)
@@ -1720,16 +2178,19 @@ fn sort_string_globals(entries: mut Vec[StringGlobal], low: usize, high: usize) 
     if left < high {
         sort_string_globals(entries, left, high)
     }
-    ret ()
+    ret()
 }
 
 fn is_string_literal(value: str) -> bool {
     let chars = value.char_len()
-    ret chars >= 6_usize && value.slice(0_usize, 1_usize) == "\"" && value.slice(chars - 5_usize, 5_usize) == "\"_str"
+    ret chars >= 6_usize && value.slice(0_usize, 1_usize) == "\"" && value.slice(chars - 5_usize, 5_usize)
+    == "\"_str"
 }
 
 fn string_literal_body(value: str) -> str {
-    if !is_string_literal(value) { ret "" }
+    if !is_string_literal(value) {
+        ret ""
+    }
     ret value.slice(1_usize, value.char_len() - 6_usize)
 }
 
@@ -1744,18 +2205,29 @@ fn llvm_string_body(body: str) -> str {
         let ch = body.slice(index, 1_usize)
         if ch == "\\" && index + 1_usize < body.char_len() {
             let escaped = body.slice(index + 1_usize, 1_usize)
-            if escaped == "n" { out = out + "\\0A" }
-            elif escaped == "r" { out = out + "\\0D" }
-            elif escaped == "t" { out = out + "\\09" }
-            elif escaped == "0" { out = out + "\\00" }
-            elif escaped == "\"" { out = out + "\\22" }
-            elif escaped == "\\" { out = out + "\\5C" }
-            else { out = out + "\\5C" + escaped }
+            if escaped == "n" {
+                out = out + "\\0A"
+            } elif escaped == "r" {
+                out = out + "\\0D"
+            } elif escaped == "t" {
+                out = out + "\\09"
+            } elif escaped == "0" {
+                out = out + "\\00"
+            } elif escaped == "\"" {
+                out = out + "\\22"
+            } elif escaped == "\\" {
+                out = out + "\\5C"
+            } else {
+                out = out + "\\5C" + escaped
+            }
             index = index + 1_usize
+        } elif ch == "\"" {
+            out = out + "\\22"
+        } elif ch == "\\" {
+            out = out + "\\5C"
+        } else {
+            out = out + ch
         }
-        elif ch == "\"" { out = out + "\\22" }
-        elif ch == "\\" { out = out + "\\5C" }
-        else { out = out + ch }
         index = index + 1_usize
     }
     ret out
@@ -1777,15 +2249,18 @@ fn string_literal_byte_len(body: str) -> usize {
     ret count
 }
 
-fn struct_declaration_text(name: str, generic_params: Vec[Type], fields_data: Vec[Parameter], concrete: Type) -> str {
+fn struct_declaration_text(name: str, generic_params: Vec[Type], fields_data: Vec[Parameter], concrete:
+    Type) -> str {
     let mut fields = Vec[str]::new()
     for field in fields_data {
         fields.push(type_text(lower_type(substitute_generic_type(field.typ, generic_params, concrete.generics))))
     }
-    ret "%" + sanitize_symbol(mangle_type_name(concrete)) + " = type { " + join_type_parts(fields) + " }"
+    ret "%" + sanitize_symbol(mangle_type_name(concrete)) + " = type { " + join_type_parts(fields) +
+    " }"
 }
 
-fn enum_declaration_text(name: str, generic_params: Vec[Type], variants: Vec[EnumVariant], concrete: Type) -> str {
+fn enum_declaration_text(name: str, generic_params: Vec[Type], variants: Vec[EnumVariant], concrete:
+    Type) -> str {
     ret "%" + sanitize_symbol(mangle_type_name(concrete)) + " = type { i32, i8* }"
 }
 
@@ -1797,43 +2272,63 @@ fn substitute_generic_type(typ: Type, params: Vec[Type], args: Vec[Type]) -> Typ
                 if typ.name == param_type.name && typ.generics.len() == 0_usize {
                     match args.get(index) {
                         Option[Type]::Some(arg_type) => {
-                            let pointer = if typ.pointer == PointerKind::Plain { arg_type.pointer } else { typ.pointer }
-                            ret Type{arg_type.name, arg_type.generics, pointer}
+                            let pointer = if typ.pointer == PointerKind::Plain {
+                                arg_type.pointer
+                            } else {
+                                typ.pointer
+                            }
+                            ret Type {
+                                arg_type.name, arg_type.generics, pointer
+                            }
                         }
-                        Option[Type]::None => {}
+                        Option[Type]::None => {
+                        }
                     }
                 }
             }
-            Option[Type]::None => {}
+            Option[Type]::None => {
+            }
         }
         index = index + 1_usize
     }
     let mut generics = Vec[Type]::new()
-    for generic in typ.generics { generics.push(substitute_generic_type(generic, params, args)) }
-    ret Type{typ.name, generics, typ.pointer}
+    for generic in typ.generics {
+        generics.push(substitute_generic_type(generic, params, args))
+    }
+    ret Type {
+        typ.name, generics, typ.pointer
+    }
 }
 
 fn collect_concrete_types(directives: Vec[Directive], calls: Vec[GenericCall]) -> Vec[Type] {
     let mut out = Vec[Type]::new()
-    let seen = unsafe { encore_strset_new() }
+    let seen = unsafe {
+        encore_strset_new()
+    }
     for directive in directives {
         match directive {
-            Directive::Function(function) => { collect_function_types(out, seen, function) }
+            Directive::Function(function) => {
+                collect_function_types(out, seen, function)
+            }
             Directive::Impl(item) => {
                 if item.generics.len() == 0_usize {
                     for method in item.methods {
-                        if method.generics.len() == 0_usize { collect_function_types(out, seen, method) }
+                        if method.generics.len() == 0_usize {
+                            collect_function_types(out, seen, method)
+                        }
                     }
                 }
             }
-            _ => {}
+            _ => {
+            }
         }
     }
     for call_data in calls {
         for directive in directives {
             match directive {
                 Directive::Function(function) => {
-                    if generic_function_name_matches(function.name, call_data.name) && function.generics.len() == call_data.args.len() {
+                    if generic_function_name_matches(function.name, call_data.name) && function.generics.len()
+                    == call_data.args.len() {
                         let template = generic_function_template_for_call(function, call_data.name)
                         collect_function_types(out, seen, specialize_function(template, call_data.args))
                     }
@@ -1844,7 +2339,8 @@ fn collect_concrete_types(directives: Vec[Directive], calls: Vec[GenericCall]) -
                             if method.generics.len() == 0_usize {
                                 let full_name = item.for_type.name + "::" + method.name
                                 if full_name == call_data.name {
-                                    let template = fn_item(full_name, item.generics, method.params, method.ret_type, method.blocks)
+                                    let template = fn_item(full_name, item.generics, method.params, method.ret_type,
+                                    method.blocks)
                                     collect_function_types(out, seen, specialize_function(template, call_data.args))
                                 }
                             }
@@ -1852,125 +2348,205 @@ fn collect_concrete_types(directives: Vec[Directive], calls: Vec[GenericCall]) -
                     }
                     if impl_has_generic_methods(item.methods) {
                         for method in item.methods {
-                            if method.generics.len() == 0_usize { continue }
+                            if method.generics.len() == 0_usize {
+                                continue
+                            }
                             let full_name = item.for_type.name + "::" + method.name
-                            if item.generics.len() == 0_usize && full_name == call_data.name && method.generics.len() == call_data.args.len() {
-                                let template = fn_item(full_name, method.generics, method.params, method.ret_type, method.blocks)
+                            if item.generics.len() == 0_usize && full_name == call_data.name && method.generics.len()
+                            == call_data.args.len() {
+                                let template = fn_item(full_name, method.generics, method.params, method.ret_type,
+                                method.blocks)
                                 collect_function_types(out, seen, specialize_function(template, call_data.args))
                             } elif item.generics.len() > 0_usize {
                                 let params = combined_impl_method_generics(item.generics, method.generics)
-                                if full_name == call_data.name && params.len() == call_data.args.len() {
-                                    let template = fn_item(full_name, params, method.params, method.ret_type, method.blocks)
+                                if full_name == call_data.name && params.len() == call_data.args.len()
+                                {
+                                    let template = fn_item(full_name, params, method.params, method.ret_type,
+                                    method.blocks)
                                     collect_function_types(out, seen, specialize_function(template, call_data.args))
                                 }
                             }
                         }
                     }
                 }
-                _ => {}
+                _ => {
+                }
             }
         }
     }
-    unsafe { encore_strset_free(seen) }
+    unsafe {
+        encore_strset_free(seen)
+    }
     ret out
 }
 
 fn impl_has_generic_methods(methods: Vec[FnDirective]) -> bool {
     let mut index = 0_usize
     while index < methods.len() {
-        let method_handle = unsafe { methods.get_handle(index) }
+        let method_handle = unsafe {
+            methods.get_handle(index)
+        }
         unsafe {
             unsafe ehir {
-                method_ptr: FnDirective* = pcast method_handle: usize, FnDirective*
-                method: FnDirective = load method_ptr: FnDirective*
+                method_ptr: FnDirective * = pcast method_handle: usize, FnDirective *
+                method: FnDirective = load method_ptr: FnDirective *
             }
-            if method.generics.len() > 0_usize { ret true }
+            if method.generics.len() > 0_usize {
+                ret true
+            }
         }
         index = index + 1_usize
     }
     ret false
 }
 
-fn collect_function_types(out: mut Vec[Type], seen: usize, function: FnDirective) -> () {
-    if function.generics.len() > 0_usize { ret () }
+fn collect_function_types(out: mut Vec[Type], seen: usize, function: FnDirective) ->() {
+    if function.generics.len() > 0_usize {
+        ret()
+    }
     remember_concrete_type(out, seen, function.ret_type)
-    for parameter in function.params { remember_concrete_type(out, seen, parameter.typ) }
+    for parameter in function.params {
+        remember_concrete_type(out, seen, parameter.typ)
+    }
     for block_item in function.blocks {
         let mut instruction_index = 0_usize
         while instruction_index < block_item.instructions.len() {
-            let instruction_handle = unsafe { block_item.instructions.get_handle(instruction_index) }
+            let instruction_handle = unsafe {
+                block_item.instructions.get_handle(instruction_index)
+            }
             collect_instruction_types(out, seen, instruction_handle)
             instruction_index = instruction_index + 1_usize
         }
         match block_item.terminator {
-            Terminator::Ret(data) => { remember_variable_type(out, seen, data.value) }
-            Terminator::Cbr(data) => { remember_variable_type(out, seen, data.cond) }
-            _ => {}
+            Terminator::Ret(data) => {
+                remember_variable_type(out, seen, data.value)
+            }
+            Terminator::Cbr(data) => {
+                remember_variable_type(out, seen, data.cond)
+            }
+            _ => {
+            }
         }
     }
-    ret ()
+    ret()
 }
 
-fn collect_instruction_types(out: mut Vec[Type], seen: usize, instruction_handle: usize) -> () {
+fn collect_instruction_types(out: mut Vec[Type], seen: usize, instruction_handle: usize) ->() {
     unsafe {
         unsafe ehir {
-            instruction_ptr: Instruction* = pcast instruction_handle: usize, Instruction*
-            instruction: Instruction = load instruction_ptr: Instruction*
+            instruction_ptr: Instruction * = pcast instruction_handle: usize, Instruction *
+            instruction: Instruction = load instruction_ptr: Instruction *
         }
         match instruction {
-            Instruction::Lcpos(data) => { remember_variable_type(out, seen, data.out) }
-            Instruction::Alias(data) => { remember_variable_type(out, seen, data.out) }
-            Instruction::Lcsos(data) => { remember_variable_type(out, seen, data.out) }
-            Instruction::Lceos(data) => { remember_variable_type(out, seen, data.out) }
+            Instruction::Lcpos(data) => {
+                remember_variable_type(out, seen, data.out)
+            }
+            Instruction::Alias(data) => {
+                remember_variable_type(out, seen, data.out)
+            }
+            Instruction::Lcsos(data) => {
+                remember_variable_type(out, seen, data.out)
+            }
+            Instruction::Lceos(data) => {
+                remember_variable_type(out, seen, data.out)
+            }
             // Call results can carry their type in the required EHIR
             // annotation even when Variable.typ has not been populated yet.
-            Instruction::Call(data) => { remember_concrete_type(out, seen, required_variable_type(data.out)) }
-            Instruction::Await(data) => { remember_variable_type(out, seen, data.out) }
-            Instruction::Load(data) => { remember_variable_type(out, seen, data.out) }
-            Instruction::GetField(data) => { remember_variable_type(out, seen, data.out) }
-            Instruction::GetFieldPtr(data) => { remember_variable_type(out, seen, data.out) }
-            Instruction::SGetField(data) => { remember_variable_type(out, seen, data.out) }
-            Instruction::SGetFieldPtr(data) => { remember_variable_type(out, seen, data.out) }
-            Instruction::Gep(data) => { remember_variable_type(out, seen, data.out) }
-            Instruction::PtrCast(data) => { remember_variable_type(out, seen, data.out) }
-            Instruction::StackAlloc(data) => { remember_variable_type(out, seen, data.out) }
-            Instruction::HeapAlloc(data) => { remember_variable_type(out, seen, data.out) }
-            Instruction::HeapRealloc(data) => { remember_variable_type(out, seen, data.out) }
-            Instruction::Binary(data) => { remember_variable_type(out, seen, data.out) }
-            Instruction::Phi(data) => { remember_variable_type(out, seen, data.out) }
-            _ => {}
+            Instruction::Call(data) => {
+                remember_concrete_type(out, seen, required_variable_type(data.out))
+            }
+            Instruction::Await(data) => {
+                remember_variable_type(out, seen, data.out)
+            }
+            Instruction::Load(data) => {
+                remember_variable_type(out, seen, data.out)
+            }
+            Instruction::GetField(data) => {
+                remember_variable_type(out, seen, data.out)
+            }
+            Instruction::GetFieldPtr(data) => {
+                remember_variable_type(out, seen, data.out)
+            }
+            Instruction::SGetField(data) => {
+                remember_variable_type(out, seen, data.out)
+            }
+            Instruction::SGetFieldPtr(data) => {
+                remember_variable_type(out, seen, data.out)
+            }
+            Instruction::Gep(data) => {
+                remember_variable_type(out, seen, data.out)
+            }
+            Instruction::PtrCast(data) => {
+                remember_variable_type(out, seen, data.out)
+            }
+            Instruction::StackAlloc(data) => {
+                remember_variable_type(out, seen, data.out)
+            }
+            Instruction::HeapAlloc(data) => {
+                remember_variable_type(out, seen, data.out)
+            }
+            Instruction::HeapRealloc(data) => {
+                remember_variable_type(out, seen, data.out)
+            }
+            Instruction::Binary(data) => {
+                remember_variable_type(out, seen, data.out)
+            }
+            Instruction::Phi(data) => {
+                remember_variable_type(out, seen, data.out)
+            }
+            _ => {
+            }
         }
     }
-    ret ()
+    ret()
 }
 
-fn remember_variable_type(out: mut Vec[Type], seen: usize, value: Variable) -> () {
+fn remember_variable_type(out: mut Vec[Type], seen: usize, value: Variable) ->() {
     match value.typ {
-        Option[Type]::Some(typ) => { remember_concrete_type(out, seen, typ) }
-        Option[Type]::None => {}
+        Option[Type]::Some(typ) => {
+            remember_concrete_type(out, seen, typ)
+        }
+        Option[Type]::None => {
+        }
     }
-    ret ()
+    ret()
 }
 
-fn remember_concrete_type(out: mut Vec[Type], seen: usize, typ: Type) -> () {
-    for generic in typ.generics { remember_concrete_type(out, seen, generic) }
+fn remember_concrete_type(out: mut Vec[Type], seen: usize, typ: Type) ->() {
+    for generic in typ.generics {
+        remember_concrete_type(out, seen, generic)
+    }
     if typ.pointer == PointerKind::Heap {
         let heap_key = mangle_type_name(typ)
-        if unsafe { encore_strset_insert(seen, heap_key) } { out.push(typ) }
-        ret ()
+        if unsafe {
+            encore_strset_insert(seen, heap_key)
+        }
+        {
+            out.push(typ)
+        }
+        ret()
     }
-    if typ.generics.len() == 0_usize && !is_dyn_type(typ) { ret () }
-    let concrete = Type{typ.name, typ.generics, PointerKind::Plain}
+    if typ.generics.len() == 0_usize && !is_dyn_type(typ) {
+        ret()
+    }
+    let concrete = Type {
+        typ.name, typ.generics, PointerKind::Plain
+    }
     let key = mangle_type_name(concrete)
-    if unsafe { encore_strset_insert(seen, key) } {
+    if unsafe {
+        encore_strset_insert(seen, key)
+    }
+    {
         out.push(concrete)
     }
-    ret ()
+    ret()
 }
 
-fn sort_concrete_type_entries(entries: mut Vec[ConcreteTypeEntry], low: usize, high: usize) -> () {
-    if low >= high { ret () }
-    let pivot = match entries.get(low + (high - low) / 2_usize) {
+fn sort_concrete_type_entries(entries: mut Vec[ConcreteTypeEntry], low: usize, high: usize) ->() {
+    if low >= high {
+        ret()
+    }
+    let pivot = match entries.get(low +(high - low) / 2_usize) {
         Option[ConcreteTypeEntry]::Some(entry) => entry.tag
         Option[ConcreteTypeEntry]::None => 0_usize
     }
@@ -1980,47 +2556,79 @@ fn sort_concrete_type_entries(entries: mut Vec[ConcreteTypeEntry], low: usize, h
         loop {
             match entries.get(left) {
                 Option[ConcreteTypeEntry]::Some(entry) => {
-                    if entry.tag < pivot { left = left + 1_usize }
-                    else { break }
+                    if entry.tag < pivot {
+                        left = left + 1_usize
+                    } else {
+                        break
+                    }
                 }
-                Option[ConcreteTypeEntry]::None => { break }
+                Option[ConcreteTypeEntry]::None => {
+                    break
+                }
             }
         }
         loop {
             match entries.get(right) {
                 Option[ConcreteTypeEntry]::Some(entry) => {
-                    if entry.tag > pivot && right > 0_usize { right = right - 1_usize }
-                    else { break }
+                    if entry.tag > pivot && right > 0_usize {
+                        right = right - 1_usize
+                    } else {
+                        break
+                    }
                 }
-                Option[ConcreteTypeEntry]::None => { break }
+                Option[ConcreteTypeEntry]::None => {
+                    break
+                }
             }
         }
-        if left > right { break }
+        if left > right {
+            break
+        }
         let left_value = match entries.get(left) {
             Option[ConcreteTypeEntry]::Some(entry) => entry
-            Option[ConcreteTypeEntry]::None => ConcreteTypeEntry{Type{"void", Vec[Type]::new(), PointerKind::Plain}, "", 0_usize}
+            Option[ConcreteTypeEntry]::None => ConcreteTypeEntry {
+                Type {
+                    "void", Vec[Type]::new(), PointerKind::Plain
+                }
+                , "", 0_usize
+            }
         }
         let right_value = match entries.get(right) {
             Option[ConcreteTypeEntry]::Some(entry) => entry
-            Option[ConcreteTypeEntry]::None => ConcreteTypeEntry{Type{"void", Vec[Type]::new(), PointerKind::Plain}, "", 0_usize}
+            Option[ConcreteTypeEntry]::None => ConcreteTypeEntry {
+                Type {
+                    "void", Vec[Type]::new(), PointerKind::Plain
+                }
+                , "", 0_usize
+            }
         }
         entries.set(left, right_value)
         entries.set(right, left_value)
         left = left + 1_usize
-        if right == 0_usize { break }
+        if right == 0_usize {
+            break
+        }
         right = right - 1_usize
-        if left > right { break }
+        if left > right {
+            break
+        }
     }
-    if low < right { sort_concrete_type_entries(entries, low, right) }
-    if left < high { sort_concrete_type_entries(entries, left, high) }
-    ret ()
+    if low < right {
+        sort_concrete_type_entries(entries, low, right)
+    }
+    if left < high {
+        sort_concrete_type_entries(entries, left, high)
+    }
+    ret()
 }
 
 fn join_type_parts(parts: Vec[str]) -> str {
     let mut out = ""
     let mut index = 0_usize
     for part in parts {
-        if index > 0_usize { out = out + ", " }
+        if index > 0_usize {
+            out = out + ", "
+        }
         out = out + part
         index = index + 1_usize
     }
@@ -2047,7 +2655,9 @@ fn lower_directive(directive: Directive) -> Vec[LLVMFunction] {
         Impl(impl_data) => {
             let mut methods = Vec[LLVMFunction]::new()
             for method in impl_data.methods {
-                if impl_data.generics.len() > 0_usize || method.generics.len() > 0_usize { continue }
+                if impl_data.generics.len() > 0_usize || method.generics.len() > 0_usize {
+                    continue
+                }
                 let full_name = impl_data.for_type.name + "::" + method.name
                 let concrete = if method.is_extern {
                     extern_fn_item(full_name, Vec[Type]::new(), method.params, method.ret_type)
@@ -2084,44 +2694,69 @@ fn lower_function(function: FnDirective) -> LLVMFunction {
 }
 
 fn function_is_pure_numeric(function: FnDirective) -> bool {
-    if function.is_extern || function.is_async || !is_pure_scalar_type(function.ret_type) { ret false }
+    if function.is_extern || function.is_async || !is_pure_scalar_type(function.ret_type) {
+        ret false
+    }
     for param in function.params {
-        if !is_pure_scalar_type(param.typ) { ret false }
+        if !is_pure_scalar_type(param.typ) {
+            ret false
+        }
     }
     for block in function.blocks {
         for instruction in block.instructions {
             match instruction {
-                Comment(_) => {}
+                Comment(_) => {
+                }
                 Lcpos(literal_data) => {
-                    if !is_pure_scalar_type(required_variable_type(literal_data.out)) { ret false }
+                    if !is_pure_scalar_type(required_variable_type(literal_data.out)) {
+                        ret false
+                    }
                 }
                 Alias(alias_data) => {
                     if !is_pure_scalar_type(required_variable_type(alias_data.out)) ||
-                        !is_pure_scalar_type(required_variable_type(alias_data.src)) { ret false }
+                    !is_pure_scalar_type(required_variable_type(alias_data.src)) {
+                        ret false
+                    }
                 }
                 Binary(binary_data) => {
                     if !is_pure_scalar_type(required_variable_type(binary_data.out)) ||
-                        !is_pure_scalar_type(required_variable_type(binary_data.lhs)) ||
-                        !is_pure_scalar_type(required_variable_type(binary_data.rhs)) { ret false }
+                    !is_pure_scalar_type(required_variable_type(binary_data.lhs)) ||
+                    !is_pure_scalar_type(required_variable_type(binary_data.rhs)) {
+                        ret false
+                    }
                 }
                 Phi(phi_data) => {
-                    if !is_pure_scalar_type(required_variable_type(phi_data.out)) { ret false }
+                    if !is_pure_scalar_type(required_variable_type(phi_data.out)) {
+                        ret false
+                    }
                     for pair in phi_data.pairs {
-                        if !is_pure_scalar_type(required_variable_type(pair.value)) { ret false }
+                        if !is_pure_scalar_type(required_variable_type(pair.value)) {
+                            ret false
+                        }
                     }
                 }
                 PtrCast(cast_data) => {
                     if !is_pure_scalar_type(required_variable_type(cast_data.out)) ||
-                        !is_pure_scalar_type(required_variable_type(cast_data.src)) { ret false }
-                }
-                Call(call_data) => {
-                    if function_symbol(call_data.name) != function_symbol(function.name) { ret false }
-                    if !is_pure_scalar_type(required_variable_type(call_data.out)) { ret false }
-                    for arg in call_data.args {
-                        if !is_pure_scalar_type(required_variable_type(arg)) { ret false }
+                    !is_pure_scalar_type(required_variable_type(cast_data.src)) {
+                        ret false
                     }
                 }
-                _ => { ret false }
+                Call(call_data) => {
+                    if function_symbol(call_data.name) != function_symbol(function.name) {
+                        ret false
+                    }
+                    if !is_pure_scalar_type(required_variable_type(call_data.out)) {
+                        ret false
+                    }
+                    for arg in call_data.args {
+                        if !is_pure_scalar_type(required_variable_type(arg)) {
+                            ret false
+                        }
+                    }
+                }
+                _ => {
+                    ret false
+                }
             }
         }
     }
@@ -2129,7 +2764,8 @@ fn function_is_pure_numeric(function: FnDirective) -> bool {
 }
 
 fn is_pure_scalar_type(typ: Type) -> bool {
-    ret is_numeric_ehir_type(typ) || (typ.pointer == PointerKind::Plain && (typ.name == "bool" || typ.name == "u1"))
+    ret is_numeric_ehir_type(typ) ||(typ.pointer == PointerKind::Plain &&(typ.name == "bool" || typ.name
+    == "u1"))
 }
 
 fn lower_params(params: Vec[Parameter]) -> Vec[LLVMParam] {
@@ -2160,13 +2796,15 @@ fn lower_block_items(block: Block) -> Vec[LLVMBasicBlock] {
         Terminator::Match(data) => {
             ret lower_match_blocks(block_name, instructions, data)
         }
-        _ => {}
+        _ => {
+        }
     }
     let terminator = lower_terminator(raw_terminator)
     ret vec_singleton(llvm_block(block_name, instructions, terminator))
 }
 
-fn lower_match_blocks(block_name: str, base_instructions: Vec[LLVMInstruction], data: MatchInstruction) -> Vec[LLVMBasicBlock] {
+fn lower_match_blocks(block_name: str, base_instructions: Vec[LLVMInstruction], data: MatchInstruction)
+    -> Vec[LLVMBasicBlock] {
     let mut out = Vec[LLVMBasicBlock]::new()
     if data.arms.len() == 0_usize {
         out.push(llvm_block(block_name, base_instructions, llvm_term_br(block_symbol(data.default_label))))
@@ -2178,12 +2816,25 @@ fn lower_match_blocks(block_name: str, base_instructions: Vec[LLVMInstruction], 
     first_instructions.push(llvm_inst_extractvalue(tag, scrutinee, "0"))
     let mut index = 0_usize
     for arm in data.arms {
-        let check_name = if index == 0_usize { block_name } else { block_name + "_match_check_" + Debug::fmt(index) }
-        let next_name = if index + 1_usize < data.arms.len() { block_name + "_match_check_" + Debug::fmt(index + 1_usize) } else { block_symbol(data.default_label) }
+        let check_name = if index == 0_usize {
+            block_name
+        } else {
+            block_name + "_match_check_" + Debug::fmt(index)
+        }
+        let next_name = if index + 1_usize < data.arms.len() {
+            block_name + "_match_check_" + Debug::fmt(index + 1_usize)
+        } else {
+            block_symbol(data.default_label)
+        }
         let matches = reg(block_name + "_match_case_" + Debug::fmt(index), i1_type())
         let compare = llvm_inst_binary("icmp eq", matches, tag, const_i32(enum_variant_tag(arm.variant)))
-        let instructions = if index == 0_usize { concat_instructions(first_instructions, vec_singleton(compare)) } else { vec_singleton(compare) }
-        out.push(llvm_block(check_name, instructions, llvm_term_cbr(matches, block_symbol(arm.label), next_name)))
+        let instructions = if index == 0_usize {
+            concat_instructions(first_instructions, vec_singleton(compare))
+        } else {
+            vec_singleton(compare)
+        }
+        out.push(llvm_block(check_name, instructions, llvm_term_cbr(matches, block_symbol(arm.label),
+        next_name)))
         index = index + 1_usize
     }
     ret out
@@ -2239,24 +2890,31 @@ fn lower_instruction(instruction: Instruction, instruction_scope: str) -> Vec[LL
                     let size = reg(safe_name + "_size", pointer_int_type())
                     let raw = reg(safe_name + "_raw", ptr_type(i8_type()))
                     let typed = reg(safe_name + "_typed", payload_ptr_type)
-                    instructions.push(llvm_inst_gep(size_ptr, payload_type, const_text("null", payload_ptr_type), vec_singleton(const_text("1", i64_type())), false))
+                    instructions.push(llvm_inst_gep(size_ptr, payload_type, const_text("null", payload_ptr_type),
+                    vec_singleton(const_text("1", i64_type())), false))
                     instructions.push(llvm_inst_cast("ptrtoint", size, size_ptr))
-                    instructions.push(llvm_inst_call(Option[LLVMValue]::Some(raw), ptr_type(i8_type()), "encore_box_alloc", vec_singleton(size)))
+                    instructions.push(llvm_inst_call(Option[LLVMValue]::Some(raw), ptr_type(i8_type()),
+                    "encore_box_alloc", vec_singleton(size)))
                     instructions.push(llvm_inst_cast("bitcast", typed, raw))
                     instructions.push(llvm_inst_store(lower_variable(payload), typed))
                     instructions.push(llvm_inst_insertvalue(out, tag_out, raw, "1"))
                 }
                 Option[Variable]::None => {
-                    instructions.push(llvm_inst_insertvalue(out, tag_out, const_text("null", ptr_type(i8_type())), "1"))
+                    instructions.push(llvm_inst_insertvalue(out, tag_out, const_text("null", ptr_type(i8_type())),
+                    "1"))
                 }
             }
             ret instructions
         }
         Call(call_data) => {
             if required_variable_type(call_data.out).name == "JoinHandle" {
-                if is_thread_spawn_name(call_data.name) { ret lower_thread_spawn(call_data) }
+                if is_thread_spawn_name(call_data.name) {
+                    ret lower_thread_spawn(call_data)
+                }
             }
-            if call_data.name == "__encore_thread_join" { ret lower_thread_join(call_data) }
+            if call_data.name == "__encore_thread_join" {
+                ret lower_thread_join(call_data)
+            }
             let out_var: Variable = call_data.out
             let callee_name: str = call_data.name
             let call_args: Vec[Variable] = call_data.args
@@ -2284,7 +2942,8 @@ fn lower_instruction(instruction: Instruction, instruction_scope: str) -> Vec[LL
                         ret instructions
                     }
                 }
-                Option[Type]::None => {}
+                Option[Type]::None => {
+                }
             }
             ret vec_singleton(llvm_inst_store(value, ptr))
         }
@@ -2343,9 +3002,10 @@ fn lower_instruction(instruction: Instruction, instruction_scope: str) -> Vec[LL
                 instruction_scope + "_" + sanitize_symbol(setfield_data.src.name) + "_" +
                 sanitize_symbol(setfield_data.field.name) + "_" +
                 sanitize_symbol(setfield_data.value.name) + "_set_ptr",
-                ptr_type(value_type(value))
+                ptr_type(value_type(value)),
             )
-            let address = llvm_inst_gep(field_ptr, lower_pointee_type(src_type), src, field_indices(setfield_data.field.name), true)
+            let address = llvm_inst_gep(field_ptr, lower_pointee_type(src_type), src, field_indices(setfield_data.field.name),
+            true)
             ret concat_instructions(vec_singleton(address), vec_singleton(llvm_inst_store(value, field_ptr)))
         }
         GetFieldPtr(getfieldptr_data) => {
@@ -2369,7 +3029,9 @@ fn lower_instruction(instruction: Instruction, instruction_scope: str) -> Vec[LL
             let out_var: Variable = construct_data.out
             let raw_args: Vec[Variable] = construct_data.args
             if construct_data.typ.pointer != PointerKind::Plain {
-                let plain_type = Type{construct_data.typ.name, construct_data.typ.generics, PointerKind::Plain}
+                let plain_type = Type {
+                    construct_data.typ.name, construct_data.typ.generics, PointerKind::Plain
+                }
                 let aggregate_type = lower_type(plain_type)
                 let aggregate_ptr_type = ptr_type(aggregate_type)
                 let safe_name = sanitize_symbol(out_var.name)
@@ -2377,15 +3039,18 @@ fn lower_instruction(instruction: Instruction, instruction_scope: str) -> Vec[LL
                 let size = reg(safe_name + "_size", pointer_int_type())
                 let raw = reg(safe_name + "_raw", ptr_type(i8_type()))
                 let out = lower_variable(out_var)
-                let mut instructions = vec_singleton(llvm_inst_gep(size_ptr, aggregate_type, const_text("null", aggregate_ptr_type), vec_singleton(const_text("1", i64_type())), false))
+                let mut instructions = vec_singleton(llvm_inst_gep(size_ptr, aggregate_type, const_text("null",
+                aggregate_ptr_type), vec_singleton(const_text("1", i64_type())), false))
                 instructions.push(llvm_inst_cast("ptrtoint", size, size_ptr))
-                instructions.push(llvm_inst_call(Option[LLVMValue]::Some(raw), ptr_type(i8_type()), "__ehir_hrealloc", concat_values(vec_singleton(const_text("null", ptr_type(i8_type()))), vec_singleton(size))))
+                instructions.push(llvm_inst_call(Option[LLVMValue]::Some(raw), ptr_type(i8_type()), "__ehir_hrealloc",
+                concat_values(vec_singleton(const_text("null", ptr_type(i8_type()))), vec_singleton(size))))
                 instructions.push(llvm_inst_cast("bitcast", out, raw))
                 let mut index = 0_usize
                 for argument in raw_args {
                     let value = lower_variable(argument)
                     let field_ptr = reg(safe_name + "_field_" + Debug::fmt(index) + "_ptr", ptr_type(value_type(value)))
-                    instructions.push(llvm_inst_gep(field_ptr, aggregate_type, out, field_indices(Debug::fmt(index)), true))
+                    instructions.push(llvm_inst_gep(field_ptr, aggregate_type, out, field_indices(Debug::fmt(index)),
+                    true))
                     instructions.push(llvm_inst_store(value, field_ptr))
                     index = index + 1_usize
                 }
@@ -2422,7 +3087,8 @@ fn lower_instruction(instruction: Instruction, instruction_scope: str) -> Vec[LL
             let ret_type: LLVMType = lower_type(out_type)
             let src_value: LLVMValue = lower_variable(src_var)
             let args: Vec[LLVMValue] = vec_singleton(src_value)
-            ret vec_singleton(llvm_inst_call(Option[LLVMValue]::Some(out), ret_type, "__ehir_getptr", args))
+            ret vec_singleton(llvm_inst_call(Option[LLVMValue]::Some(out), ret_type, "__ehir_getptr",
+            args))
         }
         PtrCast(pcast_data) => {
             let out_var: Variable = pcast_data.out
@@ -2431,7 +3097,8 @@ fn lower_instruction(instruction: Instruction, instruction_scope: str) -> Vec[LL
             let src_value: LLVMValue = lower_variable(src_var)
             let src_type = required_variable_type(src_var)
             let target_type = pcast_data.target_type
-            if is_dyn_type(target_type) && target_type.pointer == PointerKind::Plain && !is_dyn_type(src_type) {
+            if is_dyn_type(target_type) && target_type.pointer == PointerKind::Plain && !is_dyn_type(src_type)
+            {
                 let prefix = sanitize_symbol(out_var.name)
                 let concrete_type = lower_type(src_type)
                 let concrete_ptr_type = ptr_type(concrete_type)
@@ -2441,27 +3108,53 @@ fn lower_instruction(instruction: Instruction, instruction_scope: str) -> Vec[LL
                 let typed_box = reg(prefix + "_box", concrete_ptr_type)
                 let with_data = reg(prefix + "_with_data", lower_type(target_type))
                 let mut instructions = Vec[LLVMInstruction]::new()
-                instructions.push(llvm_inst_gep(size_ptr, concrete_type, const_text("null", concrete_ptr_type), vec_singleton(const_text("1", i64_type())), false))
+                instructions.push(llvm_inst_gep(size_ptr, concrete_type, const_text("null", concrete_ptr_type),
+                vec_singleton(const_text("1", i64_type())), false))
                 instructions.push(llvm_inst_cast("ptrtoint", size, size_ptr))
-                instructions.push(llvm_inst_call(Option[LLVMValue]::Some(raw_box), ptr_type(i8_type()), "__ehir_hrealloc", concat_values(vec_singleton(const_text("null", ptr_type(i8_type()))), vec_singleton(size))))
+                instructions.push(llvm_inst_call(Option[LLVMValue]::Some(raw_box), ptr_type(i8_type()),
+                "__ehir_hrealloc", concat_values(vec_singleton(const_text("null", ptr_type(i8_type()))),
+                vec_singleton(size))))
                 instructions.push(llvm_inst_cast("bitcast", typed_box, raw_box))
                 instructions.push(llvm_inst_store(src_value, typed_box))
-                instructions.push(llvm_inst_insertvalue(with_data, const_text("undef", lower_type(target_type)), raw_box, "0"))
-                instructions.push(llvm_inst_insertvalue(out, with_data, const_text(enum_variant_tag(mangle_type_name(src_type)), i64_type()), "1"))
+                instructions.push(llvm_inst_insertvalue(with_data, const_text("undef", lower_type(target_type)),
+                raw_box, "0"))
+                instructions.push(llvm_inst_insertvalue(out, with_data, const_text(enum_variant_tag(mangle_type_name(src_type)),
+                i64_type()), "1"))
                 ret instructions
             }
             let mut op = "bitcast"
-            if is_numeric_ehir_type(src_type) && target_type.pointer != PointerKind::Plain { op = "inttoptr" }
-            elif src_type.pointer != PointerKind::Plain && is_numeric_ehir_type(target_type) { op = "ptrtoint" }
-            elif is_numeric_ehir_type(src_type) && is_numeric_ehir_type(target_type) {
-                if is_float_ehir_type(src_type) && !is_float_ehir_type(target_type) { op = if is_signed_ehir_type(target_type) { "fptosi" } else { "fptoui" } }
-                elif !is_float_ehir_type(src_type) && is_float_ehir_type(target_type) { op = if is_signed_ehir_type(src_type) { "sitofp" } else { "uitofp" } }
-                elif is_float_ehir_type(src_type) && is_float_ehir_type(target_type) {
-                    if numeric_type_bits(src_type) < numeric_type_bits(target_type) { op = "fpext" }
-                    elif numeric_type_bits(src_type) > numeric_type_bits(target_type) { op = "fptrunc" }
+            if is_numeric_ehir_type(src_type) && target_type.pointer != PointerKind::Plain {
+                op = "inttoptr"
+            } elif src_type.pointer != PointerKind::Plain && is_numeric_ehir_type(target_type) {
+                op = "ptrtoint"
+            } elif is_numeric_ehir_type(src_type) && is_numeric_ehir_type(target_type) {
+                if is_float_ehir_type(src_type) && !is_float_ehir_type(target_type) {
+                    op = if is_signed_ehir_type(target_type) {
+                        "fptosi"
+                    } else {
+                        "fptoui"
+                    }
+                } elif !is_float_ehir_type(src_type) && is_float_ehir_type(target_type) {
+                    op = if is_signed_ehir_type(src_type) {
+                        "sitofp"
+                    } else {
+                        "uitofp"
+                    }
+                } elif is_float_ehir_type(src_type) && is_float_ehir_type(target_type) {
+                    if numeric_type_bits(src_type) < numeric_type_bits(target_type) {
+                        op = "fpext"
+                    } elif numeric_type_bits(src_type) > numeric_type_bits(target_type) {
+                        op = "fptrunc"
+                    }
+                } elif numeric_type_bits(src_type) < numeric_type_bits(target_type) {
+                    op = if is_signed_ehir_type(src_type) {
+                        "sext"
+                    } else {
+                        "zext"
+                    }
+                } elif numeric_type_bits(src_type) > numeric_type_bits(target_type) {
+                    op = "trunc"
                 }
-                elif numeric_type_bits(src_type) < numeric_type_bits(target_type) { op = if is_signed_ehir_type(src_type) { "sext" } else { "zext" } }
-                elif numeric_type_bits(src_type) > numeric_type_bits(target_type) { op = "trunc" }
             }
             ret vec_singleton(llvm_inst_cast(op, out, src_value))
         }
@@ -2483,14 +3176,16 @@ fn lower_instruction(instruction: Instruction, instruction_scope: str) -> Vec[LL
             let out_type: Type = required_variable_type(out_var)
             let out: LLVMValue = lower_variable(out_var)
             let ret_type: LLVMType = lower_type(out_type)
-            ret vec_singleton(llvm_inst_call(Option[LLVMValue]::Some(out), ret_type, "__ehir_halloc", Vec[LLVMValue]::new()))
+            ret vec_singleton(llvm_inst_call(Option[LLVMValue]::Some(out), ret_type, "__ehir_halloc",
+            Vec[LLVMValue]::new()))
         }
         HeapFree(hfree_data) => {
             let src_var: Variable = hfree_data.src
             let src_value: LLVMValue = lower_variable(src_var)
             let raw = reg(sanitize_symbol(src_var.name) + "_free_raw", ptr_type(i8_type()))
             let cast = llvm_inst_cast("bitcast", raw, src_value)
-            let inst: LLVMInstruction = llvm_inst_call(Option[LLVMValue]::None, void_type(), "__ehir_hfree", vec_singleton(raw))
+            let inst: LLVMInstruction = llvm_inst_call(Option[LLVMValue]::None, void_type(), "__ehir_hfree",
+            vec_singleton(raw))
             ret concat_instructions(vec_singleton(cast), vec_singleton(inst))
         }
         HeapRealloc(realloc_data) => {
@@ -2506,12 +3201,14 @@ fn lower_instruction(instruction: Instruction, instruction_scope: str) -> Vec[LL
             let raw_src = reg(prefix + "_raw_src", ptr_type(i8_type()))
             let raw_out = reg(prefix + "_raw_out", ptr_type(i8_type()))
             let mut instructions = Vec[LLVMInstruction]::new()
-            instructions.push(llvm_inst_gep(size_ptr, element_type, const_text("null", element_ptr_type), vec_singleton(const_text("1", i64_type())), false))
+            instructions.push(llvm_inst_gep(size_ptr, element_type, const_text("null", element_ptr_type),
+            vec_singleton(const_text("1", i64_type())), false))
             instructions.push(llvm_inst_cast("ptrtoint", size, size_ptr))
             instructions.push(llvm_inst_binary("mul", bytes, count, size))
             instructions.push(llvm_inst_cast("bitcast", raw_src, src))
             let args = concat_values(vec_singleton(raw_src), vec_singleton(bytes))
-            instructions.push(llvm_inst_call(Option[LLVMValue]::Some(raw_out), ptr_type(i8_type()), "__ehir_hrealloc", args))
+            instructions.push(llvm_inst_call(Option[LLVMValue]::Some(raw_out), ptr_type(i8_type()), "__ehir_hrealloc",
+            args))
             instructions.push(llvm_inst_cast("bitcast", out, raw_out))
             ret instructions
         }
@@ -2525,19 +3222,26 @@ fn lower_instruction(instruction: Instruction, instruction_scope: str) -> Vec[LL
             let lhs_var: Variable = binary_data.lhs
             let rhs_var: Variable = binary_data.rhs
             let op: BinaryOpKind = binary_data.op
-            if (op == BinaryOpKind::IEQ || op == BinaryOpKind::NEQ) && is_variant_symbol(rhs_var.name) {
+            if (op == BinaryOpKind::IEQ || op == BinaryOpKind::NEQ) && is_variant_symbol(rhs_var.name)
+            {
                 match lhs_var.typ {
                     Option[Type]::Some(lhs_type) => {
                         if is_aggregate_ehir_type(lhs_type) {
                             let tag_out = reg(sanitize_symbol(out_var.name) + "_tag", i32_type())
                             let extract = llvm_inst_extractvalue(tag_out, lower_variable(lhs_var), "0")
                             let tag = const_i32(enum_variant_tag(enum_variant_symbol_name(rhs_var.name)))
-                            let predicate = if op == BinaryOpKind::IEQ { "icmp eq" } else { "icmp ne" }
-                            let compare = llvm_inst_binary(predicate, lower_variable(out_var), tag_out, tag)
+                            let predicate = if op == BinaryOpKind::IEQ {
+                                "icmp eq"
+                            } else {
+                                "icmp ne"
+                            }
+                            let compare = llvm_inst_binary(predicate, lower_variable(out_var), tag_out,
+                            tag)
                             ret concat_instructions(vec_singleton(extract), vec_singleton(compare))
                         }
                     }
-                    Option[Type]::None => {}
+                    Option[Type]::None => {
+                    }
                 }
             }
             if op == BinaryOpKind::IEQ || op == BinaryOpKind::NEQ {
@@ -2546,29 +3250,42 @@ fn lower_instruction(instruction: Instruction, instruction_scope: str) -> Vec[LL
                         if lhs_type.name == "str" {
                             let args = concat_values(vec_singleton(lower_variable(lhs_var)), vec_singleton(lower_variable(rhs_var)))
                             if op == BinaryOpKind::IEQ {
-                                ret vec_singleton(llvm_inst_call(Option[LLVMValue]::Some(lower_variable(out_var)), i1_type(), "encore_str_eq", args))
+                                ret vec_singleton(llvm_inst_call(Option[LLVMValue]::Some(lower_variable(out_var)),
+                                i1_type(), "encore_str_eq", args))
                             }
                             let equal = reg(sanitize_symbol(out_var.name) + "_str_equal", i1_type())
-                            let mut instructions = vec_singleton(llvm_inst_call(Option[LLVMValue]::Some(equal), i1_type(), "encore_str_eq", args))
-                            instructions.push(llvm_inst_binary("xor", lower_variable(out_var), equal, const_text("1", i1_type())))
+                            let mut instructions = vec_singleton(llvm_inst_call(Option[LLVMValue]::Some(equal),
+                            i1_type(), "encore_str_eq", args))
+                            instructions.push(llvm_inst_binary("xor", lower_variable(out_var), equal,
+                            const_text("1", i1_type())))
                             ret instructions
                         }
                         match rhs_var.typ {
                             Option[Type]::Some(rhs_type) => {
-                                if is_aggregate_ehir_type(lhs_type) && lhs_type.name == rhs_type.name {
+                                if is_aggregate_ehir_type(lhs_type) && lhs_type.name == rhs_type.name
+                                {
                                     let lhs_tag = reg(sanitize_symbol(out_var.name) + "_lhs_tag", i32_type())
                                     let rhs_tag = reg(sanitize_symbol(out_var.name) + "_rhs_tag", i32_type())
-                                    let mut instructions = vec_singleton(llvm_inst_extractvalue(lhs_tag, lower_variable(lhs_var), "0"))
-                                    instructions.push(llvm_inst_extractvalue(rhs_tag, lower_variable(rhs_var), "0"))
-                                    let predicate = if op == BinaryOpKind::IEQ { "icmp eq" } else { "icmp ne" }
-                                    instructions.push(llvm_inst_binary(predicate, lower_variable(out_var), lhs_tag, rhs_tag))
+                                    let mut instructions = vec_singleton(llvm_inst_extractvalue(lhs_tag,
+                                    lower_variable(lhs_var), "0"))
+                                    instructions.push(llvm_inst_extractvalue(rhs_tag, lower_variable(rhs_var),
+                                    "0"))
+                                    let predicate = if op == BinaryOpKind::IEQ {
+                                        "icmp eq"
+                                    } else {
+                                        "icmp ne"
+                                    }
+                                    instructions.push(llvm_inst_binary(predicate, lower_variable(out_var),
+                                    lhs_tag, rhs_tag))
                                     ret instructions
                                 }
                             }
-                            Option[Type]::None => {}
+                            Option[Type]::None => {
+                            }
                         }
                     }
-                    Option[Type]::None => {}
+                    Option[Type]::None => {
+                    }
                 }
             }
             ret vec_singleton(lower_binary(out_var, lhs_var, rhs_var, op))
@@ -2605,26 +3322,32 @@ fn lower_thread_spawn(data: CallInstruction) -> Vec[LLVMInstruction] {
     let size = reg(prefix + "_context_size", pointer_int_type())
     let raw_context = reg(prefix + "_context_raw", raw_ptr_type)
     let context = reg(prefix + "_context", context_ptr_type)
-    let mut instructions = vec_singleton(llvm_inst_gep(size_ptr, context_type, const_text("null", context_ptr_type), vec_singleton(const_text("1", i64_type())), false))
+    let mut instructions = vec_singleton(llvm_inst_gep(size_ptr, context_type, const_text("null", context_ptr_type),
+    vec_singleton(const_text("1", i64_type())), false))
     instructions.push(llvm_inst_cast("ptrtoint", size, size_ptr))
-    instructions.push(llvm_inst_call(Option[LLVMValue]::Some(raw_context), raw_ptr_type, "__ehir_hrealloc", concat_values(vec_singleton(const_text("null", raw_ptr_type)), vec_singleton(size))))
+    instructions.push(llvm_inst_call(Option[LLVMValue]::Some(raw_context), raw_ptr_type, "__ehir_hrealloc",
+    concat_values(vec_singleton(const_text("null", raw_ptr_type)), vec_singleton(size))))
     instructions.push(llvm_inst_cast("bitcast", context, raw_context))
     let mut index = 0_usize
     for argument in data.args {
         let value = lower_variable(argument)
         let field_ptr = reg(prefix + "_arg_" + Debug::fmt(index) + "_ptr", ptr_type(value_type(value)))
-        instructions.push(llvm_inst_gep(field_ptr, context_type, context, field_indices(Debug::fmt(index + 1_usize)), true))
+        instructions.push(llvm_inst_gep(field_ptr, context_type, context, field_indices(Debug::fmt(index
+        + 1_usize)), true))
         instructions.push(llvm_inst_store(value, field_ptr))
         index = index + 1_usize
     }
     let function_ptr_type = llvm_raw_type(LLVMTypeKind::POINTER, "void (i8*)*")
-    let entry = const_text("@__encore_thread_trampoline_" + thread_site_key(data.name, data.out, data.generics, data.args), function_ptr_type)
-    let cleanup = const_text("@__encore_thread_cleanup_" + thread_site_key(data.name, data.out, data.generics, data.args), function_ptr_type)
+    let entry = const_text("@__encore_thread_trampoline_" + thread_site_key(data.name, data.out, data.generics,
+    data.args), function_ptr_type)
+    let cleanup = const_text("@__encore_thread_cleanup_" + thread_site_key(data.name, data.out, data.generics,
+    data.args), function_ptr_type)
     let token = reg(prefix + "_token", pointer_int_type())
     instructions.push(llvm_inst_call(Option[LLVMValue]::Some(token), pointer_int_type(), "encore_thread_spawn",
-        concat_values(concat_values(vec_singleton(entry), vec_singleton(raw_context)), vec_singleton(cleanup))))
+            concat_values(concat_values(vec_singleton(entry), vec_singleton(raw_context)), vec_singleton(cleanup)),))
     let handle_type = lower_type(required_variable_type(data.out))
-    instructions.push(llvm_inst_insertvalue(lower_variable(data.out), const_text("undef", handle_type), token, "0"))
+    instructions.push(llvm_inst_insertvalue(lower_variable(data.out), const_text("undef", handle_type),
+    token, "0"))
     ret instructions
 }
 
@@ -2638,14 +3361,16 @@ fn lower_thread_join(data: CallInstruction) -> Vec[LLVMInstruction] {
             let result_ehir_type = required_variable_type(data.out)
             let result_type = lower_type(result_ehir_type)
             let mut instructions = vec_singleton(llvm_inst_extractvalue(token, handle, "0"))
-            instructions.push(llvm_inst_call(Option[LLVMValue]::Some(raw), ptr_type(i8_type()), "encore_thread_join", vec_singleton(token)))
+            instructions.push(llvm_inst_call(Option[LLVMValue]::Some(raw), ptr_type(i8_type()), "encore_thread_join",
+            vec_singleton(token)))
             if !thread_result_is_void(result_ehir_type) {
                 let result_ptr = reg(prefix + "_result_ptr", ptr_type(result_type))
                 instructions.push(llvm_inst_cast("bitcast", result_ptr, raw))
                 instructions.push(llvm_inst_load(lower_variable(data.out), result_ptr))
                 instructions.extend(lower_retain_value(lower_variable(data.out), result_ehir_type))
             }
-            instructions.push(llvm_inst_call(Option[LLVMValue]::None, void_type(), "encore_thread_release", vec_singleton(token)))
+            instructions.push(llvm_inst_call(Option[LLVMValue]::None, void_type(), "encore_thread_release",
+            vec_singleton(token)))
             ret instructions
         }
         None => {
@@ -2661,10 +3386,10 @@ fn unsupported_instruction(name: str) -> Vec[LLVMInstruction] {
     ret Vec[LLVMInstruction]::new()
 }
 
-fn backend_invariant_error(message: str) -> () {
+fn backend_invariant_error(message: str) ->() {
     eprintln("error[backend-invariant]: " + message)
     exit(1_i32)
-    ret ()
+    ret()
 }
 
 fn lower_literal(out_var: Variable, value: str) -> Vec[LLVMInstruction] {
@@ -2677,9 +3402,21 @@ fn lower_literal(out_var: Variable, value: str) -> Vec[LLVMInstruction] {
     if value.len() > 0_usize && value.slice(0_usize, 1_usize) != "\"" {
         let mut raw = numeric_literal_text(value)
         if is_float_ehir_type(out_type) {
-            raw = unsafe { encore_llvm_float_literal(raw, if out_type.name == "f32" { 1_usize } else { 0_usize }) }
+            raw = unsafe {
+                encore_llvm_float_literal(raw, if out_type.name == "f32" {
+                        1_usize
+                    } else {
+                        0_usize
+                    }
+                )
+            }
         }
-        let zero = const_text(if is_float_ehir_type(out_type) { "0.0" } else { "0" }, ret_type)
+        let zero = const_text(if is_float_ehir_type(out_type) {
+                "0.0"
+            } else {
+                "0"
+            }
+            , ret_type)
         let literal = const_text(raw, ret_type)
         if is_float_ehir_type(out_type) {
             ret vec_singleton(llvm_inst_binary("fadd", out, zero, literal))
@@ -2693,7 +3430,8 @@ fn lower_literal(out_var: Variable, value: str) -> Vec[LLVMInstruction] {
         let ptr = reg(sanitize_symbol(out_var.name) + "_literal_ptr", ptr_type(i8_type()))
         let indices = concat_values(vec_singleton(const_i32("0")), vec_singleton(const_i32("0")))
         let address = llvm_inst_gep(ptr, array_type_value, global, indices, true)
-        let call_inst = llvm_inst_call(Option[LLVMValue]::Some(out), ret_type, "encore_str_from_cstr", vec_singleton(ptr))
+        let call_inst = llvm_inst_call(Option[LLVMValue]::Some(out), ret_type, "encore_str_from_cstr",
+        vec_singleton(ptr))
         ret concat_instructions(vec_singleton(address), vec_singleton(call_inst))
     }
     ret vec_singleton(llvm_inst_bitcast(out, const_text("null", ret_type)))
@@ -2702,14 +3440,18 @@ fn lower_literal(out_var: Variable, value: str) -> Vec[LLVMInstruction] {
 fn contains_char(value: str, needle: str) -> bool {
     let mut index = 0_usize
     while index < value.len() {
-        if value.slice(index, 1_usize) == needle { ret true }
+        if value.slice(index, 1_usize) == needle {
+            ret true
+        }
         index += 1_usize
     }
     ret false
 }
 
 fn str_ends_with(value: str, suffix: str) -> bool {
-    if suffix.len() > value.len() { ret false }
+    if suffix.len() > value.len() {
+        ret false
+    }
     ret value.slice(value.len() - suffix.len(), suffix.len()) == suffix
 }
 
@@ -2724,10 +3466,15 @@ fn numeric_literal_text(value: str) -> str {
     ret value
 }
 
-fn lower_call(out_var: Variable, callee_name: str, generics: Vec[Type], args: Vec[Variable]) -> LLVMInstruction {
+fn lower_call(out_var: Variable, callee_name: str, generics: Vec[Type], args: Vec[Variable]) -> LLVMInstruction
+    {
     let out_type = required_variable_type(out_var)
     let ret_type = lower_type(out_type)
-    let callee = if generics.len() > 0_usize { generic_symbol(callee_name, generics) } else { function_symbol(callee_name) }
+    let callee = if generics.len() > 0_usize {
+        generic_symbol(callee_name, generics)
+    } else {
+        function_symbol(callee_name)
+    }
     let lowered_args = lower_variables(args)
     if out_type.name == "void" || out_type.name == "()" {
         ret llvm_inst_call(Option[LLVMValue]::None, void_type(), callee, lowered_args)
@@ -2737,8 +3484,12 @@ fn lower_call(out_var: Variable, callee_name: str, generics: Vec[Type], args: Ve
 }
 
 fn function_symbol(name: str) -> str {
-    if name == "write" { ret "__encore_fn_write" }
-    if name == "exit" { ret "__encore_fn_exit" }
+    if name == "write" {
+        ret "__encore_fn_write"
+    }
+    if name == "exit" {
+        ret "__encore_fn_exit"
+    }
     ret sanitize_symbol(name)
 }
 
@@ -2747,7 +3498,8 @@ fn lower_getfieldptr(out_var: Variable, src_var: Variable, field_var: Variable) 
     ret lower_getfieldptr_with(out_ptr, src_var, field_var)
 }
 
-fn lower_getfieldptr_with(out_ptr: LLVMValue, src_var: Variable, field_var: Variable) -> LLVMInstruction {
+fn lower_getfieldptr_with(out_ptr: LLVMValue, src_var: Variable, field_var: Variable) -> LLVMInstruction
+    {
     let src_value = lower_variable(src_var)
     let src_type = required_variable_type(src_var)
     let field_name = field_var.name
@@ -2756,7 +3508,8 @@ fn lower_getfieldptr_with(out_ptr: LLVMValue, src_var: Variable, field_var: Vari
     ret llvm_inst_gep(out_ptr, element_type, src_value, indices, true)
 }
 
-fn lower_binary(out_var: Variable, lhs_var: Variable, rhs_var: Variable, op: BinaryOpKind) -> LLVMInstruction {
+fn lower_binary(out_var: Variable, lhs_var: Variable, rhs_var: Variable, op: BinaryOpKind) -> LLVMInstruction
+    {
     let out = lower_variable(out_var)
     let fallback_type = binary_operand_type(lhs_var, rhs_var, out_var)
     let lhs = lower_binary_operand(lhs_var, fallback_type)
@@ -2766,51 +3519,154 @@ fn lower_binary(out_var: Variable, lhs_var: Variable, rhs_var: Variable, op: Bin
     match op {
         ADD => {
             if fallback_type.name == "str" {
-                ret llvm_inst_call(Option[LLVMValue]::Some(out), lower_type(fallback_type), "encore_str_concat", concat_values(vec_singleton(lhs), vec_singleton(rhs)))
+                ret llvm_inst_call(Option[LLVMValue]::Some(out), lower_type(fallback_type), "encore_str_concat",
+                concat_values(vec_singleton(lhs), vec_singleton(rhs)))
             }
-            if is_float { ret llvm_inst_binary("fadd", out, lhs, rhs) }
+            if is_float {
+                ret llvm_inst_binary("fadd", out, lhs, rhs)
+            }
             ret llvm_inst_add(out, lhs, rhs)
         }
         SUB => {
-            if is_float { ret llvm_inst_binary("fsub", out, lhs, rhs) }
+            if is_float {
+                ret llvm_inst_binary("fsub", out, lhs, rhs)
+            }
             ret llvm_inst_sub(out, lhs, rhs)
         }
-        MUL => { ret llvm_inst_binary(if is_float { "fmul" } else { "mul" }, out, lhs, rhs) }
-        DIV => { ret llvm_inst_binary(if is_float { "fdiv" } elif is_signed_ehir_type(fallback_type) { "sdiv" } else { "udiv" }, out, lhs, rhs) }
-        MOD => { ret llvm_inst_binary(if is_float { "frem" } elif is_signed_ehir_type(fallback_type) { "srem" } else { "urem" }, out, lhs, rhs) }
-        SHL => { ret llvm_inst_binary("shl", out, lhs, rhs) }
-        SHR => { ret llvm_inst_binary(if is_signed_ehir_type(fallback_type) { "ashr" } else { "lshr" }, out, lhs, rhs) }
-        AND => { ret llvm_inst_binary("and", out, lhs, rhs) }
-        OR => { ret llvm_inst_binary("or", out, lhs, rhs) }
-        XOR => { ret llvm_inst_binary("xor", out, lhs, rhs) }
-        IEQ => { ret llvm_inst_binary(if is_float { "fcmp oeq" } else { "icmp eq" }, out, lhs, rhs) }
-        NEQ => { ret llvm_inst_binary(if is_float { "fcmp une" } else { "icmp ne" }, out, lhs, rhs) }
-        LES => { ret llvm_inst_binary(if is_float { "fcmp olt" } elif is_signed_ehir_type(fallback_type) { "icmp slt" } else { "icmp ult" }, out, lhs, rhs) }
-        LEQ => { ret llvm_inst_binary(if is_float { "fcmp ole" } elif is_signed_ehir_type(fallback_type) { "icmp sle" } else { "icmp ule" }, out, lhs, rhs) }
-        GRT => { ret llvm_inst_binary(if is_float { "fcmp ogt" } elif is_signed_ehir_type(fallback_type) { "icmp sgt" } else { "icmp ugt" }, out, lhs, rhs) }
-        GEQ => { ret llvm_inst_binary(if is_float { "fcmp oge" } elif is_signed_ehir_type(fallback_type) { "icmp sge" } else { "icmp uge" }, out, lhs, rhs) }
+        MUL => {
+            ret llvm_inst_binary(if is_float {
+                    "fmul"
+                } else {
+                    "mul"
+                }
+                , out, lhs, rhs)
+        }
+        DIV => {
+            ret llvm_inst_binary(if is_float {
+                    "fdiv"
+                } elif is_signed_ehir_type(fallback_type) {
+                    "sdiv"
+                } else {
+                    "udiv"
+                }
+                , out, lhs, rhs)
+        }
+        MOD => {
+            ret llvm_inst_binary(if is_float {
+                    "frem"
+                } elif is_signed_ehir_type(fallback_type) {
+                    "srem"
+                } else {
+                    "urem"
+                }
+                , out, lhs, rhs)
+        }
+        SHL => {
+            ret llvm_inst_binary("shl", out, lhs, rhs)
+        }
+        SHR => {
+            ret llvm_inst_binary(if is_signed_ehir_type(fallback_type) {
+                    "ashr"
+                } else {
+                    "lshr"
+                }
+                , out, lhs, rhs)
+        }
+        AND => {
+            ret llvm_inst_binary("and", out, lhs, rhs)
+        }
+        OR => {
+            ret llvm_inst_binary("or", out, lhs, rhs)
+        }
+        XOR => {
+            ret llvm_inst_binary("xor", out, lhs, rhs)
+        }
+        IEQ => {
+            ret llvm_inst_binary(if is_float {
+                    "fcmp oeq"
+                } else {
+                    "icmp eq"
+                }
+                , out, lhs, rhs)
+        }
+        NEQ => {
+            ret llvm_inst_binary(if is_float {
+                    "fcmp une"
+                } else {
+                    "icmp ne"
+                }
+                , out, lhs, rhs)
+        }
+        LES => {
+            ret llvm_inst_binary(if is_float {
+                    "fcmp olt"
+                } elif is_signed_ehir_type(fallback_type) {
+                    "icmp slt"
+                } else {
+                    "icmp ult"
+                }
+                , out, lhs, rhs)
+        }
+        LEQ => {
+            ret llvm_inst_binary(if is_float {
+                    "fcmp ole"
+                } elif is_signed_ehir_type(fallback_type) {
+                    "icmp sle"
+                } else {
+                    "icmp ule"
+                }
+                , out, lhs, rhs)
+        }
+        GRT => {
+            ret llvm_inst_binary(if is_float {
+                    "fcmp ogt"
+                } elif is_signed_ehir_type(fallback_type) {
+                    "icmp sgt"
+                } else {
+                    "icmp ugt"
+                }
+                , out, lhs, rhs)
+        }
+        GEQ => {
+            ret llvm_inst_binary(if is_float {
+                    "fcmp oge"
+                } elif is_signed_ehir_type(fallback_type) {
+                    "icmp sge"
+                } else {
+                    "icmp uge"
+                }
+                , out, lhs, rhs)
+        }
     }
 }
 
 fn is_float_ehir_type(typ: Type) -> bool {
-    ret typ.pointer == PointerKind::Plain && (typ.name == "f16" || typ.name == "f32" || typ.name == "f64")
+    ret typ.pointer == PointerKind::Plain &&(typ.name == "f16" || typ.name == "f32" || typ.name == "f64")
 }
 
 fn binary_operand_type(lhs: Variable, rhs: Variable, out: Variable) -> Type {
     match lhs.typ {
-        Option[Type]::Some(typ) => { ret typ }
-        Option[Type]::None => {}
+        Option[Type]::Some(typ) => {
+            ret typ
+        }
+        Option[Type]::None => {
+        }
     }
     match rhs.typ {
-        Option[Type]::Some(typ) => { ret typ }
-        Option[Type]::None => {}
+        Option[Type]::Some(typ) => {
+            ret typ
+        }
+        Option[Type]::None => {
+        }
     }
     ret required_variable_type(out)
 }
 
 fn lower_binary_operand(value: Variable, fallback: Type) -> LLVMValue {
     match value.typ {
-        Option[Type]::Some(_) => { ret lower_variable(value) }
+        Option[Type]::Some(_) => {
+            ret lower_variable(value)
+        }
         Option[Type]::None => {
             if is_variant_symbol(value.name) {
                 ret const_text(enum_variant_tag(value.name), lower_type(fallback))
@@ -2830,7 +3686,9 @@ fn lower_phi_values(pairs: Vec[PhiPair]) -> Vec[LLVMValue] {
 
 fn lower_terminator(terminator: Terminator) -> LLVMTerminator {
     match terminator {
-        Unreachable => { ret llvm_term_unreachable() }
+        Unreachable => {
+            ret llvm_term_unreachable()
+        }
         Ret(ret_data) => {
             let ret_value_var: Variable = ret_data.value
             let ret_value_type: Type = required_variable_type(ret_value_var)
@@ -2850,7 +3708,10 @@ fn lower_terminator(terminator: Terminator) -> LLVMTerminator {
             let cond_var: Variable = cbr_data.cond
             let true_label_raw: str = cbr_data.true_label
             let false_label_raw: str = cbr_data.false_label
-            let cond: LLVMValue = lower_variable_with_fallback(cond_var, Type{"bool", Vec[Type]::new(), PointerKind::Plain})
+            let cond: LLVMValue = lower_variable_with_fallback(cond_var, Type {
+                    "bool", Vec[Type]::new(), PointerKind::Plain
+                }
+            )
             let true_label: str = block_symbol(true_label_raw)
             let false_label: str = block_symbol(false_label_raw)
             ret llvm_term_cbr(cond, true_label, false_label)
@@ -2890,7 +3751,9 @@ fn lower_variable(var_data: Variable) -> LLVMValue {
 
 fn lower_variable_with_fallback(var_data: Variable, fallback: Type) -> LLVMValue {
     match var_data.typ {
-        Option[Type]::Some(_) => { ret lower_variable(var_data) }
+        Option[Type]::Some(_) => {
+            ret lower_variable(var_data)
+        }
         Option[Type]::None => {
             ret reg(sanitize_symbol(var_data.name), lower_type(fallback))
         }
@@ -2900,17 +3763,31 @@ fn lower_variable_with_fallback(var_data: Variable, fallback: Type) -> LLVMValue
 
 fn required_variable_type(value: Variable) -> Type {
     match value.typ {
-        Option[Type]::Some(typ) => { ret typ }
+        Option[Type]::Some(typ) => {
+            ret typ
+        }
         Option[Type]::None => {
             backend_invariant_error("LLVM lowering requires a type for variable '" + value.name + "'")
         }
     }
-    ret Type{"void", Vec[Type]::new(), PointerKind::Plain}
+    ret Type {
+        "void", Vec[Type]::new(), PointerKind::Plain
+    }
 }
 
 fn required_generic_type(value: Type, index: usize) -> Type {
-    match value.generics.get(index) { Some(item) => { ret item } None => { backend_invariant_error("missing concrete generic type at index " + Debug::fmt(index) + " for '" + value.name + "'") } }
-    ret Type{"void", Vec[Type]::new(), PointerKind::Plain}
+    match value.generics.get(index) {
+        Some(item) => {
+            ret item
+        }
+        None => {
+            backend_invariant_error("missing concrete generic type at index " + Debug::fmt(index) + " for '"
+            + value.name + "'")
+        }
+    }
+    ret Type {
+        "void", Vec[Type]::new(), PointerKind::Plain
+    }
 }
 
 fn lower_type(typ: Type) -> LLVMType {
@@ -2918,13 +3795,20 @@ fn lower_type(typ: Type) -> LLVMType {
     let base = if has_prefix(raw_name, "__array_") && typ.generics.len() == 1_usize {
         let length = raw_name.slice(8_usize, raw_name.len() - 8_usize)
         match typ.generics.get(0_usize) {
-            Option[Type]::Some(element) => { array_type(length, lower_type(element)) }
-            Option[Type]::None => { lower_plain_type(raw_name) }
+            Option[Type]::Some(element) => {
+                array_type(length, lower_type(element))
+            }
+            Option[Type]::None => {
+                lower_plain_type(raw_name)
+            }
         }
     } elif has_prefix(raw_name, "__tuple_") && typ.generics.len() > 0_usize {
         llvm_raw_type(LLVMTypeKind::STRUCT, tuple_llvm_type_text(typ.generics))
     } elif typ.generics.len() > 0_usize {
-        named_struct_type(sanitize_symbol(mangle_type_name(Type{typ.name, typ.generics, PointerKind::Plain})))
+        named_struct_type(sanitize_symbol(mangle_type_name(Type {
+                        typ.name, typ.generics, PointerKind::Plain
+                    }
+                )))
     } else {
         lower_plain_type(raw_name)
     }
@@ -2949,7 +3833,9 @@ fn tuple_llvm_type_text(items: Vec[Type]) -> str {
     let mut out = "{ "
     let mut index = 0_usize
     for item in items {
-        if index > 0_usize { out = out + ", " }
+        if index > 0_usize {
+            out = out + ", "
+        }
         out = out + type_text(lower_type(item))
         index = index + 1_usize
     }
@@ -2957,7 +3843,9 @@ fn tuple_llvm_type_text(items: Vec[Type]) -> str {
 }
 
 fn has_prefix(value: str, prefix: str) -> bool {
-    if prefix.len() > value.len() { ret false }
+    if prefix.len() > value.len() {
+        ret false
+    }
     ret value.slice(0_usize, prefix.len()) == prefix
 }
 
@@ -2973,13 +3861,22 @@ fn lower_pointee_type(typ: Type) -> LLVMType {
             ret lower_type(typ)
         }
         Stack => {
-            ret lower_type(Type{typ.name, typ.generics, PointerKind::Plain})
+            ret lower_type(Type {
+                    typ.name, typ.generics, PointerKind::Plain
+                }
+            )
         }
         Heap => {
-            ret lower_type(Type{typ.name, typ.generics, PointerKind::Plain})
+            ret lower_type(Type {
+                    typ.name, typ.generics, PointerKind::Plain
+                }
+            )
         }
         Raw => {
-            ret lower_type(Type{typ.name, typ.generics, PointerKind::Plain})
+            ret lower_type(Type {
+                    typ.name, typ.generics, PointerKind::Plain
+                }
+            )
         }
     }
 }
@@ -2992,83 +3889,166 @@ fn alloc_target_type(typ: Type) -> LLVMType {
             ret lower_type(typ)
         }
         Stack => {
-            ret lower_type(Type{typ.name, typ.generics, PointerKind::Plain})
+            ret lower_type(Type {
+                    typ.name, typ.generics, PointerKind::Plain
+                }
+            )
         }
         Heap => {
-            ret lower_type(Type{typ.name, typ.generics, PointerKind::Plain})
+            ret lower_type(Type {
+                    typ.name, typ.generics, PointerKind::Plain
+                }
+            )
         }
         Raw => {
-            ret lower_type(Type{typ.name, typ.generics, PointerKind::Plain})
+            ret lower_type(Type {
+                    typ.name, typ.generics, PointerKind::Plain
+                }
+            )
         }
     }
 }
 
 fn lower_plain_type(type_name: str) -> LLVMType {
-    if (type_name == "void" || type_name == "()") { ret void_type() }
-    if (type_name == "bool" || type_name == "u1") { ret i1_type() }
+    if (type_name == "void" || type_name == "()") {
+        ret void_type()
+    }
+    if (type_name == "bool" || type_name == "u1") {
+        ret i1_type()
+    }
 
-    if (type_name == "u8") { ret i8_type() }
-    if (type_name == "i8") { ret i8_type() }
-    if (type_name == "u16") { ret i16_type() }
-    if (type_name == "i16") { ret i16_type() }
-    if (type_name == "u32") { ret i32_type() }
-    if (type_name == "i32") { ret i32_type() }
-    if (type_name == "u64") { ret i64_type() }
-    if (type_name == "i64") { ret i64_type() }
-    if (type_name == "usize") { ret pointer_int_type() }
-    if (type_name == "isize") { ret pointer_int_type() }
+    if (type_name == "u8") {
+        ret i8_type()
+    }
+    if (type_name == "i8") {
+        ret i8_type()
+    }
+    if (type_name == "u16") {
+        ret i16_type()
+    }
+    if (type_name == "i16") {
+        ret i16_type()
+    }
+    if (type_name == "u32") {
+        ret i32_type()
+    }
+    if (type_name == "i32") {
+        ret i32_type()
+    }
+    if (type_name == "u64") {
+        ret i64_type()
+    }
+    if (type_name == "i64") {
+        ret i64_type()
+    }
+    if (type_name == "usize") {
+        ret pointer_int_type()
+    }
+    if (type_name == "isize") {
+        ret pointer_int_type()
+    }
 
-    if (type_name == "f16") { ret f16_type() }
-    if (type_name == "f32") { ret f32_type() }
-    if (type_name == "f64") { ret f64_type() }
+    if (type_name == "f16") {
+        ret f16_type()
+    }
+    if (type_name == "f32") {
+        ret f32_type()
+    }
+    if (type_name == "f64") {
+        ret f64_type()
+    }
 
-    if (type_name == "str") { ret ptr_type(i8_type()) }
+    if (type_name == "str") {
+        ret ptr_type(i8_type())
+    }
     ret named_struct_type(sanitize_symbol(type_name))
 }
 
 fn is_aggregate_ehir_type(typ: Type) -> bool {
     let name = typ.name
-    if name == "bool" || name == "u1" || name == "str" || name == "void" { ret false }
-    if name == "u8" || name == "u16" || name == "u32" || name == "u64" || name == "usize" { ret false }
-    if name == "i8" || name == "i16" || name == "i32" || name == "i64" || name == "isize" { ret false }
-    if name == "f16" || name == "f32" || name == "f64" { ret false }
+    if name == "bool" || name == "u1" || name == "str" || name == "void" {
+        ret false
+    }
+    if name == "u8" || name == "u16" || name == "u32" || name == "u64" || name == "usize" {
+        ret false
+    }
+    if name == "i8" || name == "i16" || name == "i32" || name == "i64" || name == "isize" {
+        ret false
+    }
+    if name == "f16" || name == "f32" || name == "f64" {
+        ret false
+    }
     ret true
 }
 
 fn is_numeric_ehir_type(typ: Type) -> bool {
-    if typ.pointer != PointerKind::Plain { ret false }
+    if typ.pointer != PointerKind::Plain {
+        ret false
+    }
     let name = typ.name
     ret name == "u8" || name == "u16" || name == "u32" || name == "u64" || name == "usize" ||
-        name == "i8" || name == "i16" || name == "i32" || name == "i64" || name == "isize" ||
-        name == "f16" || name == "f32" || name == "f64"
+    name == "i8" || name == "i16" || name == "i32" || name == "i64" || name == "isize" ||
+    name == "f16" || name == "f32" || name == "f64"
 }
 
 fn enum_payload_is_inline(typ: Type) -> bool {
-    if typ.pointer != PointerKind::Plain { ret false }
-    if typ.name == "bool" || typ.name == "u1" { ret true }
-    if !is_numeric_ehir_type(typ) || is_float_ehir_type(typ) { ret false }
-    ret numeric_type_bits(typ) <= unsafe { encore_llvm_target_pointer_width() }
+    if typ.pointer != PointerKind::Plain {
+        ret false
+    }
+    if typ.name == "bool" || typ.name == "u1" {
+        ret true
+    }
+    if !is_numeric_ehir_type(typ) || is_float_ehir_type(typ) {
+        ret false
+    }
+    ret numeric_type_bits(typ) <= unsafe {
+        encore_llvm_target_pointer_width()
+    }
 }
 
-fn is_signed_ehir_type(typ: Type) -> bool { ret typ.name == "i8" || typ.name == "i16" || typ.name == "i32" || typ.name == "i64" || typ.name == "isize" }
+fn is_signed_ehir_type(typ: Type) -> bool {
+    ret typ.name == "i8" || typ.name == "i16" || typ.name == "i32" || typ.name == "i64" || typ.name ==
+    "isize"
+}
 
 fn numeric_type_bits(typ: Type) -> usize {
-    if typ.name == "u8" || typ.name == "i8" { ret 8_usize }
-    if typ.name == "u16" || typ.name == "i16" { ret 16_usize }
-    if typ.name == "f16" { ret 16_usize }
-    if typ.name == "u32" || typ.name == "i32" { ret 32_usize }
-    if typ.name == "f32" { ret 32_usize }
-    if typ.name == "usize" || typ.name == "isize" { ret unsafe { encore_llvm_target_pointer_width() } }
+    if typ.name == "u8" || typ.name == "i8" {
+        ret 8_usize
+    }
+    if typ.name == "u16" || typ.name == "i16" {
+        ret 16_usize
+    }
+    if typ.name == "f16" {
+        ret 16_usize
+    }
+    if typ.name == "u32" || typ.name == "i32" {
+        ret 32_usize
+    }
+    if typ.name == "f32" {
+        ret 32_usize
+    }
+    if typ.name == "usize" || typ.name == "isize" {
+        ret unsafe {
+            encore_llvm_target_pointer_width()
+        }
+    }
     ret 64_usize
 }
 
 fn pointer_int_type() -> LLVMType {
-    if unsafe { encore_llvm_target_pointer_width() } == 32_usize { ret i32_type() }
+    if unsafe {
+        encore_llvm_target_pointer_width()
+    }
+    == 32_usize {
+        ret i32_type()
+    }
     ret i64_type()
 }
 
 fn is_variant_symbol(value: str) -> bool {
-    if value.len() == 0_usize { ret false }
+    if value.len() == 0_usize {
+        ret false
+    }
     let first = value.byte_at(0_usize)
     ret first >= 65_u8 && first <= 90_u8
 }
@@ -3094,7 +4074,7 @@ fn enum_variant_tag_value(value: str) -> usize {
     let mut tag = 216613626_usize
     let mut index = 0_usize
     while index < value.len() {
-        tag = (tag * 16777619_usize + value.byte_at(index) as usize) % 2147483647_usize
+        tag =(tag * 16777619_usize + value.byte_at(index) as usize) % 2147483647_usize
         index = index + 1_usize
     }
     ret tag
@@ -3112,7 +4092,9 @@ fn field_index_text(field_name: str) -> str {
     }
 
     let first = field_name.byte_at(0_usize)
-    if first >= 65_u8 && first <= 90_u8 { ret "1" }
+    if first >= 65_u8 && first <= 90_u8 {
+        ret "1"
+    }
     if (is_digit(first)) {
         ret take_digits(field_name, 0_usize, "")
     }
@@ -3141,27 +4123,61 @@ fn take_digits(text: str, index: usize, acc: str) -> str {
 
 fn binary_suffix(op: BinaryOpKind) -> str {
     match op {
-        ADD => { ret "add" }
-        SUB => { ret "sub" }
-        MUL => { ret "mul" }
-        DIV => { ret "div" }
-        MOD => { ret "mod" }
-        SHL => { ret "shl" }
-        SHR => { ret "shr" }
-        AND => { ret "and" }
-        OR => { ret "or" }
-        XOR => { ret "xor" }
-        IEQ => { ret "ieq" }
-        NEQ => { ret "neq" }
-        LES => { ret "les" }
-        LEQ => { ret "leq" }
-        GRT => { ret "grt" }
-        GEQ => { ret "geq" }
+        ADD => {
+            ret "add"
+        }
+        SUB => {
+            ret "sub"
+        }
+        MUL => {
+            ret "mul"
+        }
+        DIV => {
+            ret "div"
+        }
+        MOD => {
+            ret "mod"
+        }
+        SHL => {
+            ret "shl"
+        }
+        SHR => {
+            ret "shr"
+        }
+        AND => {
+            ret "and"
+        }
+        OR => {
+            ret "or"
+        }
+        XOR => {
+            ret "xor"
+        }
+        IEQ => {
+            ret "ieq"
+        }
+        NEQ => {
+            ret "neq"
+        }
+        LES => {
+            ret "les"
+        }
+        LEQ => {
+            ret "leq"
+        }
+        GRT => {
+            ret "grt"
+        }
+        GEQ => {
+            ret "geq"
+        }
     }
 }
 
 fn sanitize_symbol(value: str) -> str {
-    ret unsafe { encore_symbol_sanitize(value) }
+    ret unsafe {
+        encore_symbol_sanitize(value)
+    }
 }
 
 fn is_digit(ch: u8) -> bool {
