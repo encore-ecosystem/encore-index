@@ -95,6 +95,11 @@ jobs:
           trap 'kill "$server_pid"' EXIT
           export ENCORE_INDEX_URL=http://127.0.0.1:8765
           export ENCORE_REGISTRY_CACHE="$PWD/target/registry"
+          for attempt in {1..20}; do
+            curl -fsS "$ENCORE_INDEX_URL/st/std.json" >/dev/null && break
+            sleep 0.25
+          done
+          curl -fsS "$ENCORE_INDEX_URL/st/std.json" >/dev/null
           while IFS= read -r package; do
             echo "::group::$(basename "$package")"
             (
