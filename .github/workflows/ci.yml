@@ -61,6 +61,14 @@ jobs:
             fi
           done < <(gh release list --limit 100 --json tagName,publishedAt \
             --jq 'sort_by(.publishedAt) | reverse | .[].tagName')
+          if test -z "$selected"; then
+            selected=bootstrap/v0.1.4.3
+            assets=$(gh release view "$selected" --json assets)
+            jq -e '.assets | map(.name) |
+              index("encore-x86_64-unknown-linux-gnu.tar.gz") != null and
+              index("encore-x86_64-unknown-linux-gnu.tar.gz.sha256") != null' \
+              <<<"$assets" >/dev/null
+          fi
           test -n "$selected"
           asset=encore-x86_64-unknown-linux-gnu.tar.gz
           mkdir -p target/compiler
