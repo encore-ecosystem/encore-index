@@ -1,0 +1,11 @@
+{
+  "name": "luma",
+  "versions": [
+    {
+      "version": "0.1.1",
+      "archive": "https://github.com/encore-ecosystem/Luma/releases/download/v0.1.1/luma-0.1.1.tar.gz",
+      "checksum": "6963dcbeed7371083f27c2c43aa651c9e0996b063652cddab5fc5bfe4a15feb4",
+      "yanked": false
+    }
+  ]
+}
