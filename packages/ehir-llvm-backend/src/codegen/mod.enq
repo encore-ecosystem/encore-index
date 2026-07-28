@@ -144,6 +144,16 @@ struct EmittedIrChunk {
     module: EmittedIrModule
 }
 
+struct ModulePrepareJob {
+    index: usize
+    weight: usize
+}
+
+struct PreparedModuleChunk {
+    index: usize
+    module: Module
+}
+
 fn odr_function(function: LLVMFunction) -> LLVMFunction {
     if function.is_extern { ret function }
     ret llvm_with_linkage(function, "linkonce_odr")
@@ -1480,8 +1490,7 @@ pub fn emit_ir_bundle_for_target(bundle: ModuleBundle, triple: str, pointer_widt
 pub fn emit_ir_bundle_for_target_parallel(bundle: ModuleBundle, triple: str, pointer_width: usize,
     requested_jobs: usize) -> Vec[EmittedIrModule] {
     unsafe { encore_llvm_set_target_pointer_width(pointer_width) }
-    let mut prepared = Vec[Module]::new()
-    for module in bundle.modules { prepared.push(prepare_module_for_codegen(module)) }
+    let prepared = prepare_modules_for_codegen_parallel(bundle.modules, requested_jobs)
     let mut analysis_directives = Vec[Directive]::new()
     for module in prepared { analysis_directives.extend(module.directives) }
     let mut generic_calls = collect_generic_calls(analysis_directives)
@@ -1503,6 +1512,98 @@ pub fn emit_ir_bundle_for_target_parallel(bundle: ModuleBundle, triple: str, poi
             if chunk.index == index { out.push(chunk.module) }
         }
         index = index + 1_usize
+    }
+    ret out
+}
+
+fn prepare_modules_for_codegen_parallel(modules: Vec[Module], requested_jobs: usize) -> Vec[Module] {
+    let worker_count = min_codegen_jobs(requested_jobs, modules.len())
+    if worker_count <= 1_usize {
+        let mut prepared = Vec[Module]::new()
+        for module in modules { prepared.push(prepare_module_for_codegen(module)) }
+        ret prepared
+    }
+    let jobs = schedule_module_prepare_jobs(modules)
+    let mut pending = Vec[JoinHandle[Vec[PreparedModuleChunk]]]::new()
+    let mut worker = 0_usize
+    while worker < worker_count {
+        pending.push(spawn prepare_module_batch(modules, jobs, worker, worker_count))
+        worker += 1_usize
+    }
+    let mut chunks = Vec[PreparedModuleChunk]::new()
+    for handle in pending { chunks.extend(handle.join()) }
+    let mut prepared = Vec[Module]::new()
+    let mut index = 0_usize
+    while index < modules.len() {
+        for chunk in chunks {
+            if chunk.index == index { prepared.push(chunk.module) }
+        }
+        index += 1_usize
+    }
+    ret prepared
+}
+
+fn schedule_module_prepare_jobs(modules: Vec[Module]) -> Vec[ModulePrepareJob] {
+    let mut jobs = Vec[ModulePrepareJob]::new()
+    let mut index = 0_usize
+    for module in modules {
+        jobs.push(ModulePrepareJob{index, module.directives.len()})
+        index += 1_usize
+    }
+    index = 1_usize
+    while index < jobs.len() {
+        let mut position = index
+        while position > 0_usize {
+            let mut swap = false
+            match jobs.get(position) {
+                Some(right) => {
+                    match jobs.get(position - 1_usize) {
+                        Some(left) => {
+                            swap = right.weight > left.weight ||
+                                (right.weight == left.weight && right.index < left.index)
+                        }
+                        None => {}
+                    }
+                }
+                None => {}
+            }
+            if !swap { break }
+            match jobs.get(position) {
+                Some(right) => {
+                    match jobs.get(position - 1_usize) {
+                        Some(left) => {
+                            jobs.set(position - 1_usize, right)
+                            jobs.set(position, left)
+                        }
+                        None => {}
+                    }
+                }
+                None => {}
+            }
+            position -= 1_usize
+        }
+        index += 1_usize
+    }
+    ret jobs
+}
+
+fn prepare_module_batch(modules: Vec[Module], jobs: Vec[ModulePrepareJob], worker_index: usize,
+    worker_count: usize) -> Vec[PreparedModuleChunk] {
+    let mut out = Vec[PreparedModuleChunk]::new()
+    let mut job_index = worker_index
+    while job_index < jobs.len() {
+        match jobs.get(job_index) {
+            Some(job) => {
+                match modules.get(job.index) {
+                    Some(module) => {
+                        out.push(PreparedModuleChunk{job.index, prepare_module_for_codegen(module)})
+                    }
+                    None => {}
+                }
+            }
+            None => {}
+        }
+        job_index += worker_count
     }
     ret out
 }
