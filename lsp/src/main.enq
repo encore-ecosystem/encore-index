@@ -1,0 +1,4700 @@
+import core::fmt::Debug
+import core::option::Option
+import core::vec::Vec
+
+import encore::analyzer::{AnalyzerConfig, analyze_source_document, analyzer_frontend_diagnostics}
+import encore::diagnostics::applicability_name
+import encore::formatter::{FormatConfig, format_syntax}
+import encore::frontend::AnalysisDatabase
+import encore::frontend::DependencyEdge
+import encore::frontend::DiagnosticLabelKind
+import encore::frontend::FrontendCallable
+import encore::frontend::FrontendDiagnostic
+import encore::frontend::FrontendDocument
+import encore::frontend::FrontendSymbol
+import encore::frontend::SyntaxDocument
+import encore::frontend::Token
+import encore::frontend::TokenType
+import encore::frontend::analyze_source_lightweight
+import encore::project::read_project_tooling_config_at
+import json::Json
+import json::field
+import mod::paths::{uri_to_path, path_to_uri, join_path, ends_with, starts_with}
+import mod::protocol::{read_lsp_message, send_response, send_error, send_notification, json_get, json_get_str, json_usize, json_number_usize, make_range, range_between, location_json, text_edit, bool_provider, rename_provider, signature_help_provider, semantic_tokens_provider,}
+import mod::text::{line_text_at, find_in_line_at_or_after, contains_substring, document_last_line, min_usize, is_identifier_name, utf16_len, utf16_column, character_index_from_utf16,}
+import mod::tokens::{is_keyword_token, is_operator_token}
+
+extern fn encore_proc_exit(code: i32) -> i32
+extern fn encore_os_cwd() -> str
+extern fn encore_fs_read_file(path: str) -> str
+extern fn encore_fs_status(path: str) -> i32
+extern fn encore_fs_read_dir(path: str) -> str
+
+struct Document {
+    uri: str
+    text: str
+    analysis: FrontendDocument
+}
+
+struct InferredBinding {
+    name: str
+    typ: str
+}
+
+struct ProjectRoot {
+    root: str
+    name: str
+}
+
+struct ModuleRef {
+    project_root: str
+    project_name: str
+    source_dir: str
+    module_name: str
+    uri: str
+    path: str
+}
+
+struct ImportRequest {
+    source: str
+    target: str
+    alias: Option[str]
+    wildcard: bool
+    line: usize
+    column: usize
+    length: usize
+}
+
+struct ExpandedImportTarget {
+    target: str
+    alias: Option[str]
+    wildcard: bool
+}
+
+struct ResolvedReference {
+    id: str
+    label: str
+    uri: str
+    range: Json
+    hover: str
+    callable: Option[FrontendCallable]
+}
+
+struct ServerState {
+    initialized: bool
+    shutdown_requested: bool
+    analysis: AnalysisDatabase
+    documents: Vec[Document]
+    workspace_roots: Vec[str]
+    discovered_workspace_roots: Vec[str]
+    workspace_projects: Vec[ProjectRoot]
+    indexed_project_roots: Vec[str]
+    workspace_documents: Vec[Document]
+}
+
+impl for Document {
+    fn new(uri: str, text: str) -> Self {
+        ret Self {
+            uri, text, analyze_source_lightweight(text)
+        }
+    }
+}
+
+impl for ServerState {
+    fn new() -> Self {
+        ret Self {
+            false,
+            false,
+            AnalysisDatabase::new(),
+            Vec[Document]::new(),
+            Vec[str]::new(),
+            Vec[str]::new(),
+            Vec[ProjectRoot]::new(),
+            Vec[str]::new(),
+            Vec[Document]::new()
+        }
+    }
+
+    fn upsert_document(self: mut Self, uri: str, text: str) ->() {
+        let analyzed = self.analyze_document(uri, text)
+        let mut index = 0_usize
+        while index < self.documents.len() {
+            match self.documents.get(index) {
+                Option[Document]::Some(doc) => {
+                    if doc.uri == uri {
+                        self.documents.set(index, Document {
+                                uri, text, analyzed
+                            }
+                            ,
+                        )
+                        ret()
+                    }
+                }
+                Option[Document]::None => {
+                }
+            }
+            index += 1_usize
+        }
+        self.documents.push(Document {
+                uri, text, analyzed
+            }
+            ,
+        )
+        ret()
+    }
+
+    fn remove_document(self: mut Self, uri: str) ->() {
+        let mut next = Vec[Document]::new()
+        let mut index = 0_usize
+        while index < self.documents.len() {
+            match self.documents.get(index) {
+                Option[Document]::Some(doc) => {
+                    if doc.uri != uri {
+                        next.push(doc)
+                    }
+                }
+                Option[Document]::None => {
+                }
+            }
+            index += 1_usize
+        }
+        self.documents = next
+        ret()
+    }
+
+    fn document(self: Self, uri: str) -> Option[Document] {
+        let mut index = 0_usize
+        while index < self.documents.len() {
+            match self.documents.get(index) {
+                Option[Document]::Some(doc) => {
+                    if doc.uri == uri {
+                        ret Option[Document]::Some(doc)
+                    }
+                }
+                Option[Document]::None => {
+                }
+            }
+            index += 1_usize
+        }
+        let mut workspace_index = 0_usize
+        while workspace_index < self.workspace_documents.len() {
+            match self.workspace_documents.get(workspace_index) {
+                Option[Document]::Some(doc) => {
+                    if doc.uri == uri {
+                        ret Option[Document]::Some(doc)
+                    }
+                }
+                Option[Document]::None => {
+                }
+            }
+            workspace_index += 1_usize
+        }
+        ret Option[Document]::None
+    }
+
+    fn add_workspace_root(self: mut Self, root: str) ->() {
+        if root == "" {
+            ret()
+        }
+        let mut index = 0_usize
+        while index < self.workspace_roots.len() {
+            match self.workspace_roots.get(index) {
+                Option[str]::Some(existing) => {
+                    if existing == root {
+                        ret()
+                    }
+                }
+                Option[str]::None => {
+                }
+            }
+            index += 1_usize
+        }
+        self.workspace_roots.push(root)
+        ret()
+    }
+
+    fn upsert_workspace_document(self: mut Self, uri: str, text: str) ->() {
+        let analyzed = self.analyze_document(uri, text)
+        let mut index = 0_usize
+        while index < self.workspace_documents.len() {
+            match self.workspace_documents.get(index) {
+                Option[Document]::Some(doc) => {
+                    if doc.uri == uri {
+                        self.workspace_documents.set(index, Document {
+                                uri, text, analyzed
+                            }
+                            ,
+                        )
+                        ret()
+                    }
+                }
+                Option[Document]::None => {
+                }
+            }
+            index += 1_usize
+        }
+        self.workspace_documents.push(Document {
+                uri, text, analyzed
+            }
+            ,
+        )
+        ret()
+    }
+
+    fn cache_workspace_document_uri(self: mut Self, uri: str) ->() {
+        match self.document(uri) {
+            Option[Document]::Some(_doc) => {
+                ret()
+            }
+            Option[Document]::None => {
+            }
+        }
+        let path = uri_to_path(uri)
+        if file_exists(path) {
+            self.upsert_workspace_document(uri, read_file(path))
+        }
+        ret()
+    }
+
+    fn set_workspace_projects(self: mut Self, projects: Vec[ProjectRoot]) ->() {
+        self.workspace_projects = projects
+        ret()
+    }
+
+    fn update_workspace_document_if_indexed(self: mut Self, uri: str, text: str) ->() {
+        let mut index = 0_usize
+        while index < self.workspace_documents.len() {
+            match self.workspace_documents.get(index) {
+                Option[Document]::Some(doc) => {
+                    if doc.uri == uri {
+                        match self.document(uri) {
+                            Option[Document]::Some(current) => {
+                                self.workspace_documents.set(index, current)
+                            }
+                            Option[Document]::None => {
+                                let analyzed = self.analyze_document(uri, text)
+                                self.workspace_documents.set(index, Document {
+                                        uri, text, analyzed
+                                    }
+                                    ,
+                                )
+                            }
+                        }
+                        ret()
+                    }
+                }
+                Option[Document]::None => {
+                }
+            }
+            index += 1_usize
+        }
+        ret()
+    }
+
+    fn analyze_document(self: mut Self, uri: str, text: str) -> FrontendDocument {
+        let module_name = analysis_module_name(self, uri)
+        self.analysis.set_module(module_name, uri_to_path(uri), text)
+        match self.analysis.document_lightweight(module_name) {
+            Option[FrontendDocument]::Some(document) => {
+                ret document
+            }
+            Option[FrontendDocument]::None => {
+                ret FrontendDocument::empty()
+            }
+        }
+    }
+}
+
+fn main() -> u32 {
+    let mut state = ServerState::new()
+    loop {
+        match read_lsp_message() {
+            Option[Json]::Some(message) => {
+                if !handle_message(state, message) {
+                    ret 0_u32
+                }
+            }
+            Option[Json]::None => {
+                ret 0_u32
+            }
+        }
+    }
+    ret 0_u32
+}
+
+fn handle_message(state: mut ServerState, message: Json) -> bool {
+    let method = json_get_str(message, "method", "")
+    if method == "" {
+        if !json_get(message, "id").is_null() {
+            send_error(json_get(message, "id"), "-32600", "Invalid Request")
+        }
+        ret true
+    }
+
+    if method == "initialize" {
+        if state.initialized {
+            send_error(json_get(message, "id"), "-32600", "Initialize request received more than once")
+            ret true
+        }
+        handle_initialize_workspace(state, json_get(message, "params"))
+        state.initialized = true
+        send_response(json_get(message, "id"), initialize_result())
+        ret true
+    }
+    if method == "initialized" {
+        index_workspace_roots_shallow(state)
+        ret true
+    }
+    if method == "shutdown" {
+        state.shutdown_requested = true
+        send_response(json_get(message, "id"), Json::Null)
+        ret true
+    }
+    if method == "exit" {
+        if state.shutdown_requested {
+            ret false
+        }
+        exit_process(1_i32)
+        ret false
+    }
+    if method == "$/cancelRequest" || method == "$/setTrace" {
+        ret true
+    }
+    if !state.initialized {
+        send_error(json_get(message, "id"), "-32002", "Server not initialized")
+        ret true
+    }
+    if state.shutdown_requested {
+        send_error(json_get(message, "id"), "-32600", "Request received after shutdown")
+        ret true
+    }
+
+    if method == "textDocument/didOpen" {
+        handle_did_open(state, json_get(message, "params"))
+        ret true
+    }
+    if method == "textDocument/didChange" {
+        handle_did_change(state, json_get(message, "params"))
+        ret true
+    }
+    if method == "textDocument/didClose" {
+        handle_did_close(state, json_get(message, "params"))
+        ret true
+    }
+    if method == "textDocument/didSave" {
+        handle_did_save(state, json_get(message, "params"))
+        ret true
+    }
+    if method == "workspace/didChangeWorkspaceFolders" {
+        handle_workspace_folders_changed(state, json_get(message, "params"))
+        ret true
+    }
+
+    if method == "textDocument/documentSymbol" {
+        send_response(json_get(message, "id"), document_symbols(state, json_get(message, "params")))
+        ret true
+    }
+    if method == "workspace/symbol" {
+        send_response(json_get(message, "id"), workspace_symbols(state, json_get(message, "params")))
+        ret true
+    }
+    if method == "textDocument/definition" || method == "textDocument/declaration" {
+        send_response(json_get(message, "id"), definition_result(state, json_get(message, "params")))
+        ret true
+    }
+    if method == "textDocument/implementation" {
+        send_response(json_get(message, "id"), implementation_result(state, json_get(message, "params")))
+        ret true
+    }
+    if method == "textDocument/hover" {
+        send_response(json_get(message, "id"), hover_result(state, json_get(message, "params")))
+        ret true
+    }
+    if method == "textDocument/signatureHelp" {
+        send_response(json_get(message, "id"), signature_help_result(state, json_get(message, "params")))
+        ret true
+    }
+    if method == "textDocument/references" {
+        send_response(json_get(message, "id"), references_result(state, json_get(message, "params")))
+        ret true
+    }
+    if method == "textDocument/documentHighlight" {
+        send_response(json_get(message, "id"), document_highlight_result(state, json_get(message, "params")))
+        ret true
+    }
+    if method == "textDocument/prepareRename" {
+        send_response(json_get(message, "id"), prepare_rename_result(state, json_get(message, "params")))
+        ret true
+    }
+    if method == "textDocument/rename" {
+        send_response(json_get(message, "id"), rename_result(state, json_get(message, "params")))
+        ret true
+    }
+    if method == "textDocument/completion" {
+        send_response(json_get(message, "id"), completion_result(state, json_get(message, "params")))
+        ret true
+    }
+    if method == "textDocument/inlayHint" {
+        send_response(json_get(message, "id"), inlay_hint_result(state, json_get(message, "params")))
+        ret true
+    }
+    if method == "textDocument/documentLink" {
+        send_response(json_get(message, "id"), document_links(state, json_get(message, "params")))
+        ret true
+    }
+    if method == "textDocument/foldingRange" {
+        send_response(json_get(message, "id"), folding_ranges(state, json_get(message, "params")))
+        ret true
+    }
+    if method == "textDocument/selectionRange" {
+        send_response(json_get(message, "id"), selection_ranges(state, json_get(message, "params")))
+        ret true
+    }
+    if method == "textDocument/semanticTokens/full" {
+        send_response(json_get(message, "id"), semantic_tokens_full(state, json_get(message, "params")))
+        ret true
+    }
+    if method == "textDocument/formatting" || method == "textDocument/rangeFormatting" {
+        send_response(json_get(message, "id"), formatting_edits(state, json_get(message, "params")))
+        ret true
+    }
+    if method == "textDocument/diagnostic" {
+        send_response(json_get(message, "id"), document_diagnostic_result(state, json_get(message, "params")))
+        ret true
+    }
+    if method == "workspace/diagnostic" {
+        send_response(json_get(message, "id"), workspace_diagnostic_result(state))
+        ret true
+    }
+    if method == "textDocument/prepareCallHierarchy" {
+        send_response(json_get(message, "id"), prepare_call_hierarchy_result(state, json_get(message,
+                    "params",)))
+        ret true
+    }
+    if method == "callHierarchy/outgoingCalls" {
+        send_response(json_get(message, "id"), outgoing_calls_result(state, json_get(message, "params")))
+        ret true
+    }
+    if method == "callHierarchy/incomingCalls" {
+        send_response(json_get(message, "id"), incoming_calls_result(state, json_get(message, "params")))
+        ret true
+    }
+
+    send_error(json_get(message, "id"), "-32601", "Method not found: " + method)
+    ret true
+}
+
+fn index_workspace_roots_shallow(state: mut ServerState) ->() {
+    state.workspace_documents = Vec[Document]::new()
+    state.workspace_projects = Vec[ProjectRoot]::new()
+    state.indexed_project_roots = Vec[str]::new()
+    let mut root_index = 0_usize
+    while root_index < state.workspace_roots.len() {
+        match state.workspace_roots.get(root_index) {
+            Some(root) => {
+                discover_workspace_projects_shallow(state, root)
+                if !workspace_root_was_discovered(state, root) {
+                    state.discovered_workspace_roots.push(root)
+                }
+            }
+            None => {
+            }
+        }
+        root_index = root_index + 1_usize
+    }
+    ret()
+}
+
+fn handle_did_open(state: mut ServerState, params: Json) ->() {
+    let text_document = json_get(params, "textDocument")
+    let uri = json_get_str(text_document, "uri", "")
+    let text = json_get_str(text_document, "text", "")
+    if uri != "" {
+        ensure_workspace_for_uri(state, uri)
+        state.upsert_document(uri, text)
+        state.update_workspace_document_if_indexed(uri, text)
+        publish_diagnostics_for_uri(state, uri)
+    }
+    ret()
+}
+
+fn handle_did_change(state: mut ServerState, params: Json) ->() {
+    let text_document = json_get(params, "textDocument")
+    let uri = json_get_str(text_document, "uri", "")
+    let changes = json_get(params, "contentChanges")
+    let text = last_change_text(changes)
+    if uri != "" {
+        ensure_workspace_for_uri(state, uri)
+        state.upsert_document(uri, text)
+        state.update_workspace_document_if_indexed(uri, text)
+        publish_diagnostics_for_uri(state, uri)
+    }
+    ret()
+}
+
+fn handle_did_close(state: mut ServerState, params: Json) ->() {
+    let text_document = json_get(params, "textDocument")
+    let uri = json_get_str(text_document, "uri", "")
+    if uri != "" {
+        state.remove_document(uri)
+        send_notification("textDocument/publishDiagnostics", publish_diagnostics_params(uri, Vec[Json]::new()))
+    }
+    ret()
+}
+
+fn handle_did_save(state: mut ServerState, params: Json) ->() {
+    let text_document = json_get(params, "textDocument")
+    let uri = json_get_str(text_document, "uri", "")
+    if uri == "" {
+        ret()
+    }
+
+    let text = json_get_str(params, "text", "")
+    ensure_workspace_for_uri(state, uri)
+    if text != "" {
+        state.upsert_document(uri, text)
+        state.update_workspace_document_if_indexed(uri, text)
+    } else {
+        let path = uri_to_path(uri)
+        if file_exists(path) {
+            state.upsert_workspace_document(uri, read_file(path))
+        }
+    }
+    publish_diagnostics_for_uri(state, uri)
+    ret()
+}
+
+fn last_change_text(value: Json) -> str {
+    match value.as_array() {
+        Option[Vec[Json]]::Some(items) => {
+            if items.len() == 0_usize {
+                ret ""
+            }
+            match items.get(items.len() - 1_usize) {
+                Option[Json]::Some(change) => {
+                    ret json_get_str(change, "text", "")
+                }
+                Option[Json]::None => {
+                }
+            }
+        }
+        Option[Vec[Json]]::None => {
+        }
+    }
+    ret ""
+}
+
+fn handle_initialize_workspace(state: mut ServerState, params: Json) ->() {
+    let root_uri = json_get_str(params, "rootUri", "")
+    if root_uri != "" {
+        state.add_workspace_root(uri_to_path(root_uri))
+    }
+
+    match json_get(params, "workspaceFolders").as_array() {
+        Option[Vec[Json]]::Some(folders) => {
+            let mut index = 0_usize
+            while index < folders.len() {
+                match folders.get(index) {
+                    Option[Json]::Some(folder) => {
+                        let uri = json_get_str(folder, "uri", "")
+                        if uri != "" {
+                            state.add_workspace_root(uri_to_path(uri))
+                        }
+                    }
+                    Option[Json]::None => {
+                    }
+                }
+                index += 1_usize
+            }
+        }
+        Option[Vec[Json]]::None => {
+        }
+    }
+
+    if state.workspace_roots.len() == 0_usize {
+        state.add_workspace_root(cwd())
+    }
+
+    state.workspace_documents = Vec[Document]::new()
+    state.workspace_projects = Vec[ProjectRoot]::new()
+    state.indexed_project_roots = Vec[str]::new()
+    state.discovered_workspace_roots = Vec[str]::new()
+    ret()
+}
+
+fn handle_workspace_folders_changed(state: mut ServerState, params: Json) ->() {
+    let event = json_get(params, "event")
+    match json_get(event, "removed").as_array() {
+        Some(folders) => {
+            let mut index = 0_usize
+            while index < folders.len() {
+                match folders.get(index) {
+                    Some(folder) => {
+                        let uri = json_get_str(folder, "uri", "")
+                        if uri != "" {
+                            remove_workspace_root(state, uri_to_path(uri))
+                        }
+                    }
+                    None => {
+                    }
+                }
+                index += 1_usize
+            }
+        }
+        None => {
+        }
+    }
+    match json_get(event, "added").as_array() {
+        Some(folders) => {
+            let mut index = 0_usize
+            while index < folders.len() {
+                match folders.get(index) {
+                    Some(folder) => {
+                        let uri = json_get_str(folder, "uri", "")
+                        if uri != "" {
+                            state.add_workspace_root(uri_to_path(uri))
+                        }
+                    }
+                    None => {
+                    }
+                }
+                index += 1_usize
+            }
+        }
+        None => {
+        }
+    }
+    index_workspace_roots_shallow(state)
+    ret()
+}
+
+fn remove_workspace_root(state: mut ServerState, root: str) ->() {
+    let mut roots = Vec[str]::new()
+    let mut index = 0_usize
+    while index < state.workspace_roots.len() {
+        match state.workspace_roots.get(index) {
+            Some(existing) => {
+                if existing != root {
+                    roots.push(existing)
+                }
+            }
+            None => {
+            }
+        }
+        index += 1_usize
+    }
+    state.workspace_roots = roots
+    ret()
+}
+
+fn ensure_workspace_for_uri(state: mut ServerState, uri: str) ->() {
+    let path = uri_to_path(uri)
+    ensure_workspace_roots_for_path(state, path)
+    match project_root_for_path(path) {
+        Option[str]::Some(root) => {
+            if !workspace_project_root_exists(state, root) {
+                state_add_workspace_project(state, root)
+            }
+            index_workspace_project_once(state, root)
+        }
+        Option[str]::None => {
+        }
+    }
+    ret()
+}
+
+fn index_workspace_project_once(state: mut ServerState, root: str) ->() {
+    let mut index = 0_usize
+    while index < state.indexed_project_roots.len() {
+        match state.indexed_project_roots.get(index) {
+            Option[str]::Some(existing) => {
+                if existing == root {
+                    ret()
+                }
+            }
+            Option[str]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    state.indexed_project_roots.push(root)
+    index_workspace_dir(state, join_path(root, "src"))
+    ret()
+}
+
+fn ensure_workspace_roots_for_path(state: mut ServerState, path: str) ->() {
+    let mut index = 0_usize
+    while index < state.workspace_roots.len() {
+        match state.workspace_roots.get(index) {
+            Option[str]::Some(root) => {
+                if starts_with(path, root) && !workspace_root_was_discovered(state, root) {
+                    discover_workspace_projects_shallow(state, root)
+                    state.discovered_workspace_roots.push(root)
+                }
+            }
+            Option[str]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret()
+}
+
+fn workspace_root_was_discovered(state: ServerState, root: str) -> bool {
+    let mut index = 0_usize
+    while index < state.discovered_workspace_roots.len() {
+        match state.discovered_workspace_roots.get(index) {
+            Option[str]::Some(existing) => {
+                if existing == root {
+                    ret true
+                }
+            }
+            Option[str]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret false
+}
+
+fn discover_workspace_projects_shallow(state: mut ServerState, root: str) ->() {
+    if file_exists(join_path(root, "encore.toml")) {
+        state_add_workspace_project(state, root)
+    }
+
+    let entries = read_dir(root)
+    let mut index = 0_usize
+    while index < entries.len() {
+        match entries.get(index) {
+            Option[str]::Some(entry) => {
+                if should_descend_workspace_entry(entry) {
+                    let path = join_path(root, entry)
+                    if file_exists(join_path(path, "encore.toml")) {
+                        state_add_workspace_project(state, path)
+                    }
+                }
+            }
+            Option[str]::None => {
+            }
+        }
+        index += 1_usize
+    }
+
+    discover_workspace_projects_one_level(state, join_path(root, "index"))
+    ret()
+}
+
+fn discover_workspace_projects_one_level(state: mut ServerState, dir: str) ->() {
+    if !file_exists(dir) {
+        ret()
+    }
+    let entries = read_dir(dir)
+    let mut index = 0_usize
+    while index < entries.len() {
+        match entries.get(index) {
+            Option[str]::Some(entry) => {
+                if should_descend_workspace_entry(entry) {
+                    let path = join_path(dir, entry)
+                    if file_exists(join_path(path, "encore.toml")) {
+                        state_add_workspace_project(state, path)
+                    }
+                }
+            }
+            Option[str]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret()
+}
+
+fn workspace_project_root_exists(state: ServerState, root: str) -> bool {
+    let mut index = 0_usize
+    while index < state.workspace_projects.len() {
+        match state.workspace_projects.get(index) {
+            Option[ProjectRoot]::Some(project) => {
+                if project.root == root {
+                    ret true
+                }
+            }
+            Option[ProjectRoot]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret false
+}
+
+fn project_root_for_path(path: str) -> Option[str] {
+    let mut cursor = if ends_with(path, ".enq") {
+        parent_path(path)
+    } else {
+        path
+    }
+    loop {
+        if cursor == "" {
+            break
+        }
+        if file_exists(join_path(cursor, "encore.toml")) {
+            ret Option[str]::Some(cursor)
+        }
+        let parent = parent_path(cursor)
+        if parent == cursor || parent == "" {
+            break
+        }
+        cursor = parent
+    }
+    ret Option[str]::None
+}
+
+fn index_workspace_roots(state: mut ServerState) ->() {
+    state.workspace_documents = Vec[Document]::new()
+    state.workspace_projects = Vec[ProjectRoot]::new()
+    let mut index = 0_usize
+    while index < state.workspace_roots.len() {
+        match state.workspace_roots.get(index) {
+            Option[str]::Some(root) => {
+                discover_workspace_projects(state, root)
+            }
+            Option[str]::None => {
+            }
+        }
+        index += 1_usize
+    }
+
+    if state.workspace_projects.len() == 0_usize {
+        let mut fallback_index = 0_usize
+        while fallback_index < state.workspace_roots.len() {
+            match state.workspace_roots.get(fallback_index) {
+                Option[str]::Some(root) => {
+                    let src = join_path(root, "src")
+                    index_workspace_dir(state, src)
+                }
+                Option[str]::None => {
+                }
+            }
+            fallback_index += 1_usize
+        }
+        ret()
+    }
+
+    let mut project_index = 0_usize
+    while project_index < state.workspace_projects.len() {
+        match state.workspace_projects.get(project_index) {
+            Option[ProjectRoot]::Some(project) => {
+                index_workspace_dir(state, join_path(project.root, "src"))
+            }
+            Option[ProjectRoot]::None => {
+            }
+        }
+        project_index += 1_usize
+    }
+    ret()
+}
+
+fn index_workspace_dir(state: mut ServerState, dir: str) ->() {
+    if !file_exists(dir) {
+        ret()
+    }
+    let entries = read_dir(dir)
+    let mut index = 0_usize
+    while index < entries.len() {
+        match entries.get(index) {
+            Option[str]::Some(entry) => {
+                if should_index_workspace_entry(entry) {
+                    let path = join_path(dir, entry)
+                    if ends_with(path, ".enq") {
+                        state.upsert_workspace_document(path_to_uri(path), read_file(path))
+                    } elif file_exists(join_path(path, ".")) {
+                        index_workspace_dir(state, path)
+                    }
+                }
+            }
+            Option[str]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret()
+}
+
+fn should_index_workspace_entry(entry: str) -> bool {
+    if entry == "." || entry == ".." {
+        ret false
+    }
+    if entry == ".git" || entry == ".venv" || entry == ".ruff_cache" || entry == "target" || entry ==
+    "__pycache__" {
+        ret false
+    }
+    if ends_with(entry, ".enq") {
+        ret true
+    }
+    if contains_substring(entry, ".") {
+        ret false
+    }
+    ret true
+}
+
+fn discover_workspace_projects(state: mut ServerState, root: str) ->() {
+    if file_exists(join_path(root, "encore.toml")) {
+        state_add_workspace_project(state, root)
+    }
+    discover_workspace_projects_in_dir(state, root)
+    ret()
+}
+
+fn discover_workspace_projects_in_dir(state: mut ServerState, dir: str) ->() {
+    let entries = read_dir(dir)
+    let mut index = 0_usize
+    while index < entries.len() {
+        match entries.get(index) {
+            Option[str]::Some(entry) => {
+                if should_descend_workspace_entry(entry) {
+                    let path = join_path(dir, entry)
+                    if file_exists(join_path(path, "encore.toml")) {
+                        state_add_workspace_project(state, path)
+                    }
+                    discover_workspace_projects_in_dir(state, path)
+                }
+            }
+            Option[str]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret()
+}
+
+fn should_descend_workspace_entry(entry: str) -> bool {
+    if entry == "." || entry == ".." {
+        ret false
+    }
+    if entry == ".git" || entry == ".venv" || entry == "target" || entry == "__pycache__" {
+        ret false
+    }
+    if ends_with(entry, ".enq") || ends_with(entry, ".py") || ends_with(entry, ".md") || ends_with(entry,
+        ".toml",) {
+        ret false
+    }
+    ret true
+}
+
+fn state_add_workspace_project(state: mut ServerState, root: str) ->() {
+    let mut index = 0_usize
+    while index < state.workspace_projects.len() {
+        match state.workspace_projects.get(index) {
+            Option[ProjectRoot]::Some(existing) => {
+                if existing.root == root {
+                    ret()
+                }
+            }
+            Option[ProjectRoot]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    let name = project_name_for_root(root)
+    state.workspace_projects.push(ProjectRoot {
+            root, name
+        }
+        ,
+    )
+    ret()
+}
+
+fn initialize_result() -> Json {
+    let mut sync_fields = Vec[(str, Json)]::new()
+    sync_fields.push(field("openClose", Json::Bool(true)))
+    sync_fields.push(field("change", Json::Number("1")))
+    let mut save_fields = Vec[(str, Json)]::new()
+    save_fields.push(field("includeText", Json::Bool(true)))
+    sync_fields.push(field("save", Json::Object(save_fields)))
+
+    let mut completion_fields = Vec[(str, Json)]::new()
+    completion_fields.push(field("resolveProvider", Json::Bool(false)))
+    completion_fields.push(field("triggerCharacters", completion_trigger_characters()))
+
+    let mut diagnostic_fields = Vec[(str, Json)]::new()
+    diagnostic_fields.push(field("interFileDependencies", Json::Bool(false)))
+    diagnostic_fields.push(field("workspaceDiagnostics", Json::Bool(false)))
+
+    let mut capabilities = Vec[(str, Json)]::new()
+    capabilities.push(field("textDocumentSync", Json::Object(sync_fields)))
+    capabilities.push(field("definitionProvider", Json::Bool(true)))
+    capabilities.push(field("declarationProvider", Json::Bool(true)))
+    capabilities.push(field("implementationProvider", Json::Bool(true)))
+    capabilities.push(field("hoverProvider", Json::Bool(true)))
+    capabilities.push(field("referencesProvider", Json::Bool(true)))
+    capabilities.push(field("documentHighlightProvider", Json::Bool(true)))
+    capabilities.push(field("renameProvider", rename_provider()))
+    capabilities.push(field("signatureHelpProvider", signature_help_provider()))
+    capabilities.push(field("documentSymbolProvider", Json::Bool(true)))
+    capabilities.push(field("workspaceSymbolProvider", Json::Bool(true)))
+    capabilities.push(field("completionProvider", Json::Object(completion_fields)))
+    capabilities.push(field("inlayHintProvider", Json::Bool(true)))
+    capabilities.push(field("documentLinkProvider", bool_provider(false)))
+    capabilities.push(field("foldingRangeProvider", Json::Bool(true)))
+    capabilities.push(field("selectionRangeProvider", Json::Bool(true)))
+    capabilities.push(field("semanticTokensProvider", semantic_tokens_provider()))
+    capabilities.push(field("documentFormattingProvider", Json::Bool(true)))
+    capabilities.push(field("documentRangeFormattingProvider", Json::Bool(true)))
+    capabilities.push(field("callHierarchyProvider", Json::Bool(true)))
+    capabilities.push(field("diagnosticProvider", Json::Object(diagnostic_fields)))
+
+    let mut workspace_folders = Vec[(str, Json)]::new()
+    workspace_folders.push(field("supported", Json::Bool(true)))
+    workspace_folders.push(field("changeNotifications", Json::Bool(true)))
+    let mut workspace = Vec[(str, Json)]::new()
+    workspace.push(field("workspaceFolders", Json::Object(workspace_folders)))
+    capabilities.push(field("workspace", Json::Object(workspace)))
+
+    let mut server_info = Vec[(str, Json)]::new()
+    server_info.push(field("name", Json::String("encore-lsp")))
+    server_info.push(field("version", Json::String("0.1.0")))
+
+    let mut result = Vec[(str, Json)]::new()
+    result.push(field("capabilities", Json::Object(capabilities)))
+    result.push(field("serverInfo", Json::Object(server_info)))
+    ret Json::Object(result)
+}
+
+fn document_symbols(state: ServerState, params: Json) -> Json {
+    let uri = request_uri(params)
+    match state.document(uri) {
+        Option[Document]::Some(doc) => {
+            let mut items = Vec[Json]::new()
+            let mut index = 0_usize
+            while index < doc.analysis.symbols.len() {
+                match doc.analysis.symbols.get(index) {
+                    Option[FrontendSymbol]::Some(symbol) => {
+                        items.push(symbol_to_lsp(doc, symbol))
+                    }
+                    Option[FrontendSymbol]::None => {
+                    }
+                }
+                index += 1_usize
+            }
+            ret Json::Array(items)
+        }
+        Option[Document]::None => {
+            ret Json::Array(Vec[Json]::new())
+        }
+    }
+}
+
+fn symbol_to_lsp(doc: Document, symbol: FrontendSymbol) -> Json {
+    let range = symbol_range(doc, symbol)
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("name", Json::String(symbol.name)))
+    fields.push(field("kind", json_usize(symbol.kind)))
+    fields.push(field("range", range))
+    fields.push(field("selectionRange", range))
+    ret Json::Object(fields)
+}
+
+fn workspace_symbols(state: ServerState, params: Json) -> Json {
+    let query = json_get_str(params, "query", "")
+    let mut items = Vec[Json]::new()
+    let mut doc_index = 0_usize
+    while doc_index < state.documents.len() {
+        match state.documents.get(doc_index) {
+            Option[Document]::Some(doc) => {
+                push_workspace_symbols_for_doc(items, doc, query)
+            }
+            Option[Document]::None => {
+            }
+        }
+        doc_index += 1_usize
+    }
+    let mut workspace_doc_index = 0_usize
+    while workspace_doc_index < state.workspace_documents.len() {
+        match state.workspace_documents.get(workspace_doc_index) {
+            Option[Document]::Some(doc) => {
+                if !open_document_exists(state, doc.uri) {
+                    push_workspace_symbols_for_doc(items, doc, query)
+                }
+            }
+            Option[Document]::None => {
+            }
+        }
+        workspace_doc_index += 1_usize
+    }
+    ret Json::Array(items)
+}
+
+fn push_workspace_symbols_for_doc(items: mut Vec[Json], doc: Document, query: str) ->() {
+    let mut symbol_index = 0_usize
+    while symbol_index < doc.analysis.symbols.len() {
+        match doc.analysis.symbols.get(symbol_index) {
+            Option[FrontendSymbol]::Some(symbol) => {
+                if query == "" || contains_substring(symbol.name, query) {
+                    items.push(workspace_symbol_item(doc, symbol))
+                }
+            }
+            Option[FrontendSymbol]::None => {
+            }
+        }
+        symbol_index += 1_usize
+    }
+    ret()
+}
+
+fn open_document_exists(state: ServerState, uri: str) -> bool {
+    let mut index = 0_usize
+    while index < state.documents.len() {
+        match state.documents.get(index) {
+            Option[Document]::Some(doc) => {
+                if doc.uri == uri {
+                    ret true
+                }
+            }
+            Option[Document]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret false
+}
+
+fn workspace_symbol_item(doc: Document, symbol: FrontendSymbol) -> Json {
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("name", Json::String(symbol.name)))
+    fields.push(field("kind", json_usize(symbol.kind)))
+    fields.push(field("location", location_json(doc.uri, symbol_range(doc, symbol))))
+    ret Json::Object(fields)
+}
+
+fn completion_result(state: ServerState, params: Json) -> Json {
+    let uri = request_uri(params)
+    let mut items = keyword_completion_items()
+    match state.document(uri) {
+        Option[Document]::Some(doc) => {
+            let mut index = 0_usize
+            while index < doc.analysis.symbols.len() {
+                match doc.analysis.symbols.get(index) {
+                    Option[FrontendSymbol]::Some(symbol) => {
+                        items.push(completion_item(symbol.name, symbol_completion_kind(symbol.kind),
+                                "Encore symbol",))
+                    }
+                    Option[FrontendSymbol]::None => {
+                    }
+                }
+                index += 1_usize
+            }
+        }
+        Option[Document]::None => {
+        }
+    }
+    push_workspace_completion_items(state, items)
+
+    let mut result = Vec[(str, Json)]::new()
+    result.push(field("isIncomplete", Json::Bool(false)))
+    result.push(field("items", Json::Array(items)))
+    ret Json::Object(result)
+}
+
+fn completion_trigger_characters() -> Json {
+    let mut values = Vec[Json]::new()
+    let letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    let mut index = 0_usize
+    while index < letters.char_len() {
+        values.push(Json::String(letters.get(index).unwrap_or("")))
+        index += 1_usize
+    }
+    values.push(Json::String("_"))
+    values.push(Json::String(":"))
+    values.push(Json::String("."))
+    ret Json::Array(values)
+}
+
+fn inlay_hint_result(state: mut ServerState, params: Json) -> Json {
+    let uri = request_uri(params)
+    match state.document(uri) {
+        Option[Document]::Some(doc) => {
+            let range = json_get(params, "range")
+            let start_line = json_number_usize(json_get(json_get(range, "start"), "line"), 0_usize)
+            let end_line = json_number_usize(json_get(json_get(range, "end"), "line"), document_last_line(doc.text))
+            ret inferred_let_hints(state, doc, start_line, end_line)
+        }
+        Option[Document]::None => {
+        }
+    }
+    ret Json::Array(Vec[Json]::new())
+}
+
+fn inferred_let_hints(state: mut ServerState, doc: Document, start_line: usize, end_line: usize) -> Json
+{
+    let mut hints = Vec[Json]::new()
+    let mut bindings = Vec[InferredBinding]::new()
+    let module_name = analysis_module_name(state, doc.uri)
+    let mut index = 0_usize
+    while index < doc.analysis.tokens.len() {
+        match doc.analysis.tokens.get(index) {
+            Some(token) => {
+                if token.type == TokenType::KW_LET {
+                    let mut name_index = index + 1_usize
+                    if token_has_type(doc, name_index, TokenType::KW_MUT) {
+                        name_index += 1_usize
+                    }
+                    if token_has_type(doc, name_index, TokenType::IDENTIFIER) {
+                        match doc.analysis.tokens.get(name_index) {
+                            Some(name_token) => {
+                                let after_name = name_index + 1_usize
+                                if !token_has_type(doc, after_name, TokenType::COLON) && token_has_type(doc,
+                                    after_name, TokenType::ASSIGN,) {
+                                    let inferred_type = state.analysis.semantic_binding_type(module_name,
+                                        name_token.value, name_token.line,).unwrap_or(infer_expression_type(doc,
+                                            after_name + 1_usize, bindings,).unwrap_or(""))
+                                    if inferred_type != "" {
+                                        bindings.push(InferredBinding {
+                                                name_token.value, inferred_type
+                                            }
+                                            ,
+                                        )
+                                        if name_token.line >= start_line && name_token.line <= end_line
+                                        {
+                                            hints.push(type_inlay_hint(doc, name_index, name_token, inferred_type))
+                                        }
+                                    }
+                                }
+                            }
+                            None => {
+                            }
+                        }
+                    }
+                }
+            }
+            None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret Json::Array(hints)
+}
+
+fn infer_expression_type(doc: Document, index: usize, bindings: Vec[InferredBinding]) -> Option[str]
+{
+    match doc.analysis.tokens.get(index) {
+        Option[Token]::Some(token) => {
+            if token.type == TokenType::STRING {
+                ret Option[str]::Some("str")
+            }
+            if token.type == TokenType::BOOLEAN {
+                ret Option[str]::Some("bool")
+            }
+            if token.type == TokenType::FLOAT {
+                ret Option[str]::Some(numeric_literal_type(doc, index, "f64"))
+            }
+            if token.type == TokenType::INTEGER {
+                ret Option[str]::Some(numeric_literal_type(doc, index, "i32"))
+            }
+            if token.type == TokenType::IDENTIFIER {
+                match qualified_generic_receiver_type(doc, index) {
+                    Option[str]::Some(receiver_type) => {
+                        ret Option[str]::Some(receiver_type)
+                    }
+                    Option[str]::None => {
+                    }
+                }
+                if token_has_type(doc, index + 1_usize, TokenType::LEFT_BRACE) {
+                    ret Option[str]::Some(token.value)
+                }
+                if token_has_type(doc, index + 1_usize, TokenType::LEFT_PAREN) {
+                    let mut callable_index = 0_usize
+                    while callable_index < doc.analysis.callables.len() {
+                        match doc.analysis.callables.get(callable_index) {
+                            Option[FrontendCallable]::Some(callable) => {
+                                if callable.name == token.value {
+                                    ret callable.ret_type
+                                }
+                            }
+                            Option[FrontendCallable]::None => {
+                            }
+                        }
+                        callable_index += 1_usize
+                    }
+                }
+                let mut binding_index = bindings.len()
+                while binding_index > 0_usize {
+                    binding_index -= 1_usize
+                    match bindings.get(binding_index) {
+                        Option[InferredBinding]::Some(binding) => {
+                            if binding.name == token.value {
+                                ret Option[str]::Some(binding.typ)
+                            }
+                        }
+                        Option[InferredBinding]::None => {
+                        }
+                    }
+                }
+            }
+        }
+        Option[Token]::None => {
+        }
+    }
+    ret Option[str]::None
+}
+
+fn qualified_generic_receiver_type(doc: Document, start_index: usize) -> Option[str] {
+    if !token_has_type(doc, start_index, TokenType::IDENTIFIER) || !token_has_type(doc, start_index +
+        1_usize, TokenType::LEFT_BRACKET,) {
+        ret Option[str]::None
+    }
+    let mut value = ""
+    let mut depth = 0_i32
+    let mut index = start_index
+    while index < doc.analysis.tokens.len() {
+        match doc.analysis.tokens.get(index) {
+            Option[Token]::Some(token) => {
+                if token.type == TokenType::LEFT_BRACKET {
+                    depth += 1_i32
+                } elif token.type == TokenType::RIGHT_BRACKET {
+                    depth -= 1_i32
+                }
+                value = value + token.value
+                if depth == 0_i32 && index > start_index {
+                    if token_has_type(doc, index + 1_usize, TokenType::SCOPE) && token_has_type(doc,
+                        index + 2_usize, TokenType::IDENTIFIER,) && token_has_type(doc, index + 3_usize,
+                        TokenType::LEFT_PAREN,)
+                    {
+                        ret Option[str]::Some(value)
+                    }
+                    ret Option[str]::None
+                }
+            }
+            Option[Token]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret Option[str]::None
+}
+
+fn numeric_literal_type(doc: Document, index: usize, default_type: str) -> str {
+    match doc.analysis.tokens.get(index + 1_usize) {
+        Option[Token]::Some(suffix) => {
+            if suffix.type == TokenType::IDENTIFIER && starts_with(suffix.value, "_") && suffix.value.char_len()
+            > 1_usize {
+                ret suffix.value.slice(1_usize, suffix.value.char_len() - 1_usize)
+            }
+        }
+        Option[Token]::None => {
+        }
+    }
+    ret default_type
+}
+
+fn type_inlay_hint(doc: Document, token_index: usize, token: Token, typ: str) -> Json {
+    let column = actual_token_column_at_index(doc, token_index, token)
+    let mut position = Vec[(str, Json)]::new()
+    position.push(field("line", json_usize(token.line)))
+    position.push(field("character", json_usize(utf16_column(line_text_at(doc.text, token.line).unwrap_or(""),
+                    column,) + utf16_len(token.value))))
+    let mut hint = Vec[(str, Json)]::new()
+    hint.push(field("position", Json::Object(position)))
+    hint.push(field("label", Json::String(": " + typ)))
+    hint.push(field("kind", json_usize(1_usize)))
+    hint.push(field("paddingLeft", Json::Bool(false)))
+    hint.push(field("paddingRight", Json::Bool(false)))
+    ret Json::Object(hint)
+}
+
+fn push_workspace_completion_items(state: ServerState, items: mut Vec[Json]) ->() {
+    let mut doc_index = 0_usize
+    while doc_index < state.documents.len() {
+        match state.documents.get(doc_index) {
+            Option[Document]::Some(doc) => {
+                push_symbol_completion_items_for_doc(items, doc)
+            }
+            Option[Document]::None => {
+            }
+        }
+        doc_index += 1_usize
+    }
+
+    let mut workspace_index = 0_usize
+    while workspace_index < state.workspace_documents.len() {
+        match state.workspace_documents.get(workspace_index) {
+            Option[Document]::Some(doc) => {
+                if !open_document_exists(state, doc.uri) {
+                    push_symbol_completion_items_for_doc(items, doc)
+                }
+            }
+            Option[Document]::None => {
+            }
+        }
+        workspace_index += 1_usize
+    }
+    ret()
+}
+
+fn push_symbol_completion_items_for_doc(items: mut Vec[Json], doc: Document) ->() {
+    let mut index = 0_usize
+    while index < doc.analysis.symbols.len() {
+        match doc.analysis.symbols.get(index) {
+            Option[FrontendSymbol]::Some(symbol) => {
+                if !completion_item_exists(items, symbol.name) {
+                    items.push(completion_item(symbol.name, symbol_completion_kind(symbol.kind), "Encore symbol"))
+                }
+            }
+            Option[FrontendSymbol]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret()
+}
+
+fn completion_item_exists(items: Vec[Json], label: str) -> bool {
+    let mut index = 0_usize
+    while index < items.len() {
+        match items.get(index) {
+            Option[Json]::Some(item) => {
+                if json_get_str(item, "label", "") == label {
+                    ret true
+                }
+            }
+            Option[Json]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret false
+}
+
+fn definition_result(state: ServerState, params: Json) -> Json {
+    let uri = request_uri(params)
+    match state.document(uri) {
+        Option[Document]::Some(doc) => {
+            match identifier_at_request(doc, params) {
+                Option[Token]::Some(token) => {
+                    match resolved_symbol_by_name(state, doc, token.value) {
+                        Option[ResolvedReference]::Some(reference) => {
+                            let mut items = Vec[Json]::new()
+                            items.push(location_json(reference.uri, reference.range))
+                            ret Json::Array(items)
+                        }
+                        Option[ResolvedReference]::None => {
+                        }
+                    }
+                }
+                Option[Token]::None => {
+                }
+            }
+        }
+        Option[Document]::None => {
+        }
+    }
+    ret Json::Array(Vec[Json]::new())
+}
+
+fn implementation_result(state: ServerState, params: Json) -> Json {
+    let uri = request_uri(params)
+    match state.document(uri) {
+        Option[Document]::Some(doc) => {
+            match identifier_at_request(doc, params) {
+                Option[Token]::Some(token) => {
+                    ret Json::Array(implementation_locations(state, token.value))
+                }
+                Option[Token]::None => {
+                }
+            }
+        }
+        Option[Document]::None => {
+        }
+    }
+    ret Json::Array(Vec[Json]::new())
+}
+
+fn implementation_locations(state: ServerState, name: str) -> Vec[Json] {
+    let mut items = Vec[Json]::new()
+    let impl_name = "impl " + name
+
+    let mut doc_index = 0_usize
+    while doc_index < state.documents.len() {
+        match state.documents.get(doc_index) {
+            Option[Document]::Some(doc) => {
+                push_implementation_locations_for_doc(items, doc, impl_name)
+            }
+            Option[Document]::None => {
+            }
+        }
+        doc_index += 1_usize
+    }
+
+    let mut workspace_index = 0_usize
+    while workspace_index < state.workspace_documents.len() {
+        match state.workspace_documents.get(workspace_index) {
+            Option[Document]::Some(doc) => {
+                if !open_document_exists(state, doc.uri) {
+                    push_implementation_locations_for_doc(items, doc, impl_name)
+                }
+            }
+            Option[Document]::None => {
+            }
+        }
+        workspace_index += 1_usize
+    }
+    ret items
+}
+
+fn push_implementation_locations_for_doc(items: mut Vec[Json], doc: Document, impl_name: str) ->() {
+    let mut index = 0_usize
+    while index < doc.analysis.symbols.len() {
+        match doc.analysis.symbols.get(index) {
+            Option[FrontendSymbol]::Some(symbol) => {
+                if symbol.name == impl_name {
+                    items.push(location_json(doc.uri, symbol_range(doc, symbol)))
+                }
+            }
+            Option[FrontendSymbol]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret()
+}
+
+fn hover_result(state: ServerState, params: Json) -> Json {
+    let uri = request_uri(params)
+    match state.document(uri) {
+        Option[Document]::Some(doc) => {
+            match identifier_at_request(doc, params) {
+                Option[Token]::Some(token) => {
+                    let mut value = token.value
+                    match resolved_symbol_by_name(state, doc, token.value) {
+                        Option[ResolvedReference]::Some(reference) => {
+                            value = reference.hover
+                        }
+                        Option[ResolvedReference]::None => {
+                        }
+                    }
+
+                    let mut contents = Vec[(str, Json)]::new()
+                    contents.push(field("kind", Json::String("markdown")))
+                    contents.push(field("value", Json::String(value)))
+
+                    let mut result = Vec[(str, Json)]::new()
+                    result.push(field("contents", Json::Object(contents)))
+                    result.push(field("range", token_range(doc, token)))
+                    ret Json::Object(result)
+                }
+                Option[Token]::None => {
+                }
+            }
+        }
+        Option[Document]::None => {
+        }
+    }
+    ret Json::Null
+}
+
+fn signature_help_result(state: ServerState, params: Json) -> Json {
+    let uri = request_uri(params)
+    match state.document(uri) {
+        Option[Document]::Some(doc) => {
+            match active_call_at_request(doc, params) {
+                Option[(str, usize)]::Some(call) => {
+                    match callable_by_name_in_open_documents(state, call.0) {
+                        Option[FrontendCallable]::Some(callable) => {
+                            ret signature_help_for_callable(callable, call.1)
+                        }
+                        Option[FrontendCallable]::None => {
+                        }
+                    }
+                }
+                Option[(str, usize)]::None => {
+                }
+            }
+        }
+        Option[Document]::None => {
+        }
+    }
+    ret empty_signature_help()
+}
+
+fn signature_help_for_callable(callable: FrontendCallable, active_parameter: usize) -> Json {
+    let signature = signature_json(callable)
+    let mut signatures = Vec[Json]::new()
+    signatures.push(signature)
+
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("signatures", Json::Array(signatures)))
+    fields.push(field("activeSignature", Json::Number("0")))
+    fields.push(field("activeParameter", json_usize(min_usize(active_parameter, callable.params.len()))))
+    ret Json::Object(fields)
+}
+
+fn signature_json(callable: FrontendCallable) -> Json {
+    let mut parameters = Vec[Json]::new()
+    let mut label = callable.name + "("
+    let mut index = 0_usize
+    while index < callable.params.len() {
+        match callable.params.get(index) {
+            Option[str]::Some(param) => {
+                if index > 0_usize {
+                    label += ", "
+                }
+                label += param
+                parameters.push(parameter_json(param))
+            }
+            Option[str]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    label += ")"
+    match callable.ret_type {
+        Option[str]::Some(ret_type) => {
+            label += " -> " + ret_type
+        }
+        Option[str]::None => {
+        }
+    }
+
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("label", Json::String(label)))
+    fields.push(field("parameters", Json::Array(parameters)))
+    ret Json::Object(fields)
+}
+
+fn parameter_json(label: str) -> Json {
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("label", Json::String(label)))
+    ret Json::Object(fields)
+}
+
+fn empty_signature_help() -> Json {
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("signatures", Json::Array(Vec[Json]::new())))
+    fields.push(field("activeSignature", Json::Number("0")))
+    fields.push(field("activeParameter", Json::Number("0")))
+    ret Json::Object(fields)
+}
+
+fn prepare_call_hierarchy_result(state: ServerState, params: Json) -> Json {
+    let uri = request_uri(params)
+    match state.document(uri) {
+        Option[Document]::Some(doc) => {
+            match callable_at_request(doc, params) {
+                Option[FrontendCallable]::Some(callable) => {
+                    let mut items = Vec[Json]::new()
+                    items.push(call_hierarchy_item(doc, callable))
+                    ret Json::Array(items)
+                }
+                Option[FrontendCallable]::None => {
+                }
+            }
+        }
+        Option[Document]::None => {
+        }
+    }
+    ret Json::Array(Vec[Json]::new())
+}
+
+fn outgoing_calls_result(state: ServerState, params: Json) -> Json {
+    let item = json_get(params, "item")
+    let uri = call_hierarchy_item_uri(item)
+    let name = call_hierarchy_item_name(item)
+    match state.document(uri) {
+        Option[Document]::Some(doc) => {
+            match callable_by_name(doc, name) {
+                Option[FrontendCallable]::Some(callable) => {
+                    ret Json::Array(outgoing_calls_for_callable(state, doc, callable))
+                }
+                Option[FrontendCallable]::None => {
+                }
+            }
+        }
+        Option[Document]::None => {
+        }
+    }
+    ret Json::Array(Vec[Json]::new())
+}
+
+fn incoming_calls_result(state: ServerState, params: Json) -> Json {
+    let item = json_get(params, "item")
+    let target = call_hierarchy_item_name(item)
+    if target == "" {
+        ret Json::Array(Vec[Json]::new())
+    }
+    ret Json::Array(incoming_calls_for_name(state, target))
+}
+
+fn outgoing_calls_for_callable(state: ServerState, doc: Document, callable: FrontendCallable) -> Vec[Json]
+{
+    let mut items = Vec[Json]::new()
+    let start = callable_body_start_index(doc, callable)
+    let end = callable_body_end_index(doc, start)
+    let mut index = start
+    while index < end {
+        match doc.analysis.tokens.get(index) {
+            Option[Token]::Some(token) => {
+                if token.type == TokenType::IDENTIFIER && token_is_call_expression(doc, index) {
+                    match callable_doc_by_name(state, token.value) {
+                        Option[(Document, FrontendCallable)]::Some(target) => {
+                            if !call_hierarchy_call_exists(items, token.value) {
+                                items.push(outgoing_call_item(target.0, target.1, token_range(doc, token)))
+                            }
+                        }
+                        Option[(Document, FrontendCallable)]::None => {
+                        }
+                    }
+                }
+            }
+            Option[Token]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret items
+}
+
+fn incoming_calls_for_name(state: ServerState, target: str) -> Vec[Json] {
+    let mut items = Vec[Json]::new()
+    let mut doc_index = 0_usize
+    while doc_index < state.documents.len() {
+        match state.documents.get(doc_index) {
+            Option[Document]::Some(doc) => {
+                push_incoming_calls_for_doc(items, doc, target)
+            }
+            Option[Document]::None => {
+            }
+        }
+        doc_index += 1_usize
+    }
+    let mut workspace_index = 0_usize
+    while workspace_index < state.workspace_documents.len() {
+        match state.workspace_documents.get(workspace_index) {
+            Option[Document]::Some(doc) => {
+                if !open_document_exists(state, doc.uri) {
+                    push_incoming_calls_for_doc(items, doc, target)
+                }
+            }
+            Option[Document]::None => {
+            }
+        }
+        workspace_index += 1_usize
+    }
+    ret items
+}
+
+fn push_incoming_calls_for_doc(items: mut Vec[Json], doc: Document, target: str) ->() {
+    let mut index = 0_usize
+    while index < doc.analysis.tokens.len() {
+        match doc.analysis.tokens.get(index) {
+            Option[Token]::Some(token) => {
+                if token.type == TokenType::IDENTIFIER && token.value == target && token_is_call_expression(doc,
+                    index,) {
+                    match enclosing_callable(doc, token.line) {
+                        Option[FrontendCallable]::Some(caller) => {
+                            let call_range = token_range(doc, token)
+                            let existing = incoming_call_index(items, caller.name)
+                            match existing {
+                                Option[usize]::Some(item_index) => {
+                                    append_from_range(items, item_index, call_range)
+                                }
+                                Option[usize]::None => {
+                                    items.push(incoming_call_item(doc, caller, call_range))
+                                }
+                            }
+                        }
+                        Option[FrontendCallable]::None => {
+                        }
+                    }
+                }
+            }
+            Option[Token]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret()
+}
+
+fn call_hierarchy_item(doc: Document, callable: FrontendCallable) -> Json {
+    let range = callable_range(doc, callable)
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("name", Json::String(callable.name)))
+    fields.push(field("kind", Json::Number("12")))
+    fields.push(field("uri", Json::String(doc.uri)))
+    fields.push(field("range", range))
+    fields.push(field("selectionRange", range))
+    fields.push(field("data", call_hierarchy_data(doc.uri, callable.name, callable.line, callable.column)))
+    ret Json::Object(fields)
+}
+
+fn call_hierarchy_data(uri: str, name: str, line: usize, character: usize) -> Json {
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("uri", Json::String(uri)))
+    fields.push(field("name", Json::String(name)))
+    fields.push(field("line", json_usize(line)))
+    fields.push(field("character", json_usize(character)))
+    ret Json::Object(fields)
+}
+
+fn outgoing_call_item(doc: Document, callable: FrontendCallable, from_range: Json) -> Json {
+    let mut ranges = Vec[Json]::new()
+    ranges.push(from_range)
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("to", call_hierarchy_item(doc, callable)))
+    fields.push(field("fromRanges", Json::Array(ranges)))
+    ret Json::Object(fields)
+}
+
+fn incoming_call_item(doc: Document, callable: FrontendCallable, from_range: Json) -> Json {
+    let mut ranges = Vec[Json]::new()
+    ranges.push(from_range)
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("from", call_hierarchy_item(doc, callable)))
+    fields.push(field("fromRanges", Json::Array(ranges)))
+    ret Json::Object(fields)
+}
+
+fn append_from_range(items: mut Vec[Json], item_index: usize, call_range: Json) ->() {
+    match items.get(item_index) {
+        Option[Json]::Some(item) => {
+            let mut ranges = Vec[Json]::new()
+            match json_get(item, "fromRanges").as_array() {
+                Option[Vec[Json]]::Some(existing_ranges) => {
+                    let mut index = 0_usize
+                    while index < existing_ranges.len() {
+                        match existing_ranges.get(index) {
+                            Option[Json]::Some(existing_range) => {
+                                ranges.push(existing_range)
+                            }
+                            Option[Json]::None => {
+                            }
+                        }
+                        index += 1_usize
+                    }
+                }
+                Option[Vec[Json]]::None => {
+                }
+            }
+            ranges.push(call_range)
+            let mut fields = Vec[(str, Json)]::new()
+            fields.push(field("from", json_get(item, "from")))
+            fields.push(field("fromRanges", Json::Array(ranges)))
+            items.set(item_index, Json::Object(fields))
+        }
+        Option[Json]::None => {
+        }
+    }
+    ret()
+}
+
+fn call_hierarchy_item_uri(item: Json) -> str {
+    let data_uri = json_get_str(json_get(item, "data"), "uri", "")
+    if data_uri != "" {
+        ret data_uri
+    }
+    ret json_get_str(item, "uri", "")
+}
+
+fn call_hierarchy_item_name(item: Json) -> str {
+    let data_name = json_get_str(json_get(item, "data"), "name", "")
+    if data_name != "" {
+        ret data_name
+    }
+    ret json_get_str(item, "name", "")
+}
+
+fn callable_at_request(doc: Document, params: Json) -> Option[FrontendCallable] {
+    match identifier_at_request(doc, params) {
+        Option[Token]::Some(token) => {
+            ret callable_at_position(doc, token.line, actual_token_column(doc, token))
+        }
+        Option[Token]::None => {
+        }
+    }
+    ret Option[FrontendCallable]::None
+}
+
+fn callable_at_position(doc: Document, line: usize, character: usize) -> Option[FrontendCallable] {
+    let mut index = 0_usize
+    while index < doc.analysis.callables.len() {
+        match doc.analysis.callables.get(index) {
+            Option[FrontendCallable]::Some(callable) => {
+                if callable.line == line && callable.column <= character && character <= callable.column
+                + callable.length {
+                    ret Option[FrontendCallable]::Some(callable)
+                }
+            }
+            Option[FrontendCallable]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret Option[FrontendCallable]::None
+}
+
+fn callable_doc_by_name(state: ServerState, name: str) -> Option[(Document, FrontendCallable)] {
+    let mut doc_index = 0_usize
+    while doc_index < state.documents.len() {
+        match state.documents.get(doc_index) {
+            Option[Document]::Some(doc) => {
+                match callable_by_name(doc, name) {
+                    Option[FrontendCallable]::Some(callable) => {
+                        ret Option[(Document, FrontendCallable)]::Some((doc, callable))
+                    }
+                    Option[FrontendCallable]::None => {
+                    }
+                }
+            }
+            Option[Document]::None => {
+            }
+        }
+        doc_index += 1_usize
+    }
+    let mut workspace_index = 0_usize
+    while workspace_index < state.workspace_documents.len() {
+        match state.workspace_documents.get(workspace_index) {
+            Option[Document]::Some(doc) => {
+                if !open_document_exists(state, doc.uri) {
+                    match callable_by_name(doc, name) {
+                        Option[FrontendCallable]::Some(callable) => {
+                            ret Option[(Document, FrontendCallable)]::Some((doc, callable))
+                        }
+                        Option[FrontendCallable]::None => {
+                        }
+                    }
+                }
+            }
+            Option[Document]::None => {
+            }
+        }
+        workspace_index += 1_usize
+    }
+    ret Option[(Document, FrontendCallable)]::None
+}
+
+fn callable_body_start_index(doc: Document, callable: FrontendCallable) -> usize {
+    let mut index = 0_usize
+    let mut seen_name = false
+    while index < doc.analysis.tokens.len() {
+        match doc.analysis.tokens.get(index) {
+            Option[Token]::Some(token) => {
+                if token.line == callable.line && token.type == TokenType::IDENTIFIER && token.value
+                == callable.name {
+                    seen_name = true
+                } elif seen_name && token.type == TokenType::LEFT_BRACE {
+                    ret index + 1_usize
+                }
+            }
+            Option[Token]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret doc.analysis.tokens.len()
+}
+
+fn callable_body_end_index(doc: Document, start: usize) -> usize {
+    let mut depth = 1_i32
+    let mut index = start
+    while index < doc.analysis.tokens.len() {
+        match doc.analysis.tokens.get(index) {
+            Option[Token]::Some(token) => {
+                if token.type == TokenType::LEFT_BRACE {
+                    depth += 1_i32
+                } elif token.type == TokenType::RIGHT_BRACE {
+                    depth -= 1_i32
+                    if depth == 0_i32 {
+                        ret index
+                    }
+                }
+            }
+            Option[Token]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret doc.analysis.tokens.len()
+}
+
+fn enclosing_callable(doc: Document, line: usize) -> Option[FrontendCallable] {
+    let mut best = Option[FrontendCallable]::None
+    let mut index = 0_usize
+    while index < doc.analysis.callables.len() {
+        match doc.analysis.callables.get(index) {
+            Option[FrontendCallable]::Some(callable) => {
+                if callable.line <= line {
+                    match best {
+                        Option[FrontendCallable]::Some(existing) => {
+                            if callable.line > existing.line {
+                                best = Option[FrontendCallable]::Some(callable)
+                            }
+                        }
+                        Option[FrontendCallable]::None => {
+                            best = Option[FrontendCallable]::Some(callable)
+                        }
+                    }
+                }
+            }
+            Option[FrontendCallable]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret best
+}
+
+fn callable_range(doc: Document, callable: FrontendCallable) -> Json {
+    let mut index = 0_usize
+    while index < doc.analysis.tokens.len() {
+        match doc.analysis.tokens.get(index) {
+            Option[Token]::Some(token) => {
+                if token.type == TokenType::IDENTIFIER && token.line == callable.line && token.value
+                == callable.name {
+                    ret token_range(doc, token)
+                }
+            }
+            Option[Token]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret lsp_range(doc, callable.line, callable.column, callable.length)
+}
+
+fn call_hierarchy_call_exists(items: Vec[Json], name: str) -> bool {
+    let mut index = 0_usize
+    while index < items.len() {
+        match items.get(index) {
+            Option[Json]::Some(item) => {
+                if json_get_str(json_get(item, "to"), "name", "") == name {
+                    ret true
+                }
+            }
+            Option[Json]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret false
+}
+
+fn token_is_call_expression(doc: Document, token_index: usize) -> bool {
+    if !token_is_call(doc, token_index) {
+        ret false
+    }
+    if token_index > 0_usize {
+        match doc.analysis.tokens.get(token_index - 1_usize) {
+            Option[Token]::Some(previous) => {
+                if previous.type == TokenType::KW_FN {
+                    ret false
+                }
+            }
+            Option[Token]::None => {
+            }
+        }
+    }
+    ret true
+}
+
+fn incoming_call_index(items: Vec[Json], name: str) -> Option[usize] {
+    let mut index = 0_usize
+    while index < items.len() {
+        match items.get(index) {
+            Option[Json]::Some(item) => {
+                if json_get_str(json_get(item, "from"), "name", "") == name {
+                    ret Option[usize]::Some(index)
+                }
+            }
+            Option[Json]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret Option[usize]::None
+}
+
+fn references_result(state: ServerState, params: Json) -> Json {
+    let uri = request_uri(params)
+    match state.document(uri) {
+        Option[Document]::Some(doc) => {
+            match identifier_at_request(doc, params) {
+                Option[Token]::Some(token) => {
+                    if token_is_extern_function_declaration(doc, token) {
+                        ret Json::Array(Vec[Json]::new())
+                    }
+                    match resolved_symbol_by_name(state, doc, token.value) {
+                        Option[ResolvedReference]::Some(reference) => {
+                            if resolved_reference_is_extern_function(state, reference) {
+                                ret Json::Array(Vec[Json]::new())
+                            }
+                            ret Json::Array(reference_locations_in_workspace(state, reference.id))
+                        }
+                        Option[ResolvedReference]::None => {
+                        }
+                    }
+                }
+                Option[Token]::None => {
+                }
+            }
+        }
+        Option[Document]::None => {
+        }
+    }
+    ret Json::Array(Vec[Json]::new())
+}
+
+fn token_is_extern_function_declaration(doc: Document, target: Token) -> bool {
+    let mut seen_extern = false
+    let mut seen_fn = false
+    let mut index = 0_usize
+    while index < doc.analysis.tokens.len() {
+        match doc.analysis.tokens.get(index) {
+            Option[Token]::Some(token) => {
+                if token.line == target.line {
+                    if token.type == TokenType::KW_EXTERN {
+                        seen_extern = true
+                    } elif seen_extern && token.type == TokenType::KW_FN {
+                        seen_fn = true
+                    } elif seen_fn && token.type == TokenType::IDENTIFIER {
+                        ret token.value == target.value
+                    }
+                }
+            }
+            Option[Token]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret false
+}
+
+fn resolved_reference_is_extern_function(state: ServerState, reference: ResolvedReference) -> bool {
+    match state.document(reference.uri) {
+        Option[Document]::Some(doc) => {
+            let mut index = 0_usize
+            while index < doc.analysis.tokens.len() {
+                match doc.analysis.tokens.get(index) {
+                    Option[Token]::Some(token) => {
+                        if token.type == TokenType::IDENTIFIER && token.value == reference.label && token_is_extern_function_declaration(doc,
+                            token,) {
+                            ret true
+                        }
+                    }
+                    Option[Token]::None => {
+                    }
+                }
+                index += 1_usize
+            }
+        }
+        Option[Document]::None => {
+        }
+    }
+    ret false
+}
+
+fn document_highlight_result(state: ServerState, params: Json) -> Json {
+    let mut highlights = Vec[Json]::new()
+    let uri = request_uri(params)
+    match state.document(uri) {
+        Option[Document]::Some(doc) => {
+            match identifier_at_request(doc, params) {
+                Option[Token]::Some(token) => {
+                    let refs = identifier_locations_for_doc(doc, token.value)
+                    let mut index = 0_usize
+                    while index < refs.len() {
+                        match refs.get(index) {
+                            Option[Json]::Some(location) => {
+                                let mut item = Vec[(str, Json)]::new()
+                                item.push(field("range", json_get(location, "range")))
+                                item.push(field("kind", Json::Number("1")))
+                                highlights.push(Json::Object(item))
+                            }
+                            Option[Json]::None => {
+                            }
+                        }
+                        index += 1_usize
+                    }
+                }
+                Option[Token]::None => {
+                }
+            }
+        }
+        Option[Document]::None => {
+        }
+    }
+    ret Json::Array(highlights)
+}
+
+fn push_identifier_locations_for_workspace(state: ServerState, items: mut Vec[Json], name: str) ->()
+{
+    let mut doc_index = 0_usize
+    while doc_index < state.documents.len() {
+        match state.documents.get(doc_index) {
+            Option[Document]::Some(doc) => {
+                push_identifier_locations_for_doc(items, doc, name)
+            }
+            Option[Document]::None => {
+            }
+        }
+        doc_index += 1_usize
+    }
+    let mut workspace_index = 0_usize
+    while workspace_index < state.workspace_documents.len() {
+        match state.workspace_documents.get(workspace_index) {
+            Option[Document]::Some(doc) => {
+                if !open_document_exists(state, doc.uri) {
+                    push_identifier_locations_for_doc(items, doc, name)
+                }
+            }
+            Option[Document]::None => {
+            }
+        }
+        workspace_index += 1_usize
+    }
+    ret()
+}
+
+fn identifier_locations_for_doc(doc: Document, name: str) -> Vec[Json] {
+    let mut items = Vec[Json]::new()
+    push_identifier_locations_for_doc(items, doc, name)
+    ret items
+}
+
+fn reference_locations_in_workspace(state: ServerState, target_id: str) -> Vec[Json] {
+    let mut items = Vec[Json]::new()
+    let mut doc_index = 0_usize
+    while doc_index < state.documents.len() {
+        match state.documents.get(doc_index) {
+            Option[Document]::Some(doc) => {
+                push_reference_locations_for_doc(state, items, doc, target_id)
+            }
+            Option[Document]::None => {
+            }
+        }
+        doc_index += 1_usize
+    }
+    let mut workspace_index = 0_usize
+    while workspace_index < state.workspace_documents.len() {
+        match state.workspace_documents.get(workspace_index) {
+            Option[Document]::Some(doc) => {
+                if !open_document_exists(state, doc.uri) {
+                    push_reference_locations_for_doc(state, items, doc, target_id)
+                }
+            }
+            Option[Document]::None => {
+            }
+        }
+        workspace_index += 1_usize
+    }
+    ret items
+}
+
+fn push_reference_locations_for_doc(state: ServerState, items: mut Vec[Json], doc: Document, target_id:
+    str,) ->() {
+    let mut index = 0_usize
+    while index < doc.analysis.tokens.len() {
+        match doc.analysis.tokens.get(index) {
+            Option[Token]::Some(candidate) => {
+                if candidate.type == TokenType::IDENTIFIER {
+                    match resolved_symbol_by_name(state, doc, candidate.value) {
+                        Option[ResolvedReference]::Some(reference) => {
+                            if reference.id == target_id {
+                                items.push(location_json(doc.uri, token_range_at_index(doc, index, candidate)))
+                            }
+                        }
+                        Option[ResolvedReference]::None => {
+                        }
+                    }
+                }
+            }
+            Option[Token]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret()
+}
+
+fn push_identifier_locations_for_doc(items: mut Vec[Json], doc: Document, name: str) ->() {
+    let mut index = 0_usize
+    while index < doc.analysis.tokens.len() {
+        match doc.analysis.tokens.get(index) {
+            Option[Token]::Some(candidate) => {
+                if candidate.type == TokenType::IDENTIFIER && candidate.value == name {
+                    items.push(location_json(doc.uri, token_range(doc, candidate)))
+                }
+            }
+            Option[Token]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret()
+}
+
+fn prepare_rename_result(state: ServerState, params: Json) -> Json {
+    let uri = request_uri(params)
+    match state.document(uri) {
+        Option[Document]::Some(doc) => {
+            match identifier_at_request(doc, params) {
+                Option[Token]::Some(token) => {
+                    let mut fields = Vec[(str, Json)]::new()
+                    fields.push(field("range", token_range(doc, token)))
+                    fields.push(field("placeholder", Json::String(token.value)))
+                    ret Json::Object(fields)
+                }
+                Option[Token]::None => {
+                }
+            }
+        }
+        Option[Document]::None => {
+        }
+    }
+    ret Json::Null
+}
+
+fn rename_result(state: ServerState, params: Json) -> Json {
+    let uri = request_uri(params)
+    let new_name = json_get_str(params, "newName", "")
+    if !is_identifier_name(new_name) {
+        ret empty_workspace_edit()
+    }
+
+    match state.document(uri) {
+        Option[Document]::Some(doc) => {
+            match identifier_at_request(doc, params) {
+                Option[Token]::Some(token) => {
+                    match resolved_symbol_by_name(state, doc, token.value) {
+                        Option[ResolvedReference]::Some(reference) => {
+                            let mut changes = Vec[(str, Json)]::new()
+                            push_rename_edits_for_reference(state, changes, reference.id, new_name)
+
+                            let mut result = Vec[(str, Json)]::new()
+                            result.push(field("changes", Json::Object(changes)))
+                            ret Json::Object(result)
+                        }
+                        Option[ResolvedReference]::None => {
+                        }
+                    }
+                }
+                Option[Token]::None => {
+                }
+            }
+        }
+        Option[Document]::None => {
+        }
+    }
+    ret empty_workspace_edit()
+}
+
+fn push_rename_edits_for_workspace(state: ServerState, changes: mut Vec[(str, Json)], old_name: str,
+    new_name: str,) ->() {
+    let mut doc_index = 0_usize
+    while doc_index < state.documents.len() {
+        match state.documents.get(doc_index) {
+            Option[Document]::Some(doc) => {
+                push_rename_edits_for_doc(changes, doc, old_name, new_name)
+            }
+            Option[Document]::None => {
+            }
+        }
+        doc_index += 1_usize
+    }
+    let mut workspace_index = 0_usize
+    while workspace_index < state.workspace_documents.len() {
+        match state.workspace_documents.get(workspace_index) {
+            Option[Document]::Some(doc) => {
+                if !open_document_exists(state, doc.uri) {
+                    push_rename_edits_for_doc(changes, doc, old_name, new_name)
+                }
+            }
+            Option[Document]::None => {
+            }
+        }
+        workspace_index += 1_usize
+    }
+    ret()
+}
+
+fn push_rename_edits_for_reference(state: ServerState, changes: mut Vec[(str, Json)], target_id: str,
+    new_name: str,) ->() {
+    let mut doc_index = 0_usize
+    while doc_index < state.documents.len() {
+        match state.documents.get(doc_index) {
+            Option[Document]::Some(doc) => {
+                push_rename_edits_for_reference_doc(state, changes, doc, target_id, new_name)
+            }
+            Option[Document]::None => {
+            }
+        }
+        doc_index += 1_usize
+    }
+    let mut workspace_index = 0_usize
+    while workspace_index < state.workspace_documents.len() {
+        match state.workspace_documents.get(workspace_index) {
+            Option[Document]::Some(doc) => {
+                if !open_document_exists(state, doc.uri) {
+                    push_rename_edits_for_reference_doc(state, changes, doc, target_id, new_name)
+                }
+            }
+            Option[Document]::None => {
+            }
+        }
+        workspace_index += 1_usize
+    }
+    ret()
+}
+
+fn push_rename_edits_for_reference_doc(state: ServerState, changes: mut Vec[(str, Json)], doc: Document,
+    target_id: str, new_name: str,) ->() {
+    let mut index = 0_usize
+    while index < doc.analysis.tokens.len() {
+        match doc.analysis.tokens.get(index) {
+            Option[Token]::Some(candidate) => {
+                if candidate.type == TokenType::IDENTIFIER {
+                    match resolved_symbol_by_name(state, doc, candidate.value) {
+                        Option[ResolvedReference]::Some(reference) => {
+                            if reference.id == target_id {
+                                add_text_edit_to_changes(changes, doc.uri, text_edit(token_range_at_index(doc,
+                                            index, candidate,), new_name))
+                            }
+                        }
+                        Option[ResolvedReference]::None => {
+                        }
+                    }
+                }
+            }
+            Option[Token]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret()
+}
+
+fn push_rename_edits_for_doc(changes: mut Vec[(str, Json)], doc: Document, old_name: str, new_name: str)
+->() {
+    let mut index = 0_usize
+    while index < doc.analysis.tokens.len() {
+        match doc.analysis.tokens.get(index) {
+            Option[Token]::Some(candidate) => {
+                if candidate.type == TokenType::IDENTIFIER && candidate.value == old_name {
+                    add_text_edit_to_changes(changes, doc.uri, text_edit(token_range(doc, candidate),
+                            new_name,))
+                }
+            }
+            Option[Token]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret()
+}
+
+fn add_text_edit_to_changes(changes: mut Vec[(str, Json)], uri: str, edit: Json) ->() {
+    let mut index = 0_usize
+    while index < changes.len() {
+        match changes.get(index) {
+            Option[(str, Json)]::Some(entry) => {
+                if entry.0 == uri {
+                    let mut edits = Vec[Json]::new()
+                    match entry.1.as_array() {
+                        Option[Vec[Json]]::Some(existing) => {
+                            if text_edit_exists(existing, edit) {
+                                ret()
+                            }
+                            let mut edit_index = 0_usize
+                            while edit_index < existing.len() {
+                                match existing.get(edit_index) {
+                                    Option[Json]::Some(existing_edit) => {
+                                        edits.push(existing_edit)
+                                    }
+                                    Option[Json]::None => {
+                                    }
+                                }
+                                edit_index += 1_usize
+                            }
+                        }
+                        Option[Vec[Json]]::None => {
+                        }
+                    }
+                    edits.push(edit)
+                    changes.set(index, field(uri, Json::Array(edits)))
+                    ret()
+                }
+            }
+            Option[(str, Json)]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    let mut edits = Vec[Json]::new()
+    edits.push(edit)
+    changes.push(field(uri, Json::Array(edits)))
+    ret()
+}
+
+fn text_edit_exists(edits: Vec[Json], target: Json) -> bool {
+    let target_range = json_get(target, "range")
+    let target_text = json_get_str(target, "newText", "")
+    let target_start = json_get(target_range, "start")
+    let target_end = json_get(target_range, "end")
+    let target_start_line = json_number_usize(json_get(target_start, "line"), 0_usize)
+    let target_start_character = json_number_usize(json_get(target_start, "character"), 0_usize)
+    let target_end_line = json_number_usize(json_get(target_end, "line"), 0_usize)
+    let target_end_character = json_number_usize(json_get(target_end, "character"), 0_usize)
+    let mut index = 0_usize
+    while index < edits.len() {
+        match edits.get(index) {
+            Option[Json]::Some(edit) => {
+                let edit_range = json_get(edit, "range")
+                let edit_start = json_get(edit_range, "start")
+                let edit_end = json_get(edit_range, "end")
+                if json_get_str(edit, "newText", "") == target_text
+                && json_number_usize(json_get(edit_start, "line"), 0_usize) == target_start_line
+                && json_number_usize(json_get(edit_start, "character"), 0_usize) == target_start_character
+                && json_number_usize(json_get(edit_end, "line"), 0_usize) == target_end_line
+                && json_number_usize(json_get(edit_end, "character"), 0_usize) == target_end_character
+                {
+                    ret true
+                }
+            }
+            Option[Json]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret false
+}
+
+fn empty_workspace_edit() -> Json {
+    let mut changes = Vec[(str, Json)]::new()
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("changes", Json::Object(changes)))
+    ret Json::Object(fields)
+}
+
+fn document_links(state: ServerState, params: Json) -> Json {
+    let uri = request_uri(params)
+    match state.document(uri) {
+        Option[Document]::Some(doc) => {
+            let mut items = Vec[Json]::new()
+            let requests = import_requests_from_doc(doc)
+            let mut index = 0_usize
+            while index < requests.len() {
+                match requests.get(index) {
+                    Option[ImportRequest]::Some(request) => {
+                        items.push(document_link_for_import(state, doc, request))
+                    }
+                    Option[ImportRequest]::None => {
+                    }
+                }
+                index += 1_usize
+            }
+            ret Json::Array(items)
+        }
+        Option[Document]::None => {
+        }
+    }
+    ret Json::Array(Vec[Json]::new())
+}
+
+fn document_link_for_import(state: ServerState, doc: Document, request: ImportRequest) -> Json {
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("range", lsp_range(doc, request.line, request.column, request.length)))
+    match resolve_import_request_uri(state, doc, request) {
+        Option[str]::Some(target_uri) => {
+            fields.push(field("target", Json::String(target_uri)))
+        }
+        Option[str]::None => {
+        }
+    }
+    fields.push(field("tooltip", Json::String("Encore import: " + request.target)))
+    ret Json::Object(fields)
+}
+
+fn resolve_import_target_uri(state: ServerState, target: str) -> Option[str] {
+    let relative = import_target_to_relative_path(target)
+    if relative == "" {
+        ret Option[str]::None
+    }
+    let mut index = 0_usize
+    while index < state.workspace_roots.len() {
+        match state.workspace_roots.get(index) {
+            Option[str]::Some(root) => {
+                let src = join_path(root, "src")
+                let direct = join_path(src, relative + ".enq")
+                if file_exists(direct) {
+                    ret Option[str]::Some(path_to_uri(direct))
+                }
+                let mod_file = join_path(join_path(src, relative), "mod.enq")
+                if file_exists(mod_file) {
+                    ret Option[str]::Some(path_to_uri(mod_file))
+                }
+            }
+            Option[str]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret Option[str]::None
+}
+
+fn import_target_to_relative_path(target: str) -> str {
+    let mut out = ""
+    let mut index = 0_usize
+    while index < target.len() {
+        let ch = target.get(index).unwrap_or("")
+        if ch == ":" && index + 1_usize < target.len() {
+            if target.get(index + 1_usize).unwrap_or("") == ":" {
+                out += "/"
+                index += 2_usize
+                continue
+            }
+        }
+        if ch == "," || ch == " " {
+            break
+        }
+        out += ch
+        index += 1_usize
+    }
+    ret out
+}
+
+fn import_range(doc: Document, edge: DependencyEdge) -> Json {
+    match line_text_at(doc.text, edge.line) {
+        Option[str]::Some(line) => {
+            let column = find_in_line_at_or_after(line, edge.target, 0_usize)
+            ret lsp_range(doc, edge.line, column, edge.target.char_len())
+        }
+        Option[str]::None => {
+        }
+    }
+    ret lsp_range(doc, edge.line, edge.column, edge.length)
+}
+
+fn project_name_for_root(root: str) -> str {
+    let manifest = join_path(root, "encore.toml")
+    if file_exists(manifest) {
+        let content = read_file(manifest)
+        let name = project_name_from_manifest(content)
+        if name != "" {
+            ret name
+        }
+    }
+    ret basename_path(root)
+}
+
+fn project_name_from_manifest(content: str) -> str {
+    let last_line = document_last_line(content)
+    let mut line = 0_usize
+    while line <= last_line {
+        match line_text_at(content, line) {
+            Option[str]::Some(text) => {
+                let trimmed = trim_spaces(text)
+                if starts_with(trimmed, "name") {
+                    let eq = find_char(trimmed, "=", 0_usize)
+                    if eq < trimmed.len() {
+                        let raw = trim_spaces(trimmed.slice(eq + 1_usize, trimmed.len() - eq - 1_usize))
+                        ret strip_wrapping_quotes(raw)
+                    }
+                }
+            }
+            Option[str]::None => {
+            }
+        }
+        if line == last_line {
+            break
+        }
+        line += 1_usize
+    }
+    ret ""
+}
+
+fn strip_wrapping_quotes(value: str) -> str {
+    if value.len() >= 2_usize && starts_with(value, "\"") && ends_with(value, "\"") {
+        ret value.slice(1_usize, value.len() - 2_usize)
+    }
+    ret value
+}
+
+fn basename_path(path: str) -> str {
+    let mut index = path.len()
+    while index > 0_usize {
+        index -= 1_usize
+        let ch = path.get(index).unwrap_or("")
+        if ch == "/" {
+            ret path.slice(index + 1_usize, path.len() - index - 1_usize)
+        }
+    }
+    ret path
+}
+
+fn parent_path(path: str) -> str {
+    let mut index = path.len()
+    while index > 0_usize {
+        index -= 1_usize
+        if path.get(index).unwrap_or("") == "/" {
+            if index == 0_usize {
+                ret "/"
+            }
+            ret path.slice(0_usize, index)
+        }
+    }
+    ret ""
+}
+
+fn path_relative_to(base: str, path: str) -> str {
+    if path == base {
+        ret ""
+    }
+    let prefix = if ends_with(base, "/") {
+        base
+    } else {
+        base + "/"
+    }
+    if starts_with(path, prefix) {
+        ret path.slice(prefix.len(), path.len() - prefix.len())
+    }
+    ret ""
+}
+
+fn path_without_suffix(path: str, suffix: str) -> str {
+    if ends_with(path, suffix) {
+        ret path.slice(0_usize, path.len() - suffix.len())
+    }
+    ret path
+}
+
+fn module_ref_for_uri(state: ServerState, uri: str) -> Option[ModuleRef] {
+    let path = uri_to_path(uri)
+    let mut matched_root = ""
+    let mut matched_name = ""
+    let mut index = 0_usize
+    while index < state.workspace_projects.len() {
+        match state.workspace_projects.get(index) {
+            Option[ProjectRoot]::Some(project) => {
+                let prefix = if ends_with(project.root, "/") {
+                    project.root
+                } else {
+                    project.root + "/"
+                }
+                if path == project.root || starts_with(path, prefix) {
+                    if project.root.len() > matched_root.len() {
+                        matched_root = project.root
+                        matched_name = project.name
+                    }
+                }
+            }
+            Option[ProjectRoot]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    if matched_root == "" {
+        ret Option[ModuleRef]::None
+    }
+    let source_dir = join_path(matched_root, "src")
+    let relative = path_relative_to(source_dir, path)
+    if relative == "" && path != join_path(source_dir, "main.enq") && path != join_path(source_dir, "lib.enq")
+    {
+        ret Option[ModuleRef]::None
+    }
+    let module_name = module_name_from_relative_path(relative)
+    ret Option[ModuleRef]::Some(ModuleRef {
+            matched_root, matched_name, source_dir, module_name, uri, path
+        }
+        ,
+    )
+}
+
+fn analysis_module_name(state: ServerState, uri: str) -> str {
+    match module_ref_for_uri(state, uri) {
+        Option[ModuleRef]::Some(module) => {
+            if module.module_name == "" {
+                ret module.project_name
+            }
+            ret module.project_name + "::" + module.module_name
+        }
+        Option[ModuleRef]::None => {
+            ret uri
+        }
+    }
+}
+
+fn module_name_from_relative_path(relative: str) -> str {
+    if relative == "" || relative == "main.enq" || relative == "lib.enq" {
+        ret ""
+    }
+    let mut trimmed = relative
+    if ends_with(trimmed, "/mod.enq") {
+        trimmed = trimmed.slice(0_usize, trimmed.len() - 8_usize)
+    } elif ends_with(trimmed, ".enq") {
+        trimmed = trimmed.slice(0_usize, trimmed.len() - 4_usize)
+    }
+    ret replace_slash_with_scope(trimmed)
+}
+
+fn replace_slash_with_scope(value: str) -> str {
+    let mut out = ""
+    let mut index = 0_usize
+    while index < value.len() {
+        let ch = value.get(index).unwrap_or("")
+        if ch == "/" {
+            out += "::"
+        } else {
+            out += ch
+        }
+        index += 1_usize
+    }
+    ret out
+}
+
+fn import_requests_from_doc(doc: Document) -> Vec[ImportRequest] {
+    let mut out = Vec[ImportRequest]::new()
+    let edges = doc.analysis.dependencies.all()
+    let mut index = 0_usize
+    while index < edges.len() {
+        match edges.get(index) {
+            Option[DependencyEdge]::Some(edge) => {
+                push_import_requests_from_edge(out, doc, edge)
+            }
+            Option[DependencyEdge]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret out
+}
+
+fn push_import_requests_from_edge(out: mut Vec[ImportRequest], doc: Document, edge: DependencyEdge) ->()
+{
+    let items = expand_import_path_targets(edge.target)
+    let mut search_from = 0_usize
+    let mut index = 0_usize
+    while index < items.len() {
+        match items.get(index) {
+            Option[ExpandedImportTarget]::Some(item) => {
+                match line_text_at(doc.text, edge.line) {
+                    Option[str]::Some(line) => {
+                        let label = import_request_label(item.target, item.alias, item.wildcard)
+                        let column = find_in_line_at_or_after(line, label, search_from)
+                        search_from = column + label.len()
+                        out.push(ImportRequest {
+                                edge.source, item.target, item.alias, item.wildcard, edge.line, column,
+                                label.len()
+                            }
+                            ,
+                        )
+                    }
+                    Option[str]::None => {
+                        out.push(ImportRequest {
+                                edge.source, item.target, item.alias, item.wildcard, edge.line, edge.column,
+                                edge.length
+                            }
+                            ,
+                        )
+                    }
+                }
+            }
+            Option[ExpandedImportTarget]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret()
+}
+
+fn import_request_label(target: str, alias: Option[str], wildcard: bool) -> str {
+    let mut out = target
+    if wildcard {
+        out += "::*"
+    }
+    match alias {
+        Option[str]::Some(value) => {
+            out += " as " + value
+        }
+        Option[str]::None => {
+        }
+    }
+    ret out
+}
+
+fn expand_import_path_targets(raw: str) -> Vec[ExpandedImportTarget] {
+    let cleaned = trim_spaces(raw)
+    let brace_start = find_char(cleaned, "{", 0_usize)
+    if brace_start >= cleaned.len() {
+        let mut out = Vec[ExpandedImportTarget]::new()
+        let stripped = strip_import_suffixes(cleaned)
+        let wildcard = ends_with(stripped, "::*")
+        let target = if wildcard {
+            stripped.slice(0_usize, stripped.len() - 3_usize)
+        } else {
+            stripped
+        }
+        out.push(ExpandedImportTarget {
+                target, import_alias(cleaned), wildcard
+            }
+            ,
+        )
+        ret out
+    }
+
+    let brace_end = find_matching_brace(cleaned, brace_start)
+    let prefix = trim_spaces(cleaned.slice(0_usize, brace_start))
+    let inner = cleaned.slice(brace_start + 1_usize, brace_end - brace_start - 1_usize)
+    let items = split_top_level_csv(inner)
+
+    let mut out = Vec[ExpandedImportTarget]::new()
+    let mut index = 0_usize
+    while index < items.len() {
+        match items.get(index) {
+            Option[str]::Some(item) => {
+                let nested = expand_import_path_targets(prefix + "::" + item)
+                let mut nested_index = 0_usize
+                while nested_index < nested.len() {
+                    match nested.get(nested_index) {
+                        Option[ExpandedImportTarget]::Some(expanded) => {
+                            out.push(expanded)
+                        }
+                        Option[ExpandedImportTarget]::None => {
+                        }
+                    }
+                    nested_index += 1_usize
+                }
+            }
+            Option[str]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret out
+}
+
+fn import_alias(value: str) -> Option[str] {
+    let alias_index = find_substring(value, " as ")
+    if alias_index < value.len() {
+        ret Option[str]::Some(trim_spaces(value.slice(alias_index + 4_usize, value.len() - alias_index
+                    - 4_usize,)))
+    }
+    ret Option[str]::None
+}
+
+fn strip_import_suffixes(value: str) -> str {
+    let mut out = trim_spaces(value)
+    let alias_index = find_substring(out, " as ")
+    if alias_index < out.len() {
+        out = out.slice(0_usize, alias_index)
+    }
+    ret trim_spaces(out)
+}
+
+fn resolve_import_request_uri(state: ServerState, doc: Document, request: ImportRequest) -> Option[str]
+{
+    match module_ref_for_uri(state, doc.uri) {
+        Option[ModuleRef]::Some(module) => {
+            ret resolve_import_request_uri_from_module(state, module, request.target)
+        }
+        Option[ModuleRef]::None => {
+            match project_root_for_path(uri_to_path(doc.uri)) {
+                Option[str]::Some(root) => {
+                    let module = ModuleRef {
+                        root, project_name_for_root(root), join_path(root, "src"), "", doc.uri, uri_to_path(doc.uri)
+                    }
+                    ret resolve_import_request_uri_from_module(state, module, request.target)
+                }
+                Option[str]::None => {
+                }
+            }
+            ret resolve_import_target_uri(state, request.target)
+        }
+    }
+}
+
+fn resolve_import_request_uri_from_module(state: ServerState, module: ModuleRef, target: str) -> Option[str]
+{
+    let parts = split_scope_path(strip_import_suffixes(target))
+    if parts.len() == 0_usize {
+        ret Option[str]::None
+    }
+
+    let mut first = ""
+    match parts.get(0_usize) {
+        Option[str]::Some(value) => {
+            first = value
+        }
+        Option[str]::None => {
+            ret Option[str]::None
+        }
+    }
+
+    let mut source_dir = module.source_dir
+    let mut start = 1_usize
+    if first == "mod" {
+        source_dir = parent_path(module.path)
+    } elif first == "refrain" || first == "repo" || first == module.project_name {
+        source_dir = module.source_dir
+    } else {
+        match workspace_project_by_name(state, first) {
+            Option[ProjectRoot]::Some(project) => {
+                source_dir = join_path(project.root, "src")
+            }
+            Option[ProjectRoot]::None => {
+                match ancestor_project_candidate_by_name(module.project_root, first) {
+                    Option[ProjectRoot]::Some(project) => {
+                        source_dir = join_path(project.root, "src")
+                    }
+                    Option[ProjectRoot]::None => {
+                        match workspace_project_candidate_by_name(state, first) {
+                            Option[ProjectRoot]::Some(project) => {
+                                source_dir = join_path(project.root, "src")
+                            }
+                            Option[ProjectRoot]::None => {
+                                ret Option[str]::None
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut module_part_count = parts.len() - start
+    loop {
+        match resolve_module_uri_from_parts(source_dir, parts, start, module_part_count) {
+            Option[str]::Some(uri) => {
+                ret Option[str]::Some(uri)
+            }
+            Option[str]::None => {
+            }
+        }
+        if module_part_count == 0_usize {
+            break
+        }
+        module_part_count -= 1_usize
+    }
+    ret Option[str]::None
+}
+
+fn workspace_project_by_name(state: ServerState, name: str) -> Option[ProjectRoot] {
+    let mut index = 0_usize
+    while index < state.workspace_projects.len() {
+        match state.workspace_projects.get(index) {
+            Option[ProjectRoot]::Some(project) => {
+                if project.name == name {
+                    ret Option[ProjectRoot]::Some(project)
+                }
+            }
+            Option[ProjectRoot]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret Option[ProjectRoot]::None
+}
+
+fn workspace_project_candidate_by_name(state: ServerState, name: str) -> Option[ProjectRoot] {
+    let mut index = 0_usize
+    while index < state.workspace_roots.len() {
+        match state.workspace_roots.get(index) {
+            Option[str]::Some(root) => {
+                match project_candidate_at_path(name, join_path(root, name)) {
+                    Option[ProjectRoot]::Some(project) => {
+                        ret Option[ProjectRoot]::Some(project)
+                    }
+                    Option[ProjectRoot]::None => {
+                    }
+                }
+                match project_candidate_at_path(name, join_path(join_path(root, "index"), name)) {
+                    Option[ProjectRoot]::Some(project) => {
+                        ret Option[ProjectRoot]::Some(project)
+                    }
+                    Option[ProjectRoot]::None => {
+                    }
+                }
+            }
+            Option[str]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret Option[ProjectRoot]::None
+}
+
+fn ancestor_project_candidate_by_name(start_path: str, name: str) -> Option[ProjectRoot] {
+    let mut cursor = start_path
+    let mut depth = 0_usize
+    while depth < 12_usize {
+        match project_candidate_at_path(name, join_path(cursor, name)) {
+            Option[ProjectRoot]::Some(project) => {
+                ret Option[ProjectRoot]::Some(project)
+            }
+            Option[ProjectRoot]::None => {
+            }
+        }
+        match project_candidate_at_path(name, join_path(join_path(cursor, "index"), name)) {
+            Option[ProjectRoot]::Some(project) => {
+                ret Option[ProjectRoot]::Some(project)
+            }
+            Option[ProjectRoot]::None => {
+            }
+        }
+        let parent = parent_path(cursor)
+        if parent == cursor || parent == "" {
+            break
+        }
+        cursor = parent
+        depth += 1_usize
+    }
+    ret Option[ProjectRoot]::None
+}
+
+fn project_candidate_at_path(name: str, root: str) -> Option[ProjectRoot] {
+    if !file_exists(join_path(root, "encore.toml")) {
+        ret Option[ProjectRoot]::None
+    }
+    let project_name = project_name_for_root(root)
+    if project_name == name || basename_path(root) == name {
+        ret Option[ProjectRoot]::Some(ProjectRoot {
+                root, project_name
+            }
+            ,
+        )
+    }
+    ret Option[ProjectRoot]::None
+}
+
+fn resolve_module_uri_from_parts(base_dir: str, parts: Vec[str], start: usize, count: usize) -> Option[str]
+{
+    let mut module_base = base_dir
+    if count == 0_usize {
+        module_base = join_path(module_base, "lib")
+    } else {
+        let mut index = 0_usize
+        while index < count {
+            match parts.get(start + index) {
+                Option[str]::Some(part) => {
+                    module_base = join_path(module_base, part)
+                }
+                Option[str]::None => {
+                    ret Option[str]::None
+                }
+            }
+            index += 1_usize
+        }
+    }
+
+    let direct = module_base + ".enq"
+    if file_exists(direct) {
+        ret Option[str]::Some(path_to_uri(direct))
+    }
+    let mod_file = join_path(module_base, "mod.enq")
+    if file_exists(mod_file) {
+        ret Option[str]::Some(path_to_uri(mod_file))
+    }
+    ret Option[str]::None
+}
+
+fn resolved_symbol_by_name(state: ServerState, current_doc: Document, name: str) -> Option[ResolvedReference]
+{
+    match local_symbol_reference(state, current_doc, name) {
+        Option[ResolvedReference]::Some(reference) => {
+            ret Option[ResolvedReference]::Some(reference)
+        }
+        Option[ResolvedReference]::None => {
+        }
+    }
+
+    let imports = import_requests_from_doc(current_doc)
+    let mut import_index = 0_usize
+    while import_index < imports.len() {
+        match imports.get(import_index) {
+            Option[ImportRequest]::Some(request) => {
+                match imported_symbol_reference(state, current_doc, request, name) {
+                    Option[ResolvedReference]::Some(reference) => {
+                        ret Option[ResolvedReference]::Some(reference)
+                    }
+                    Option[ResolvedReference]::None => {
+                    }
+                }
+            }
+            Option[ImportRequest]::None => {
+            }
+        }
+        import_index += 1_usize
+    }
+
+    ret workspace_symbol_reference_by_name(state, name)
+}
+
+fn local_symbol_reference(state: ServerState, doc: Document, name: str) -> Option[ResolvedReference]
+{
+    match symbol_by_name(doc, name) {
+        Option[FrontendSymbol]::Some(symbol) => {
+            ret Option[ResolvedReference]::Some(symbol_reference(state, doc, symbol))
+        }
+        Option[FrontendSymbol]::None => {
+        }
+    }
+    ret Option[ResolvedReference]::None
+}
+
+fn symbol_reference(state: ServerState, doc: Document, symbol: FrontendSymbol) -> ResolvedReference {
+    let id = canonical_symbol_id(state, doc, symbol)
+    let hover = symbol_hover_text(symbol)
+    let callable = callable_by_name(doc, symbol.name)
+    ret ResolvedReference {
+        id, symbol.name, doc.uri, symbol_range(doc, symbol), hover, callable
+    }
+}
+
+fn imported_symbol_reference(state: ServerState, doc: Document, request: ImportRequest, name: str) ->
+Option[ResolvedReference] {
+    match request.alias {
+        Option[str]::Some(alias) => {
+            if alias != name {
+                ret Option[ResolvedReference]::None
+            }
+            match resolve_symbol_reference_from_import(state, doc, request) {
+                Option[ResolvedReference]::Some(reference) => {
+                    ret Option[ResolvedReference]::Some(reference)
+                }
+                Option[ResolvedReference]::None => {
+                }
+            }
+        }
+        Option[str]::None => {
+        }
+    }
+
+    if request.wildcard {
+        match resolve_import_request_uri(state, doc, request) {
+            Option[str]::Some(uri) => {
+                match state.document(uri) {
+                    Option[Document]::Some(target_doc) => {
+                        match local_symbol_reference(state, target_doc, name) {
+                            Option[ResolvedReference]::Some(reference) => {
+                                ret Option[ResolvedReference]::Some(reference)
+                            }
+                            Option[ResolvedReference]::None => {
+                            }
+                        }
+                    }
+                    Option[Document]::None => {
+                    }
+                }
+            }
+            Option[str]::None => {
+            }
+        }
+    } elif last_scope_segment(request.target) == name {
+        match resolve_symbol_reference_from_import(state, doc, request) {
+            Option[ResolvedReference]::Some(reference) => {
+                ret Option[ResolvedReference]::Some(reference)
+            }
+            Option[ResolvedReference]::None => {
+            }
+        }
+    }
+    ret Option[ResolvedReference]::None
+}
+
+fn resolve_symbol_reference_from_import(state: ServerState, doc: Document, request: ImportRequest) ->
+Option[ResolvedReference] {
+    let target_name = last_scope_segment(request.target)
+    match resolve_import_request_uri(state, doc, request) {
+        Option[str]::Some(uri) => {
+            match state.document(uri) {
+                Option[Document]::Some(target_doc) => {
+                    if request.wildcard {
+                        ret Option[ResolvedReference]::None
+                    }
+                    match local_symbol_reference(state, target_doc, target_name) {
+                        Option[ResolvedReference]::Some(reference) => {
+                            ret Option[ResolvedReference]::Some(reference)
+                        }
+                        Option[ResolvedReference]::None => {
+                        }
+                    }
+                }
+                Option[Document]::None => {
+                    let path = uri_to_path(uri)
+                    if file_exists(path) {
+                        let target_doc = Document::new(uri, read_file(path))
+                        if request.wildcard {
+                            ret Option[ResolvedReference]::None
+                        }
+                        match local_symbol_reference(state, target_doc, target_name) {
+                            Option[ResolvedReference]::Some(reference) => {
+                                ret Option[ResolvedReference]::Some(reference)
+                            }
+                            Option[ResolvedReference]::None => {
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Option[str]::None => {
+        }
+    }
+    ret Option[ResolvedReference]::None
+}
+
+fn workspace_symbol_reference_by_name(state: ServerState, name: str) -> Option[ResolvedReference] {
+    let mut found = Option[ResolvedReference]::None
+    let mut doc_index = 0_usize
+    while doc_index < state.documents.len() {
+        match state.documents.get(doc_index) {
+            Option[Document]::Some(doc) => {
+                match local_symbol_reference(state, doc, name) {
+                    Option[ResolvedReference]::Some(reference) => {
+                        match found {
+                            Option[ResolvedReference]::Some(existing) => {
+                                if existing.id != reference.id {
+                                    ret Option[ResolvedReference]::None
+                                }
+                            }
+                            Option[ResolvedReference]::None => {
+                                found = Option[ResolvedReference]::Some(reference)
+                            }
+                        }
+                    }
+                    Option[ResolvedReference]::None => {
+                    }
+                }
+            }
+            Option[Document]::None => {
+            }
+        }
+        doc_index += 1_usize
+    }
+
+    let mut workspace_index = 0_usize
+    while workspace_index < state.workspace_documents.len() {
+        match state.workspace_documents.get(workspace_index) {
+            Option[Document]::Some(doc) => {
+                if !open_document_exists(state, doc.uri) {
+                    match local_symbol_reference(state, doc, name) {
+                        Option[ResolvedReference]::Some(reference) => {
+                            match found {
+                                Option[ResolvedReference]::Some(existing) => {
+                                    if existing.id != reference.id {
+                                        ret Option[ResolvedReference]::None
+                                    }
+                                }
+                                Option[ResolvedReference]::None => {
+                                    found = Option[ResolvedReference]::Some(reference)
+                                }
+                            }
+                        }
+                        Option[ResolvedReference]::None => {
+                        }
+                    }
+                }
+            }
+            Option[Document]::None => {
+            }
+        }
+        workspace_index += 1_usize
+    }
+    ret found
+}
+
+fn canonical_symbol_id(state: ServerState, doc: Document, symbol: FrontendSymbol) -> str {
+    let module_name = analysis_module_name(state, doc.uri)
+    match state.analysis.symbol_id_for(module_name, symbol) {
+        Option::Some(id) => {
+            ret "symbol:" + id.key()
+        }
+        Option::None => {
+        }
+    }
+    // Files read outside an indexed workspace still need request-local
+    // identity, but every registered module uses the stable database ID.
+    ret doc.uri + "#" + symbol.name
+}
+
+fn last_scope_segment(value: str) -> str {
+    let parts = split_scope_path(value)
+    if parts.len() == 0_usize {
+        ret value
+    }
+    match parts.get(parts.len() - 1_usize) {
+        Option[str]::Some(part) => {
+            ret part
+        }
+        Option[str]::None => {
+            ret value
+        }
+    }
+}
+
+fn split_scope_path(value: str) -> Vec[str] {
+    let mut out = Vec[str]::new()
+    let mut current = ""
+    let mut index = 0_usize
+    while index < value.char_len() {
+        if index + 1_usize < value.char_len() && value.get(index).unwrap_or("") == ":" && value.get(index
+            + 1_usize).unwrap_or("") == ":" {
+            if current != "" {
+                out.push(current)
+                current = ""
+            }
+            index += 2_usize
+            continue
+        }
+        current += value.get(index).unwrap_or("")
+        index += 1_usize
+    }
+    if current != "" {
+        out.push(current)
+    }
+    ret out
+}
+
+fn find_matching_brace(value: str, start: usize) -> usize {
+    let mut depth = 0_usize
+    let mut index = start
+    while index < value.char_len() {
+        let ch = value.get(index).unwrap_or("")
+        if ch == "{" {
+            depth += 1_usize
+        } elif ch == "}" {
+            depth -= 1_usize
+            if depth == 0_usize {
+                ret index
+            }
+        }
+        index += 1_usize
+    }
+    ret value.char_len()
+}
+
+fn split_top_level_csv(value: str) -> Vec[str] {
+    let mut out = Vec[str]::new()
+    let mut current = ""
+    let mut depth = 0_usize
+    let mut index = 0_usize
+    while index < value.char_len() {
+        let ch = value.get(index).unwrap_or("")
+        if ch == "{" {
+            depth += 1_usize
+        } elif ch == "}" {
+            if depth > 0_usize {
+                depth -= 1_usize
+            }
+        } elif ch == "," && depth == 0_usize {
+            out.push(trim_spaces(current))
+            current = ""
+            index += 1_usize
+            continue
+        }
+        current += ch
+        index += 1_usize
+    }
+    if trim_spaces(current) != "" {
+        out.push(trim_spaces(current))
+    }
+    ret out
+}
+
+fn trim_spaces(value: str) -> str {
+    let mut start = 0_usize
+    while start < value.char_len() && is_space(value.get(start).unwrap_or("")) {
+        start += 1_usize
+    }
+    let mut end = value.char_len()
+    while end > start && is_space(value.get(end - 1_usize).unwrap_or("")) {
+        end -= 1_usize
+    }
+    ret value.slice(start, end - start)
+}
+
+fn is_space(ch: str) -> bool {
+    ret ch == " " || ch == "\n" || ch == "\t" || ch == "\r"
+}
+
+fn find_char(value: str, needle: str, start: usize) -> usize {
+    let mut index = start
+    while index < value.char_len() {
+        if value.get(index).unwrap_or("") == needle {
+            ret index
+        }
+        index += 1_usize
+    }
+    ret value.char_len()
+}
+
+fn find_substring(value: str, needle: str) -> usize {
+    if needle.char_len() == 0_usize {
+        ret 0_usize
+    }
+    if needle.char_len() > value.char_len() {
+        ret value.char_len()
+    }
+    let mut index = 0_usize
+    while index + needle.char_len() <= value.char_len() {
+        if value.slice(index, needle.char_len()) == needle {
+            ret index
+        }
+        index += 1_usize
+    }
+    ret value.char_len()
+}
+
+fn folding_ranges(state: ServerState, params: Json) -> Json {
+    let uri = request_uri(params)
+    match state.document(uri) {
+        Option[Document]::Some(doc) => {
+            let mut stack = Vec[Token]::new()
+            let mut ranges = Vec[Json]::new()
+            let mut index = 0_usize
+            while index < doc.analysis.tokens.len() {
+                match doc.analysis.tokens.get(index) {
+                    Option[Token]::Some(token) => {
+                        if token.type == TokenType::LEFT_BRACE {
+                            stack.push(token)
+                        } elif token.type == TokenType::RIGHT_BRACE {
+                            match stack.pop() {
+                                Option[Token]::Some(opened) => {
+                                    if token.line > opened.line {
+                                        ranges.push(folding_range_json(doc, opened, token))
+                                    }
+                                }
+                                Option[Token]::None => {
+                                }
+                            }
+                        }
+                    }
+                    Option[Token]::None => {
+                    }
+                }
+                index += 1_usize
+            }
+            ret Json::Array(ranges)
+        }
+        Option[Document]::None => {
+        }
+    }
+    ret Json::Array(Vec[Json]::new())
+}
+
+fn folding_range_json(doc: Document, opened: Token, closed: Token) -> Json {
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("startLine", json_usize(opened.line)))
+    fields.push(field("startCharacter", json_usize(actual_token_column(doc, opened))))
+    fields.push(field("endLine", json_usize(closed.line)))
+    fields.push(field("endCharacter", json_usize(actual_token_column(doc, closed) + closed.value.char_len())))
+    ret Json::Object(fields)
+}
+
+fn selection_ranges(state: ServerState, params: Json) -> Json {
+    let uri = request_uri(params)
+    let positions = json_get(params, "positions")
+    let mut items = Vec[Json]::new()
+    match state.document(uri) {
+        Option[Document]::Some(doc) => {
+            match positions.as_array() {
+                Option[Vec[Json]]::Some(values) => {
+                    let mut index = 0_usize
+                    while index < values.len() {
+                        match values.get(index) {
+                            Option[Json]::Some(position) => {
+                                items.push(selection_range_for_position(doc, position))
+                            }
+                            Option[Json]::None => {
+                            }
+                        }
+                        index += 1_usize
+                    }
+                }
+                Option[Vec[Json]]::None => {
+                }
+            }
+        }
+        Option[Document]::None => {
+        }
+    }
+    ret Json::Array(items)
+}
+
+fn selection_range_for_position(doc: Document, position: Json) -> Json {
+    let line = json_number_usize(json_get(position, "line"), 0_usize)
+    let lsp_character = json_number_usize(json_get(position, "character"), 0_usize)
+    let character = request_character_index(doc, line, lsp_character)
+    let mut fields = Vec[(str, Json)]::new()
+    match identifier_at(doc, line, character) {
+        Option[Token]::Some(token) => {
+            fields.push(field("range", token_range(doc, token)))
+        }
+        Option[Token]::None => {
+            fields.push(field("range", make_range(line, lsp_character, 0_usize)))
+        }
+    }
+    ret Json::Object(fields)
+}
+
+fn semantic_tokens_full(state: ServerState, params: Json) -> Json {
+    let uri = request_uri(params)
+    match state.document(uri) {
+        Option[Document]::Some(doc) => {
+            if doc.analysis.tokens.len() > 400_usize {
+                let mut fields = Vec[(str, Json)]::new()
+                fields.push(field("data", Json::Array(Vec[Json]::new())))
+                ret Json::Object(fields)
+            }
+            let mut data = Vec[Json]::new()
+            let mut previous_line = 0_usize
+            let mut previous_start = 0_usize
+            let mut first = true
+            let last_line = document_last_line(doc.text)
+            let mut line = 0_usize
+            let mut token_index = 0_usize
+            while line <= last_line {
+                let current_line = line_text_at(doc.text, line).unwrap_or("")
+                let comment_column = match line_comment_start(current_line) {
+                    Option[usize]::Some(value) => value
+                    Option[usize]::None => current_line.char_len() + 1_usize
+                }
+                while token_index < doc.analysis.tokens.len() {
+                    match doc.analysis.tokens.get(token_index) {
+                        Option[Token]::Some(token) => {
+                            if token.line > line {
+                                break
+                            }
+                            if token.line == line {
+                                let character_start = token.column
+                                let before_comment = character_start < comment_column
+                                if before_comment {
+                                    match semantic_token_kind(doc, token, token_index) {
+                                        Option[usize]::Some(kind) => {
+                                            let start = utf16_column(current_line, character_start)
+                                            let mut delta_line = token.line
+                                            let mut delta_start = start
+                                            if !first {
+                                                delta_line = token.line - previous_line
+                                                if delta_line == 0_usize {
+                                                    delta_start = start - previous_start
+                                                }
+                                            }
+                                            data.push(json_usize(delta_line))
+                                            data.push(json_usize(delta_start))
+                                            data.push(json_usize(utf16_len(token.value)))
+                                            data.push(json_usize(kind))
+                                            data.push(json_usize(semantic_token_modifier_bits(doc, token)))
+                                            previous_line = token.line
+                                            previous_start = start
+                                            first = false
+                                        }
+                                        Option[usize]::None => {
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Option[Token]::None => {
+                        }
+                    }
+                    token_index += 1_usize
+                }
+                if comment_column <= current_line.char_len() {
+                    let mut delta_line = line
+                    let lsp_comment_column = utf16_column(current_line, comment_column)
+                    let mut delta_start = lsp_comment_column
+                    if !first {
+                        delta_line = line - previous_line
+                        if delta_line == 0_usize {
+                            delta_start = lsp_comment_column - previous_start
+                        }
+                    }
+                    data.push(json_usize(delta_line))
+                    data.push(json_usize(delta_start))
+                    data.push(json_usize(utf16_len(current_line.slice(comment_column, current_line.char_len()
+                                    - comment_column,))))
+                    data.push(json_usize(10_usize))
+                    data.push(Json::Number("0"))
+                    previous_line = line
+                    previous_start = lsp_comment_column
+                    first = false
+                }
+                if line == last_line {
+                    break
+                }
+                line += 1_usize
+            }
+
+            let mut fields = Vec[(str, Json)]::new()
+            fields.push(field("data", Json::Array(data)))
+            ret Json::Object(fields)
+        }
+        Option[Document]::None => {
+        }
+    }
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("data", Json::Array(Vec[Json]::new())))
+    ret Json::Object(fields)
+}
+
+fn line_comment_start(line_text: str) -> Option[usize] {
+    let mut index = 0_usize
+    let mut in_string = false
+    while index + 1_usize < line_text.char_len() {
+        match line_text.get(index) {
+            Option[str]::Some(ch) => {
+                if ch == "\"" {
+                    in_string = !in_string
+                }
+                if !in_string && ch == "/" {
+                    if line_text.get(index + 1_usize).unwrap_or("") == "/" {
+                        ret Option[usize]::Some(index)
+                    }
+                }
+            }
+            Option[str]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret Option[usize]::None
+}
+
+fn semantic_token_kind(doc: Document, token: Token, token_index: usize) -> Option[usize] {
+    if is_keyword_token(token.type) {
+        ret Option[usize]::Some(0_usize)
+    }
+    if token.type == TokenType::INTEGER || token.type == TokenType::FLOAT {
+        ret Option[usize]::Some(7_usize)
+    }
+    if token.type == TokenType::STRING {
+        ret Option[usize]::Some(8_usize)
+    }
+    if token.type == TokenType::ONE_LINE_COMMENT || token.type == TokenType::MULTI_LINE_COMMENT {
+        ret Option[usize]::Some(10_usize)
+    }
+    if is_operator_token(token.type) {
+        ret Option[usize]::Some(9_usize)
+    }
+    if token.type == TokenType::IDENTIFIER {
+        if token_is_import_path_identifier(doc, token_index) {
+            ret Option[usize]::Some(11_usize)
+        }
+        match symbol_by_name(doc, token.value) {
+            Option[FrontendSymbol]::Some(symbol) => {
+                ret Option[usize]::Some(semantic_kind_for_symbol(symbol))
+            }
+            Option[FrontendSymbol]::None => {
+            }
+        }
+        if token_is_call(doc, token_index) {
+            ret Option[usize]::Some(1_usize)
+        }
+        ret Option[usize]::Some(6_usize)
+    }
+    ret Option[usize]::None
+}
+
+fn semantic_kind_for_symbol(symbol: FrontendSymbol) -> usize {
+    if symbol.kind == 12_usize {
+        ret 1_usize
+    }
+    if symbol.kind == 23_usize {
+        ret 3_usize
+    }
+    if symbol.kind == 10_usize {
+        ret 4_usize
+    }
+    if symbol.kind == 11_usize {
+        ret 5_usize
+    }
+    ret 6_usize
+}
+
+fn token_is_import_path_identifier(doc: Document, token_index: usize) -> bool {
+    match doc.analysis.tokens.get(token_index) {
+        Option[Token]::Some(token) => {
+            let mut index = token_index
+            while index > 0_usize {
+                index -= 1_usize
+                match doc.analysis.tokens.get(index) {
+                    Option[Token]::Some(previous) => {
+                        if previous.line != token.line {
+                            ret false
+                        }
+                        if previous.type == TokenType::KW_AS {
+                            ret false
+                        }
+                        if previous.type == TokenType::KW_IMPORT {
+                            ret true
+                        }
+                        if import_path_scan_should_stop(previous) {
+                            ret false
+                        }
+                    }
+                    Option[Token]::None => {
+                    }
+                }
+            }
+        }
+        Option[Token]::None => {
+        }
+    }
+    ret false
+}
+
+fn import_path_scan_should_stop(token: Token) -> bool {
+    if token.type == TokenType::KW_FN {
+        ret true
+    }
+    if token.type == TokenType::KW_STRUCT {
+        ret true
+    }
+    if token.type == TokenType::KW_ENUM {
+        ret true
+    }
+    if token.type == TokenType::KW_TRAIT {
+        ret true
+    }
+    if token.type == TokenType::KW_IMPL {
+        ret true
+    }
+    ret false
+}
+
+fn semantic_token_modifier_bits(doc: Document, token: Token) -> usize {
+    if token.type != TokenType::IDENTIFIER {
+        ret 0_usize
+    }
+    let mut index = 0_usize
+    while index < doc.analysis.symbols.len() {
+        match doc.analysis.symbols.get(index) {
+            Option[FrontendSymbol]::Some(symbol) => {
+                if symbol.name == token.value && symbol.line == token.line {
+                    ret 3_usize
+                }
+            }
+            Option[FrontendSymbol]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret 0_usize
+}
+
+fn token_is_call(doc: Document, token_index: usize) -> bool {
+    match doc.analysis.tokens.get(token_index + 1_usize) {
+        Option[Token]::Some(next) => {
+            ret next.type == TokenType::LEFT_PAREN
+        }
+        Option[Token]::None => {
+            ret false
+        }
+    }
+}
+
+fn formatting_edits(state: mut ServerState, params: Json) -> Json {
+    let uri = request_uri(params)
+    match state.document(uri) {
+        Option[Document]::Some(doc) => {
+            let module_name = analysis_module_name(state, doc.uri)
+            let syntax = match state.analysis.syntax_document(module_name) {
+                Option[SyntaxDocument]::Some(value) => value
+                Option[SyntaxDocument]::None => SyntaxDocument::empty()
+            }
+            let result = format_syntax(syntax, doc.analysis.diagnostics, format_config_for_uri(doc.uri))
+            if !result.is_valid() || !result.is_changed() {
+                ret Json::Array(Vec[Json]::new())
+            }
+            let last_line = document_last_line(doc.text)
+            let mut last_character = 0_usize
+            match line_text_at(doc.text, last_line) {
+                Option[str]::Some(text) => {
+                    last_character = utf16_len(text)
+                }
+                Option[str]::None => {
+                }
+            }
+            let mut edits = Vec[Json]::new()
+            edits.push(text_edit(range_between(0_usize, 0_usize, last_line, last_character), result.text()))
+            ret Json::Array(edits)
+        }
+        Option[Document]::None => {
+        }
+    }
+    ret Json::Array(Vec[Json]::new())
+}
+
+fn format_config_for_uri(uri: str) -> FormatConfig {
+    match project_root_for_path(uri_to_path(uri)) {
+        Option[str]::Some(root) => {
+            let tooling = read_project_tooling_config_at(root)
+            if tooling.is_valid() {
+                ret tooling.format_config()
+            }
+        }
+        Option[str]::None => {
+        }
+    }
+    ret FormatConfig::new()
+}
+
+fn identifier_at_request(doc: Document, params: Json) -> Option[Token] {
+    let position = json_get(params, "position")
+    let line = json_number_usize(json_get(position, "line"), 0_usize)
+    let character = request_character_index(doc, line, json_number_usize(json_get(position, "character"),
+            0_usize,))
+    ret identifier_at(doc, line, character)
+}
+
+fn identifier_at(doc: Document, line: usize, character: usize) -> Option[Token] {
+    let mut index = 0_usize
+    while index < doc.analysis.tokens.len() {
+        match doc.analysis.tokens.get(index) {
+            Option[Token]::Some(token) => {
+                if token.type == TokenType::IDENTIFIER && token.line == line {
+                    let column = actual_token_column_at_index(doc, index, token)
+                    if column <= character && character <= column + token.value.char_len() {
+                        ret Option[Token]::Some(token)
+                    }
+                }
+            }
+            Option[Token]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret Option[Token]::None
+}
+
+fn symbol_by_name(doc: Document, name: str) -> Option[FrontendSymbol] {
+    let mut index = 0_usize
+    while index < doc.analysis.symbols.len() {
+        match doc.analysis.symbols.get(index) {
+            Option[FrontendSymbol]::Some(symbol) => {
+                if symbol.name == name {
+                    ret Option[FrontendSymbol]::Some(symbol)
+                }
+            }
+            Option[FrontendSymbol]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret Option[FrontendSymbol]::None
+}
+
+fn symbol_by_name_in_workspace(state: ServerState, current_doc: Document, name: str) -> Option[FrontendSymbol]
+{
+    match symbol_by_name(current_doc, name) {
+        Option[FrontendSymbol]::Some(symbol) => {
+            ret Option[FrontendSymbol]::Some(symbol)
+        }
+        Option[FrontendSymbol]::None => {
+        }
+    }
+
+    let mut index = 0_usize
+    while index < state.documents.len() {
+        match state.documents.get(index) {
+            Option[Document]::Some(doc) => {
+                match symbol_by_name(doc, name) {
+                    Option[FrontendSymbol]::Some(symbol) => {
+                        ret Option[FrontendSymbol]::Some(symbol)
+                    }
+                    Option[FrontendSymbol]::None => {
+                    }
+                }
+            }
+            Option[Document]::None => {
+            }
+        }
+        index += 1_usize
+    }
+
+    let mut workspace_index = 0_usize
+    while workspace_index < state.workspace_documents.len() {
+        match state.workspace_documents.get(workspace_index) {
+            Option[Document]::Some(doc) => {
+                if !open_document_exists(state, doc.uri) {
+                    match symbol_by_name(doc, name) {
+                        Option[FrontendSymbol]::Some(symbol) => {
+                            ret Option[FrontendSymbol]::Some(symbol)
+                        }
+                        Option[FrontendSymbol]::None => {
+                        }
+                    }
+                }
+            }
+            Option[Document]::None => {
+            }
+        }
+        workspace_index += 1_usize
+    }
+    ret Option[FrontendSymbol]::None
+}
+
+fn symbol_location_in_open_documents(state: ServerState, current_doc: Document, name: str) -> Option[Json]
+{
+    match symbol_by_name(current_doc, name) {
+        Option[FrontendSymbol]::Some(symbol) => {
+            ret Option[Json]::Some(location_json(current_doc.uri, symbol_range(current_doc, symbol)))
+        }
+        Option[FrontendSymbol]::None => {
+        }
+    }
+
+    let mut index = 0_usize
+    while index < state.documents.len() {
+        match state.documents.get(index) {
+            Option[Document]::Some(doc) => {
+                match symbol_by_name(doc, name) {
+                    Option[FrontendSymbol]::Some(symbol) => {
+                        ret Option[Json]::Some(location_json(doc.uri, symbol_range(doc, symbol)))
+                    }
+                    Option[FrontendSymbol]::None => {
+                    }
+                }
+            }
+            Option[Document]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    let mut workspace_index = 0_usize
+    while workspace_index < state.workspace_documents.len() {
+        match state.workspace_documents.get(workspace_index) {
+            Option[Document]::Some(doc) => {
+                if !open_document_exists(state, doc.uri) {
+                    match symbol_by_name(doc, name) {
+                        Option[FrontendSymbol]::Some(symbol) => {
+                            ret Option[Json]::Some(location_json(doc.uri, symbol_range(doc, symbol)))
+                        }
+                        Option[FrontendSymbol]::None => {
+                        }
+                    }
+                }
+            }
+            Option[Document]::None => {
+            }
+        }
+        workspace_index += 1_usize
+    }
+    ret Option[Json]::None
+}
+
+fn callable_by_name_in_open_documents(state: ServerState, name: str) -> Option[FrontendCallable] {
+    let mut doc_index = 0_usize
+    while doc_index < state.documents.len() {
+        match state.documents.get(doc_index) {
+            Option[Document]::Some(doc) => {
+                match callable_by_name(doc, name) {
+                    Option[FrontendCallable]::Some(callable) => {
+                        ret Option[FrontendCallable]::Some(callable)
+                    }
+                    Option[FrontendCallable]::None => {
+                    }
+                }
+            }
+            Option[Document]::None => {
+            }
+        }
+        doc_index += 1_usize
+    }
+    let mut workspace_index = 0_usize
+    while workspace_index < state.workspace_documents.len() {
+        match state.workspace_documents.get(workspace_index) {
+            Option[Document]::Some(doc) => {
+                if !open_document_exists(state, doc.uri) {
+                    match callable_by_name(doc, name) {
+                        Option[FrontendCallable]::Some(callable) => {
+                            ret Option[FrontendCallable]::Some(callable)
+                        }
+                        Option[FrontendCallable]::None => {
+                        }
+                    }
+                }
+            }
+            Option[Document]::None => {
+            }
+        }
+        workspace_index += 1_usize
+    }
+    ret Option[FrontendCallable]::None
+}
+
+fn callable_by_name(doc: Document, name: str) -> Option[FrontendCallable] {
+    let mut callable_index = 0_usize
+    while callable_index < doc.analysis.callables.len() {
+        match doc.analysis.callables.get(callable_index) {
+            Option[FrontendCallable]::Some(callable) => {
+                if callable.name == name {
+                    ret Option[FrontendCallable]::Some(callable)
+                }
+            }
+            Option[FrontendCallable]::None => {
+            }
+        }
+        callable_index += 1_usize
+    }
+    ret Option[FrontendCallable]::None
+}
+
+fn active_call_at_request(doc: Document, params: Json) -> Option[(str, usize)] {
+    let position = json_get(params, "position")
+    let line = json_number_usize(json_get(position, "line"), 0_usize)
+    let character = request_character_index(doc, line, json_number_usize(json_get(position, "character"),
+            0_usize,))
+    ret active_call_at(doc, line, character)
+}
+
+fn active_call_at(doc: Document, line: usize, character: usize) -> Option[(str, usize)] {
+    let cursor = token_cursor_index(doc, line, character)
+    let mut paren_depth = 0_i32
+    let mut index = cursor
+    while index > 0_usize {
+        index -= 1_usize
+        match doc.analysis.tokens.get(index) {
+            Option[Token]::Some(token) => {
+                if token.type == TokenType::RIGHT_PAREN {
+                    paren_depth += 1_i32
+                } elif token.type == TokenType::LEFT_PAREN {
+                    if paren_depth == 0_i32 {
+                        match call_name_before_open_paren(doc, index) {
+                            Option[str]::Some(name) => {
+                                ret Option[(str, usize)]::Some((name, active_parameter_between(doc, index
+                                            + 1_usize, cursor,)))
+                            }
+                            Option[str]::None => {
+                                ret Option[(str, usize)]::None
+                            }
+                        }
+                    }
+                    paren_depth -= 1_i32
+                }
+            }
+            Option[Token]::None => {
+            }
+        }
+    }
+    ret Option[(str, usize)]::None
+}
+
+fn call_name_before_open_paren(doc: Document, open_paren_index: usize) -> Option[str] {
+    if open_paren_index == 0_usize {
+        ret Option[str]::None
+    }
+    let mut index = open_paren_index
+    while index > 0_usize {
+        index -= 1_usize
+        match doc.analysis.tokens.get(index) {
+            Option[Token]::Some(token) => {
+                if token.type == TokenType::IDENTIFIER {
+                    ret Option[str]::Some(token.value)
+                }
+                if token.type != TokenType::SCOPE {
+                    if token.type != TokenType::DOT {
+                        ret Option[str]::None
+                    }
+                }
+            }
+            Option[Token]::None => {
+            }
+        }
+    }
+    ret Option[str]::None
+}
+
+fn active_parameter_between(doc: Document, start_index: usize, end_index: usize) -> usize {
+    let mut active = 0_usize
+    let mut paren_depth = 0_i32
+    let mut bracket_depth = 0_i32
+    let mut brace_depth = 0_i32
+    let mut index = start_index
+    while index < end_index {
+        match doc.analysis.tokens.get(index) {
+            Option[Token]::Some(token) => {
+                if token.type == TokenType::LEFT_PAREN {
+                    paren_depth += 1_i32
+                } elif token.type == TokenType::RIGHT_PAREN {
+                    paren_depth -= 1_i32
+                } elif token.type == TokenType::LEFT_BRACKET {
+                    bracket_depth += 1_i32
+                } elif token.type == TokenType::RIGHT_BRACKET {
+                    bracket_depth -= 1_i32
+                } elif token.type == TokenType::LEFT_BRACE {
+                    brace_depth += 1_i32
+                } elif token.type == TokenType::RIGHT_BRACE {
+                    brace_depth -= 1_i32
+                } elif token.type == TokenType::COMMA && paren_depth == 0_i32 && bracket_depth == 0_i32
+                && brace_depth == 0_i32 {
+                    active += 1_usize
+                }
+            }
+            Option[Token]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret active
+}
+
+fn token_cursor_index(doc: Document, line: usize, character: usize) -> usize {
+    let mut index = 0_usize
+    while index < doc.analysis.tokens.len() {
+        match doc.analysis.tokens.get(index) {
+            Option[Token]::Some(token) => {
+                if token.line > line {
+                    ret index
+                }
+                if token.line == line {
+                    let column = actual_token_column(doc, token)
+                    if column >= character {
+                        ret index
+                    }
+                }
+            }
+            Option[Token]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret doc.analysis.tokens.len()
+}
+
+fn symbol_hover_text(symbol: FrontendSymbol) -> str {
+    let mut signature = symbol.name
+    if symbol.kind == 12_usize {
+        signature = "fn " + symbol.name
+    } elif symbol.kind == 23_usize {
+        signature = "struct " + symbol.name
+    } elif symbol.kind == 10_usize {
+        signature = "enum " + symbol.name
+    } elif symbol.kind == 11_usize {
+        signature = "trait " + symbol.name
+    }
+    let mut hover = "```encore\n" + signature + "\n```"
+    match symbol.documentation {
+        Option::Some(documentation) => {
+            if documentation.text != "" {
+                hover = hover + "\n\n" + documentation.text
+            }
+        }
+        Option::None => {
+        }
+    }
+    ret hover
+}
+
+fn symbol_range(doc: Document, symbol: FrontendSymbol) -> Json {
+    let mut index = 0_usize
+    while index < doc.analysis.tokens.len() {
+        match doc.analysis.tokens.get(index) {
+            Option[Token]::Some(token) => {
+                if token.type == TokenType::IDENTIFIER && token.line == symbol.line && token.value ==
+                symbol.name {
+                    ret token_range(doc, token)
+                }
+            }
+            Option[Token]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret lsp_range(doc, symbol.line, symbol.column, symbol.length)
+}
+
+fn token_range(doc: Document, token: Token) -> Json {
+    let column = actual_token_column(doc, token)
+    ret lsp_range(doc, token.line, column, token.value.char_len())
+}
+
+fn token_range_at_index(doc: Document, token_index: usize, token: Token) -> Json {
+    let column = actual_token_column_at_index(doc, token_index, token)
+    ret lsp_range(doc, token.line, column, token.value.char_len())
+}
+
+fn request_character_index(doc: Document, line: usize, lsp_character: usize) -> usize {
+    match line_text_at(doc.text, line) {
+        Some(text) => {
+            ret character_index_from_utf16(text, lsp_character)
+        }
+        None => {
+            ret lsp_character
+        }
+    }
+}
+
+fn lsp_column(doc: Document, line: usize, character: usize) -> usize {
+    match line_text_at(doc.text, line) {
+        Some(text) => {
+            ret utf16_column(text, character)
+        }
+        None => {
+            ret character
+        }
+    }
+}
+
+fn lsp_range(doc: Document, line: usize, character: usize, length: usize) -> Json {
+    match line_text_at(doc.text, line) {
+        Some(text) => {
+            let start = utf16_column(text, character)
+            let end = utf16_column(text, character + length)
+            ret range_between(line, start, line, end)
+        }
+        None => {
+            ret make_range(line, character, length)
+        }
+    }
+}
+
+fn actual_token_column(doc: Document, token: Token) -> usize {
+    let _document = doc
+    ret token.column
+}
+
+fn actual_token_column_at_index(doc: Document, token_index: usize, token: Token) -> usize {
+    let _document = doc
+    let _index = token_index
+    ret token.column
+}
+
+fn find_token_in_line_at_or_after(line: str, token: Token, start: usize) -> usize {
+    let mut column = start
+    loop {
+        let found = find_in_line_at_or_after(line, token.value, column)
+        if !is_identifier_name(token.value) {
+            ret found
+        }
+        let before_is_identifier = found > 0_usize && is_identifier_name(line.get(found - 1_usize).unwrap_or(""))
+        let after = found + token.value.char_len()
+        let after_is_identifier = after < line.char_len() && is_identifier_name(line.get(after).unwrap_or(""))
+        if !before_is_identifier && !after_is_identifier {
+            ret found
+        }
+        if found + 1_usize >= line.char_len() {
+            ret start
+        }
+        column = found + 1_usize
+    }
+    ret start
+}
+
+fn keyword_completion_items() -> Vec[Json] {
+    let mut items = Vec[Json]::new()
+    push_keyword_completion(items, "as")
+    push_keyword_completion(items, "break")
+    push_keyword_completion(items, "continue")
+    push_keyword_completion(items, "do")
+    push_keyword_completion(items, "dyn")
+    push_keyword_completion(items, "ehir")
+    push_keyword_completion(items, "elif")
+    push_keyword_completion(items, "else")
+    push_keyword_completion(items, "enum")
+    push_keyword_completion(items, "extern")
+    push_keyword_completion(items, "false")
+    push_keyword_completion(items, "fn")
+    push_keyword_completion(items, "for")
+    push_keyword_completion(items, "if")
+    push_keyword_completion(items, "impl")
+    push_keyword_completion(items, "import")
+    push_keyword_completion(items, "in")
+    push_keyword_completion(items, "let")
+    push_keyword_completion(items, "loop")
+    push_keyword_completion(items, "match")
+    push_keyword_completion(items, "mut")
+    push_keyword_completion(items, "pub")
+    push_keyword_completion(items, "ret")
+    push_keyword_completion(items, "struct")
+    push_keyword_completion(items, "trait")
+    push_keyword_completion(items, "true")
+    push_keyword_completion(items, "unsafe")
+    push_keyword_completion(items, "while")
+    push_keyword_completion(items, "with")
+    ret items
+}
+
+fn push_keyword_completion(items: mut Vec[Json], label: str) ->() {
+    items.push(completion_item(label, 14_usize, "Encore keyword"))
+    ret()
+}
+
+fn completion_item(label: str, kind: usize, detail: str) -> Json {
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("label", Json::String(label)))
+    fields.push(field("kind", json_usize(kind)))
+    fields.push(field("detail", Json::String(detail)))
+    ret Json::Object(fields)
+}
+
+fn symbol_completion_kind(symbol_kind: usize) -> usize {
+    if symbol_kind == 12_usize {
+        ret 3_usize
+    }
+    if symbol_kind == 23_usize {
+        ret 7_usize
+    }
+    if symbol_kind == 10_usize {
+        ret 13_usize
+    }
+    if symbol_kind == 11_usize {
+        ret 8_usize
+    }
+    ret 9_usize
+}
+
+fn document_diagnostics_json(state: mut ServerState, doc: Document) -> Vec[Json] {
+    let mut items = diagnostics_to_lsp(doc, doc.analysis.diagnostics)
+    let analyzer_diagnostics = analyzer_frontend_diagnostics(analyze_source_document(doc.uri, doc.text,
+            doc.analysis, analyzer_config_for_uri(doc.uri),))
+    items.extend(diagnostics_to_lsp(doc, analyzer_diagnostics))
+    let module_name = analysis_module_name(state, doc.uri)
+    let typed_diagnostics = state.analysis.module_semantic_diagnostics(module_name)
+    items.extend(diagnostics_to_lsp(doc, typed_diagnostics))
+    ret items
+}
+
+fn analyzer_config_for_uri(uri: str) -> AnalyzerConfig {
+    match project_root_for_path(uri_to_path(uri)) {
+        Option[str]::Some(root) => {
+            let tooling = read_project_tooling_config_at(root)
+            if tooling.is_valid() {
+                ret tooling.lint_config()
+            }
+        }
+        Option[str]::None => {
+        }
+    }
+    ret AnalyzerConfig::new()
+}
+
+fn token_has_type(doc: Document, token_index: usize, kind: TokenType) -> bool {
+    match doc.analysis.tokens.get(token_index) {
+        Option[Token]::Some(token) => {
+            ret token.type == kind
+        }
+        Option[Token]::None => {
+            ret false
+        }
+    }
+}
+
+fn usize_text(value: usize) -> str {
+    ret Debug::fmt(value)
+}
+
+fn document_diagnostic_result(state: mut ServerState, params: Json) -> Json {
+    let uri = request_uri(params)
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("kind", Json::String("full")))
+    match state.document(uri) {
+        Option[Document]::Some(doc) => {
+            fields.push(field("items", Json::Array(document_diagnostics_json(state, doc))))
+        }
+        Option[Document]::None => {
+            fields.push(field("items", Json::Array(Vec[Json]::new())))
+        }
+    }
+    ret Json::Object(fields)
+}
+
+fn workspace_diagnostic_result(_state: ServerState) -> Json {
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("items", Json::Array(Vec[Json]::new())))
+    ret Json::Object(fields)
+}
+
+fn publish_diagnostics_for_uri(state: mut ServerState, uri: str) ->() {
+    match state.document(uri) {
+        Option[Document]::Some(doc) => {
+            send_notification("textDocument/publishDiagnostics", publish_diagnostics_params(uri, document_diagnostics_json(state,
+                        doc,)))
+        }
+        Option[Document]::None => {
+        }
+    }
+    ret()
+}
+
+fn publish_diagnostics_params(uri: str, diagnostics: Vec[Json]) -> Json {
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("uri", Json::String(uri)))
+    fields.push(field("diagnostics", Json::Array(diagnostics)))
+    ret Json::Object(fields)
+}
+
+fn diagnostics_to_lsp(doc: Document, diagnostics: Vec[FrontendDiagnostic]) -> Vec[Json] {
+    let mut items = Vec[Json]::new()
+    let mut index = 0_usize
+    while index < diagnostics.len() {
+        match diagnostics.get(index) {
+            Option[FrontendDiagnostic]::Some(diagnostic) => {
+                items.push(diagnostic_to_lsp(doc, diagnostic))
+            }
+            Option[FrontendDiagnostic]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret items
+}
+
+fn diagnostic_to_lsp(doc: Document, diagnostic: FrontendDiagnostic) -> Json {
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("range", diagnostic_primary_range(doc, diagnostic)))
+    fields.push(field("severity", json_usize(diagnostic.severity)))
+    fields.push(field("code", Json::String(diagnostic.code)))
+    fields.push(field("source", Json::String("encore-lsp")))
+    fields.push(field("message", Json::String(diagnostic_lsp_message(diagnostic))))
+
+    let mut related = Vec[Json]::new()
+    for label in diagnostic.labels {
+        if label.kind == DiagnosticLabelKind::Secondary {
+            let uri = if label.source_name == "" {
+                doc.uri
+            } else {
+                path_to_uri(label.source_name)
+            }
+            let mut location = Vec[(str, Json)]::new()
+            location.push(field("uri", Json::String(uri)))
+            location.push(field("range", range_between(label.line, label.column, label.line, label.column
+                        + max_usize(label.length, 1_usize),)))
+            let mut item = Vec[(str, Json)]::new()
+            item.push(field("location", Json::Object(location)))
+            item.push(field("message", Json::String(label.message)))
+            related.push(Json::Object(item))
+        }
+    }
+    if related.len() > 0_usize {
+        fields.push(field("relatedInformation", Json::Array(related)))
+    }
+
+    let mut suggestions = Vec[Json]::new()
+    for suggestion in diagnostic.suggestions {
+        let mut item = Vec[(str, Json)]::new()
+        item.push(field("uri", Json::String(if suggestion.source_name == "" {
+                        doc.uri
+                    } else {
+                        path_to_uri(suggestion.source_name)
+                    }
+                )))
+        item.push(field("range", range_between(suggestion.line, suggestion.column, suggestion.line, suggestion.column
+                    + max_usize(suggestion.length, 1_usize),)))
+        item.push(field("replacement", Json::String(suggestion.replacement)))
+        item.push(field("message", Json::String(suggestion.message)))
+        item.push(field("applicability", Json::String(applicability_name(suggestion.applicability))))
+        suggestions.push(Json::Object(item))
+    }
+    if suggestions.len() > 0_usize {
+        let mut data = Vec[(str, Json)]::new()
+        data.push(field("suggestions", Json::Array(suggestions)))
+        fields.push(field("data", Json::Object(data)))
+    }
+    ret Json::Object(fields)
+}
+
+fn diagnostic_primary_range(doc: Document, diagnostic: FrontendDiagnostic) -> Json {
+    for label in diagnostic.labels {
+        if label.kind == DiagnosticLabelKind::Primary {
+            ret lsp_range(doc, label.line, label.column, label.length)
+        }
+    }
+    ret diagnostic_range(doc, diagnostic)
+}
+
+fn diagnostic_lsp_message(diagnostic: FrontendDiagnostic) -> str {
+    let mut message = diagnostic.message
+    for note in diagnostic.notes {
+        message += "\nnote: " + note
+    }
+    for help in diagnostic.helps {
+        message += "\nhelp: " + help
+    }
+    ret message
+}
+
+fn max_usize(left: usize, right: usize) -> usize {
+    if left > right {
+        ret left
+    }
+    ret right
+}
+
+fn diagnostic_range(doc: Document, diagnostic: FrontendDiagnostic) -> Json {
+    if starts_with(diagnostic.code, "unclosed-") {
+        match line_text_at(doc.text, diagnostic.line) {
+            Option[str]::Some(line) => {
+                ret range_between(diagnostic.line, utf16_len(line), diagnostic.line, utf16_len(line)
+                    + 1_usize,)
+            }
+            Option[str]::None => {
+            }
+        }
+    }
+    ret lsp_range(doc, diagnostic.line, diagnostic.column, diagnostic.length)
+}
+
+fn request_uri(params: Json) -> str {
+    ret json_get_str(json_get(params, "textDocument"), "uri", "")
+}
+
+fn exit_process(code: i32) -> i32 {
+    unsafe {
+        ret encore_proc_exit(code)
+    }
+}
+
+fn cwd() -> str {
+    unsafe {
+        ret encore_os_cwd()
+    }
+}
+
+fn read_file(path: str) -> str {
+    unsafe {
+        ret encore_fs_read_file(path)
+    }
+}
+
+fn file_exists(path: str) -> bool {
+    unsafe {
+        ret encore_fs_status(path) == 0_i32
+    }
+}
+
+fn read_dir(path: str) -> Vec[str] {
+    let raw = unsafe {
+        encore_fs_read_dir(path)
+    }
+    ret split_lines(raw)
+}
+
+fn split_lines(value: str) -> Vec[str] {
+    let mut out = Vec[str]::new()
+    let total = value.len()
+    if total == 0_usize {
+        ret out
+    }
+
+    let mut start = 0_usize
+    let mut index = 0_usize
+    loop {
+        if index >= total {
+            break
+        }
+        match value.get(index) {
+            Option[str]::Some(ch) => {
+                if ch == "\n" {
+                    if index > start {
+                        out.push(value.slice(start, index - start))
+                    }
+                    start = index + 1_usize
+                }
+            }
+            Option[str]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    if start < total {
+        out.push(value.slice(start, total - start))
+    }
+    ret out
+}

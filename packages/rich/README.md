@@ -42,7 +42,7 @@ Logical structure:
 - `pretty`, `inspect`, `json_render`, `traceback`: diagnostics and developer-facing output
 - `logging`: bridge to `log` with console/file/writer sinks
 
-Overview examples in [`examples/`](/home/meshushkevich/Projects/2E-encore/encore/index/rich/examples):
+Overview examples are available in the package's [`examples/`](examples/) directory:
 
 - `overview_console_rendering.enq`: console, status, table, tree, panel, layout, JSON, progress
 - `overview_interactive_workflow.enq`: prompt validation, typed results, live updates, traceback

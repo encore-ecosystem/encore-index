@@ -352,17 +352,23 @@ pub fn type_to_string(typ: Type) -> str {
         out = out + "]"
     }
 
-    match typ.pointer {
-        PointerKind::Raw => {
+    match typ.representation {
+        RepresentationKind::Raw => {
             ret out + "*"
         }
-        PointerKind::Heap => {
+        RepresentationKind::NodeHeap => {
             ret out + "<H>"
         }
-        PointerKind::Stack => {
+        RepresentationKind::NodeStack => {
             ret out + "<S>"
         }
-        PointerKind::Plain => {}
+        RepresentationKind::NodeAny => {
+            ret out + "&"
+        }
+        RepresentationKind::LocalPlace => {
+            ret "mut " + out
+        }
+        RepresentationKind::Inline => {}
     }
 
     ret out
@@ -559,6 +565,10 @@ fn format_cfree_instruction(cfree_instr: CfreeInstruction) -> str {
     ret out
 }
 
+fn format_edge_instruction(name: str, edge_instr: EdgeInstruction) -> str {
+    ret name + " " + variable_to_string(edge_instr.owner) + ", " + variable_to_string(edge_instr.value)
+}
+
 fn format_ret_terminator(ret_instr: ReturnInstruction) -> str {
     let mut out: str = "ret "
     out = out + variable_to_string(ret_instr.value)
@@ -693,14 +703,18 @@ fn format_impl_directive(impl_dir: ImplDirective) -> str {
         out = out + "]"
     }
     out = out + " "
-    out = out + impl_dir.trait_name
-    if impl_dir.trait_args.len() > 0_usize {
-        out = out + "["
-        out = out + join_strings(collect_type_strings(impl_dir.trait_args), ", ")
-        out = out + "]"
+    if impl_dir.trait_name == "" {
+        out = out + type_to_string(impl_dir.for_type)
+    } else {
+        out = out + impl_dir.trait_name
+        if impl_dir.trait_args.len() > 0_usize {
+            out = out + "["
+            out = out + join_strings(collect_type_strings(impl_dir.trait_args), ", ")
+            out = out + "]"
+        }
+        out = out + " for "
+        out = out + type_to_string(impl_dir.for_type)
     }
-    out = out + " for "
-    out = out + type_to_string(impl_dir.for_type)
     out = out + " {"
     if impl_dir.methods.len() == 0_usize {
         out = out + newline()
@@ -764,6 +778,8 @@ pub fn instruction_to_string(instruction: Instruction) -> str {
             ret render_assignable(phi_instr.out, "phi", join_strings(collect_phi_pair_strings(phi_instr.pairs), ", "))
         }
         Instruction::Cfree(cfree_instr) => { ret format_cfree_instruction(cfree_instr) }
+        Instruction::AddEdge(edge_instr) => { ret format_edge_instruction("addedge", edge_instr) }
+        Instruction::RemoveEdge(edge_instr) => { ret format_edge_instruction("removeedge", edge_instr) }
         Instruction::Drop(drop_instr) => { ret "drop " + variable_to_string(drop_instr.value) }
         Instruction::Retain(retain_instr) => { ret "retain " + variable_to_string(retain_instr.value) }
     }

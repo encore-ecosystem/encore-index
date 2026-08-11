@@ -20,8 +20,33 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#if defined(__linux__)
+#include <sys/resource.h>
+#endif
 #ifndef PATH_MAX
 #define PATH_MAX 4096
+#endif
+
+#if defined(__linux__)
+/*
+ * Keep hosted debug programs viable when generated aggregate temporaries
+ * exceed the conventional 8 MiB main-thread stack. Respect the hard limit;
+ * optimized profiles normally eliminate these slots.
+ */
+__attribute__((constructor))
+static void encore_ensure_main_stack_capacity(void) {
+    const rlim_t desired = (rlim_t)64 * 1024 * 1024;
+    struct rlimit limit;
+    if (getrlimit(RLIMIT_STACK, &limit) != 0 || limit.rlim_cur >= desired) return;
+    rlim_t next = desired;
+    if (limit.rlim_max != RLIM_INFINITY && next > limit.rlim_max) {
+        next = limit.rlim_max;
+    }
+    if (next > limit.rlim_cur) {
+        limit.rlim_cur = next;
+        (void)setrlimit(RLIMIT_STACK, &limit);
+    }
+}
 #endif
 #ifdef __APPLE__
 #include <crt_externs.h>
@@ -137,6 +162,8 @@ bool encore_heap_is_unique(void *ptr) {
     encore_heap_block *block = ((encore_heap_block *)ptr) - 1;
     return atomic_load_explicit(&block->meta.refs, memory_order_acquire) == 1;
 }
+
+#include "node_runtime.c"
 
 typedef union {
     struct {

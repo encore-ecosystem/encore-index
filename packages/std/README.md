@@ -230,11 +230,29 @@ Re-exported from `core::os`:
 
 ### `std::process`
 
+- `Command::new(program)`
+- `arg(value)`, `cwd(path)`
+- `output() -> Output`
+- `Output::code()`, `success()`, `text()`
 - `success_code() -> i32`
 - `failure_code() -> i32`
 - `exit(code) -> i32`
 - `exit_success() -> i32`
 - `exit_failure() -> i32`
+
+`Command` passes arguments directly without invoking a shell. `output` is a
+blocking operation and currently combines stdout and stderr in observation
+order.
+
+```enq
+import std::process::Command
+
+fn main() -> u32 {
+    let output = Command::new("encore").arg("check").cwd(".").output()
+    if output.success() { ret 0_u32 }
+    ret 1_u32
+}
+```
 
 ### `std::time`
 

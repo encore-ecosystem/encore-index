@@ -1,0 +1,15 @@
+//! Callable traits used by typed APIs. Pipe closures are lowered to an
+//! implementation of their contextual single-method trait; these traits are
+//! the conventional generic vocabulary for non-erased callables.
+
+pub trait Fn[Args, Output] {
+    fn call(self: Self, args: Args) -> Output
+}
+
+pub trait FnMut[Args, Output] {
+    fn call_mut(self: Self&, args: Args) -> Output
+}
+
+pub trait FnOnce[Args, Output] {
+    fn call_once(self: Self, args: Args) -> Output
+}

@@ -5,6 +5,7 @@ import refrain::types::void_type
 import refrain::value::LLVMValue
 import refrain::core::LLVMParam
 import refrain::core::LLVMInstruction
+import refrain::core::LLVMPhiIncoming
 import refrain::core::LLVMTerminator
 import refrain::core::LLVMBasicBlock
 import refrain::core::LLVMFunction
@@ -24,6 +25,8 @@ import refrain::core::llvm_bitcast_instruction
 import refrain::core::llvm_cast_instruction
 import refrain::core::llvm_insertvalue_instruction
 import refrain::core::llvm_extractvalue_instruction
+import refrain::core::llvm_phi_incoming
+import refrain::core::llvm_phi_instruction
 import refrain::core::llvm_ret_term
 import refrain::core::llvm_br_term
 import refrain::core::llvm_cbr_term
@@ -142,6 +145,14 @@ pub fn llvm_inst_insertvalue(out: LLVMValue, aggregate: LLVMValue, value: LLVMVa
 
 pub fn llvm_inst_extractvalue(out: LLVMValue, aggregate: LLVMValue, index: str) -> LLVMInstruction {
     ret llvm_extractvalue_instruction(out, aggregate, index)
+}
+
+pub fn llvm_make_phi_incoming(value: LLVMValue, label: str) -> LLVMPhiIncoming {
+    ret llvm_phi_incoming(value, label)
+}
+
+pub fn llvm_inst_phi(out: LLVMValue, incoming: Vec[LLVMPhiIncoming]) -> LLVMInstruction {
+    ret llvm_phi_instruction(out, incoming)
 }
 
 pub fn llvm_term_ret(value: Option[LLVMValue], ret_type: LLVMType) -> LLVMTerminator {

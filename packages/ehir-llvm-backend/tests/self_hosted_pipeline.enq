@@ -15,13 +15,74 @@ fn main() -> u32 {
     if !assert(llvm_ir.contains("ptrtoint i8* %next_size_ptr to i64")) { ret 4_u32 }
     if !assert(llvm_ir.contains("mul i64 %count, %next_size")) { ret 5_u32 }
     if !assert(llvm_ir.contains("private unnamed_addr constant [6 x i8] c\"hello\\00\"")) { ret 6_u32 }
-    if !assert(llvm_ir.contains("define linkonce_odr void @__drop_Named")) { ret 7_u32 }
-    if !assert(llvm_ir.contains("define linkonce_odr void @__drop_Maybe_str")) { ret 8_u32 }
+    if !assert(llvm_ir.contains("define void @__drop_Named")) { ret 7_u32 }
+    if !assert(llvm_ir.contains("define void @__drop_Maybe_str")) { ret 8_u32 }
     if !assert(llvm_ir.contains("call void @encore_str_drop")) { ret 9_u32 }
-    if !assert(llvm_ir.contains("define linkonce_odr void @__retain_Named")) { ret 10_u32 }
-    if !assert(llvm_ir.contains("define linkonce_odr void @__retain_Maybe_str")) { ret 11_u32 }
+    if !assert(llvm_ir.contains("define void @__retain_Named")) { ret 10_u32 }
+    if !assert(llvm_ir.contains("define void @__retain_Maybe_str")) { ret 11_u32 }
     if !assert(llvm_ir.contains("call void @encore_str_retain")) { ret 12_u32 }
-    if !assert(llvm_ir.contains("define i32 @constant() nounwind memory(none)")) { ret 13_u32 }
+    if !assert(llvm_ir.contains("define i32 @constant() nounwind memory(none) \"probe-stack\"=\"inline-asm\"")) { ret 13_u32 }
+    if !assert(llvm_ir.contains("define void @drop_named(%Named %value) \"probe-stack\"=\"inline-asm\"")) { ret 27_u32 }
+
+    let heap_field_source = "struct Inner {\n  value: u32\n}\n\nstruct Outer {\n  inner: Inner<H>\n}\n\nfn read(value: Outer&) -> Inner<H> {\n  $entry:\n    result: Inner<H> = getfield value > 0\n    ret result: Inner<H>\n}\n"
+    let heap_field_ir = emit_ir(parse_module_text("heap_field", heap_field_source))
+    if !assert(heap_field_ir.contains("load %Inner*, %Inner**")) { ret 28_u32 }
+    if !assert(!heap_field_ir.contains("ret %Inner**")) { ret 29_u32 }
+
+    let raw_field_source = "struct Buffer {\n  ptr: u8*\n}\n\nfn read(value: Buffer&) -> u8* {\n  $entry:\n    result: u8* = getfield value > 0\n    ret result: u8*\n}\n"
+    let raw_field_ir = emit_ir(parse_module_text("raw_field_value", raw_field_source))
+    if !assert(raw_field_ir.contains("load i8*, i8**")) { ret 52_u32 }
+    if !assert(!raw_field_ir.contains("ret i8**")) { ret 53_u32 }
+
+    let owning_node_source = "struct Node {\n  value: u32\n}\n\nstruct Link {\n  child: Node<H>\n}\n\nfn use_any(value: Node&) -> () {\n  $entry:\n    retain value: Node&\n    drop value: Node&\n    ret void: ()\n}\n\nfn use_stack(value: Node<S>) -> () {\n  $entry:\n    retain value: Node<S>\n    drop value: Node<S>\n    ret void: ()\n}\n\nfn make_heap(value: u32) -> Node<H> {\n  $entry:\n    node: Node<H> = lcsos Node<H>(value: u32)\n    ret node: Node<H>\n}\n\nfn make_link(child: Node<H>) -> Link<H> {\n  $entry:\n    link: Link<H> = lcsos Link<H>(child: Node<H>)\n    ret link: Link<H>\n}\n\nfn replace_child(link: Link&, child: Node<H>) -> () {\n  $entry:\n    setfield link: Link& > 0: usize, child: Node<H>\n    ret void: ()\n}\n\nfn build_stack(value: u32) -> () {\n  $entry:\n    node: Node<S> = lcsos Node<S>(value: u32)\n    drop node: Node<S>\n    ret void: ()\n}\n"
+    let owning_node_ir = emit_ir(parse_module_text("owning_node_handles", owning_node_source))
+    if !assert(owning_node_ir.contains("define void @__drop_Node_A")) { ret 30_u32 }
+    if !assert(owning_node_ir.contains("define void @__retain_Node_A")) { ret 31_u32 }
+    if !assert(owning_node_ir.contains("define void @__drop_Node_S")) { ret 32_u32 }
+    if !assert(owning_node_ir.contains("define void @__retain_Node_S")) { ret 33_u32 }
+    if !assert(owning_node_ir.contains("call i8* @encore_node_alloc_heap")) { ret 34_u32 }
+    if !assert(owning_node_ir.contains("alloca { [8 x i64], %Node }")) { ret 35_u32 }
+    if !assert(owning_node_ir.contains("call void @encore_node_register_stack")) { ret 36_u32 }
+    if !assert(!owning_node_ir.contains("call i8* @__ehir_hrealloc(i8* null")) { ret 37_u32 }
+    if !assert(owning_node_ir.contains("call void @encore_node_add_edge")) { ret 38_u32 }
+    if !assert(owning_node_ir.contains("call void @encore_node_replace_edge")) { ret 39_u32 }
+
+    // A generic node handle requires both the concrete handle type and its
+    // placement-independent inline payload declaration. Otherwise LLVM sees
+    // an opaque payload and any field access or finalization is invalid.
+    let generic_node_source = "struct Box[T] {\n  value: T\n}\n\nfn make(value: u32) -> Box[u32]<H> {\n  $entry:\n    boxed: Box[u32]<H> = lcsos Box[u32]<H>(value: u32)\n    ret boxed: Box[u32]<H>\n}\n\nfn release(value: Box[u32]<H>) -> () {\n  $entry:\n    drop value: Box[u32]<H>\n    ret void: ()\n}\n"
+    let generic_node_ir = emit_ir(parse_module_text("generic_node_payload", generic_node_source))
+    if !assert(generic_node_ir.contains("%Box_u32 = type { i32 }")) { ret 54_u32 }
+    if !assert(generic_node_ir.contains("define void @__drop_Box_u32_H")) { ret 55_u32 }
+    if !assert(generic_node_ir.contains("call zeroext i1 @encore_node_release")) { ret 56_u32 }
+
+    let cfree_source = "struct Node {\n  value: u32\n}\n\nfn release(value: Node<H>) -> () {\n  $entry:\n    cfree value: Node<H>\n    ret void: ()\n}\n"
+    let cfree_ir = emit_ir(parse_module_text("node_cfree", cfree_source))
+    if !assert(cfree_ir.contains("call zeroext i1 @encore_node_release")) { ret 48_u32 }
+    if !assert(!cfree_ir.contains("@__ehir_cfree")) { ret 49_u32 }
+
+    let explicit_edge_source = "struct Node {\n  value: u32\n}\n\nstruct Nested {\n  child: Node<H>\n}\n\nstruct Owner {\n  value: u32\n}\n\nfn update(owner: Owner&, nested: Nested) -> () {\n  $entry:\n    addedge owner: Owner&, nested: Nested\n    removeedge owner: Owner&, nested: Nested\n    ret void: ()\n}\n"
+    let explicit_edge_ir = emit_ir(parse_module_text("explicit_node_edges", explicit_edge_source))
+    if !assert(explicit_edge_ir.contains("call void @__add_edges_Nested")) { ret 50_u32 }
+    if !assert(explicit_edge_ir.contains("call void @__remove_edges_Nested")) { ret 51_u32 }
+
+    let nested_edge_source = "struct Node {\n  value: u32\n}\n\nenum MaybeNode {\n  Some(Node<H>)\n  None\n}\n\nstruct Owner {\n  child: MaybeNode\n}\n\nfn make_owner(child: MaybeNode) -> Owner<H> {\n  $entry:\n    owner: Owner<H> = lcsos Owner<H>(child: MaybeNode)\n    ret owner: Owner<H>\n}\n\nfn replace_child(owner: Owner&, child: MaybeNode) -> () {\n  $entry:\n    setfield owner: Owner& > 0: usize, child: MaybeNode\n    ret void: ()\n}\n"
+    let nested_edge_ir = emit_ir(parse_module_text("nested_node_edges", nested_edge_source))
+    if !assert(nested_edge_ir.contains("define void @__add_edges_MaybeNode")) { ret 40_u32 }
+    if !assert(nested_edge_ir.contains("define void @__remove_edges_MaybeNode")) { ret 41_u32 }
+    if !assert(nested_edge_ir.contains("call void @__add_edges_MaybeNode")) { ret 42_u32 }
+    if !assert(nested_edge_ir.contains("call void @__remove_edges_MaybeNode")) { ret 43_u32 }
+
+    // Dynamic trait values can hide node handles inside their concrete boxed
+    // value.  Their edge visitors must therefore be defined and dispatch to
+    // the concrete implementation instead of leaving an unresolved helper in
+    // the generated module.
+    let dyn_edge_source = "struct Node {\n  value: u32\n}\n\ntrait Sink {\n  fn consume(self: Self) -> ()\n}\n\nstruct NodeSink {\n  child: Node<H>\n}\n\nimpl Sink for NodeSink {\n  fn consume(self: NodeSink) -> () {\n    $entry:\n      ret void: ()\n  }\n}\n\nstruct Owner {\n  sink: dyn Sink\n}\n\nfn make_owner(sink: dyn Sink) -> Owner<H> {\n  $entry:\n    owner: Owner<H> = lcsos Owner<H>(sink: dyn Sink)\n    ret owner: Owner<H>\n}\n"
+    let dyn_edge_ir = emit_ir(parse_module_text("dynamic_node_edges", dyn_edge_source))
+    if !assert(dyn_edge_ir.contains("define void @__add_edges_dyn_Sink")) { ret 44_u32 }
+    if !assert(dyn_edge_ir.contains("define void @__remove_edges_dyn_Sink")) { ret 45_u32 }
+    if !assert(dyn_edge_ir.contains("call void @__add_edges_NodeSink")) { ret 46_u32 }
+    if !assert(dyn_edge_ir.contains("call void @__remove_edges_NodeSink")) { ret 47_u32 }
 
     let inline_source = "enum Maybe[T] {\n  Some(T)\n  None\n}\n\nfn make_number(value: u64) -> Maybe[u64] {\n  $entry:\n    result: Maybe[u64] = capenum Maybe[u64]::Some(value)\n    ret result: Maybe[u64]\n}\n\nfn read_number(value: Maybe[u64]) -> u64 {\n  $entry:\n    payload: u64 = getfield value > Some\n    ret payload: u64\n}\n"
     let inline_ir = emit_ir(parse_module_text("inline_enum_payload", inline_source))
@@ -46,5 +107,11 @@ fn main() -> u32 {
     let repeated_setfield_ir = emit_ir(parse_module_text("repeated_setfield", repeated_setfield_source))
     if !assert(repeated_setfield_ir.contains("%bb_entry_instruction_0_target_0_replacement_set_ptr")) { ret 25_u32 }
     if !assert(repeated_setfield_ir.contains("%bb_second_instruction_0_target_0_replacement_set_ptr")) { ret 26_u32 }
+
+    let bool_abi_source = "extern fn native_bool(value: bool) -> bool\n\nfn forward(value: bool) -> bool {\n  $entry:\n    result: bool = call native_bool(value: bool)\n    ret result: bool\n}\n"
+    let bool_abi_ir = emit_ir(parse_module_text("bool_c_abi", bool_abi_source))
+    if !assert(bool_abi_ir.contains("declare zeroext i1 @native_bool(i1 zeroext %value)")) { ret 57_u32 }
+    if !assert(bool_abi_ir.contains("define zeroext i1 @forward(i1 zeroext %value)")) { ret 58_u32 }
+    if !assert(bool_abi_ir.contains("call zeroext i1 @native_bool(i1 zeroext %value)")) { ret 59_u32 }
     ret 0_u32
 }

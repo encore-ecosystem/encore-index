@@ -1,0 +1,41 @@
+import core::vec::Vec
+
+extern fn encore_node_debug_live_count() -> usize
+
+struct Node {
+    children: Vec[Node<H>]
+}
+
+fn make_cycle() -> () {
+    let left = Node<H>{Vec[Node<H>]::new()}
+    let right = Node<H>{Vec[Node<H>]::new()}
+    left.children.push(right)
+    right.children.push(left)
+    ret ()
+}
+
+fn release_cycle_around(survivor: Node<H>) -> () {
+    let left = Node<H>{Vec[Node<H>]::new()}
+    let right = Node<H>{Vec[Node<H>]::new()}
+    left.children.push(right)
+    right.children.push(left)
+    left.children.push(survivor)
+    ret ()
+}
+
+fn preserves_external_survivor() -> bool {
+    let survivor = Node<H>{Vec[Node<H>]::new()}
+    release_cycle_around(survivor)
+    // The cycle is exclusively reachable and must be reclaimed, while this
+    // independently rooted descendant remains valid after its incoming edge
+    // from the released ERN transaction disappears.
+    ret survivor.children.len() == 0_usize
+}
+
+fn main() -> u32 {
+    let before = unsafe { encore_node_debug_live_count() }
+    make_cycle()
+    if !preserves_external_survivor() { ret 2_u32 }
+    let after = unsafe { encore_node_debug_live_count() }
+    ret if before == after { 0_u32 } else { 1_u32 }
+}

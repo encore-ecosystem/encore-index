@@ -11,5 +11,6 @@ fn main() -> u32 {
     if !assert(llvm_ir.contains("bb___async_edge_left_to_merge")) { ret 2_u32 }
     if !assert(llvm_ir.contains("bb___async_edge_right_to_merge")) { ret 3_u32 }
     if !assert(!llvm_ir.contains("@__ehir_phi")) { ret 4_u32 }
+    if !assert(llvm_ir.contains(" = phi ")) { ret 5_u32 }
     ret 0_u32
 }

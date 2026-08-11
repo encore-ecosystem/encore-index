@@ -2,8 +2,9 @@ import core::option::Option
 import core::result::Result
 import std::vec::Vec
 
-import refrain::core::{Module, Directive, FnDirective, Block, Instruction, Terminator, Variable, Type, PointerKind, BinaryOpKind}
+import refrain::core::{Module, Directive, FnDirective, Block, Instruction, EdgeInstruction, Terminator, Variable, Type, RepresentationKind, BinaryOpKind}
 import refrain::coroutine::validate_coroutine_moves
+import refrain::string_set::{StringSet, string_set_with_capacity, string_set_contains, string_set_contains_or_insert}
 
 pub fn validate_module(module: Module) -> Result[Module, str] {
     for directive in module.directives {
@@ -40,13 +41,12 @@ fn validate_function(function: FnDirective) -> Option[str] {
         ret invalid(function.name, "function must contain at least one block")
     }
 
-    let mut labels = Vec[str]::new()
+    let mut labels = string_set_with_capacity(function.blocks.len())
     for block_item in function.blocks {
         if block_item.name == "" { ret invalid(function.name, "block name must not be empty") }
-        if contains(labels, block_item.name) {
+        if string_set_contains_or_insert(labels, block_item.name) {
             ret invalid(function.name, "duplicate block '" + block_item.name + "'")
         }
-        labels.push(block_item.name)
     }
 
     match validate_phi_nodes(function) {
@@ -60,13 +60,12 @@ fn validate_function(function: FnDirective) -> Option[str] {
         }
     }
 
-    let mut definitions = Vec[str]::new()
+    let mut definitions = string_set_with_capacity(function_value_count(function))
     for parameter in function.params {
         if parameter.name == "" { ret invalid(function.name, "parameter name must not be empty") }
-        if contains(definitions, parameter.name) {
+        if string_set_contains_or_insert(definitions, parameter.name) {
             ret invalid(function.name, "duplicate value '" + parameter.name + "'")
         }
-        definitions.push(parameter.name)
     }
 
     for block_item in function.blocks {
@@ -74,10 +73,9 @@ fn validate_function(function: FnDirective) -> Option[str] {
             match instruction_output(instruction) {
                 Some(name) => {
                     if name == "" { ret invalid(function.name, "instruction output name must not be empty") }
-                    if contains(definitions, name) {
+                    if string_set_contains_or_insert(definitions, name) {
                         ret invalid(function.name, "duplicate value '" + name + "'")
                     }
-                    definitions.push(name)
                 }
                 None => {}
             }
@@ -94,6 +92,14 @@ fn validate_function(function: FnDirective) -> Option[str] {
     ret Option[str]::None
 }
 
+fn function_value_count(function: FnDirective) -> usize {
+    let mut count = function.params.len()
+    for block_item in function.blocks {
+        count += block_item.instructions.len()
+    }
+    ret count
+}
+
 fn validate_instruction(function_name: str, is_async: bool, instruction: Instruction) -> Option[str] {
     match instruction {
         Instruction::Store(item) => {
@@ -101,7 +107,7 @@ fn validate_instruction(function_name: str, is_async: bool, instruction: Instruc
             match required_type(function_name, item.dst) {
                 None => { ret missing_type(function_name, item.dst.name) }
                 Some(dst_type) => {
-                    if !is_pointer(dst_type) { ret invalid(function_name, "store destination '" + item.dst.name + "' is not a pointer") }
+                    if !is_memory_place(dst_type) { ret invalid(function_name, "store destination '" + item.dst.name + "' is not a raw address or local place") }
                     match required_type(function_name, item.src) {
                         Some(src_type) => { if !same_value_type(src_type, dst_type) { ret invalid(function_name, "store source and destination types do not match") } }
                         None => {}
@@ -113,7 +119,7 @@ fn validate_instruction(function_name: str, is_async: bool, instruction: Instruc
             match required_type(function_name, item.src) {
                 None => { ret missing_type(function_name, item.src.name) }
                 Some(src_type) => {
-                    if !is_pointer(src_type) { ret invalid(function_name, "load source '" + item.src.name + "' is not a pointer") }
+                    if !is_memory_place(src_type) { ret invalid(function_name, "load source '" + item.src.name + "' is not a raw address or local place") }
                     match required_type(function_name, item.out) {
                         Some(out_type) => { if !same_value_type(out_type, src_type) { ret invalid(function_name, "load result and source types do not match") } }
                         None => { ret missing_type(function_name, item.out.name) }
@@ -124,9 +130,52 @@ fn validate_instruction(function_name: str, is_async: bool, instruction: Instruc
         Instruction::SetField(item) => {
             match required_type(function_name, item.src) {
                 None => { ret missing_type(function_name, item.src.name) }
-                Some(src_type) => { if !is_pointer(src_type) { ret invalid(function_name, "setfield target '" + item.src.name + "' is not a pointer") } }
+                Some(src_type) => { if !is_field_place(src_type) { ret invalid(function_name, "setfield target '" + item.src.name + "' is neither a node handle nor an addressable place") } }
             }
             if !has_type(item.value) { ret missing_type(function_name, item.value.name) }
+        }
+        Instruction::Lcsos(item) => {
+            match required_type(function_name, item.out) {
+                None => { ret missing_type(function_name, item.out.name) }
+                Some(out_type) => {
+                    if !same_type(out_type, item.typ) { ret invalid(function_name, "lcsos result type does not match its construction type") }
+                    if !is_constructible_value_or_node(item.typ) {
+                        ret invalid(function_name, "lcsos requires inline, <S>, or <H> placement; '&' is placement-erased and cannot be constructed")
+                    }
+                }
+            }
+            for argument in item.args { if !has_type(argument) { ret missing_type(function_name, argument.name) } }
+        }
+        Instruction::StackAlloc(item) => {
+            match required_type(function_name, item.out) {
+                Some(out_type) => { if !is_raw_address(out_type) { ret invalid(function_name, "salloc result must be a raw address") } }
+                None => { ret missing_type(function_name, item.out.name) }
+            }
+            // salloc reserves storage *for a value*.  The stored value may be
+            // an inline aggregate, a node handle, a raw address, or the
+            // transitional LocalPlace used before local-to-SSA lowering.
+            // Placement of the storage is not placement of the referenced
+            // node, so restricting this to Inline rejects valid coroutine
+            // spill slots and conflates two independent concepts.
+        }
+        Instruction::HeapAlloc(item) => {
+            match required_type(function_name, item.out) {
+                Some(out_type) => { if !is_raw_address(out_type) { ret invalid(function_name, "halloc result must be a raw address") } }
+                None => { ret missing_type(function_name, item.out.name) }
+            }
+            // Like salloc, halloc allocates untyped storage for one value; a
+            // handle stored there keeps its own node placement semantics.
+        }
+        Instruction::HeapRealloc(item) => {
+            match required_type(function_name, item.out) {
+                Some(out_type) => { if !is_raw_address(out_type) { ret invalid(function_name, "hrealloc result must be a raw address") } }
+                None => { ret missing_type(function_name, item.out.name) }
+            }
+            match required_type(function_name, item.src) {
+                Some(src_type) => { if !is_raw_address(src_type) { ret invalid(function_name, "hrealloc source must be a raw address") } }
+                None => { ret missing_type(function_name, item.src.name) }
+            }
+            if !has_type(item.count) { ret missing_type(function_name, item.count.name) }
         }
         Instruction::Binary(item) => {
             match required_type(function_name, item.lhs) {
@@ -155,19 +204,54 @@ fn validate_instruction(function_name: str, is_async: bool, instruction: Instruc
         }
         Instruction::HeapFree(item) => {
             match required_type(function_name, item.src) {
-                Some(src_type) => { if !is_pointer(src_type) { ret invalid(function_name, "hfree operand is not a pointer") } }
+                Some(src_type) => { if !is_raw_address(src_type) { ret invalid(function_name, "hfree operand is not a raw address") } }
                 None => { ret missing_type(function_name, item.src.name) }
             }
         }
-        Instruction::Drop(item) => { if !has_type(item.value) { ret missing_type(function_name, item.value.name) } }
-        Instruction::Retain(item) => { if !has_type(item.value) { ret missing_type(function_name, item.value.name) } }
+        Instruction::Cfree(item) => {
+            match required_type(function_name, item.value) {
+                Some(value_type) => { if !is_node_handle(value_type) { ret invalid(function_name, "cfree requires an owning node handle") } }
+                None => { ret missing_type(function_name, item.value.name) }
+            }
+        }
+        Instruction::AddEdge(item) => { ret validate_edge_instruction(function_name, item) }
+        Instruction::RemoveEdge(item) => { ret validate_edge_instruction(function_name, item) }
+        Instruction::Drop(item) => {
+            match required_type(function_name, item.value) {
+                Some(value_type) => { if is_memory_place(value_type) { ret invalid(function_name, "drop cannot consume a raw address or local place") } }
+                None => { ret missing_type(function_name, item.value.name) }
+            }
+        }
+        Instruction::Retain(item) => {
+            match required_type(function_name, item.value) {
+                Some(value_type) => { if is_memory_place(value_type) { ret invalid(function_name, "retain cannot copy a raw address or local place") } }
+                None => { ret missing_type(function_name, item.value.name) }
+            }
+        }
         _ => {}
     }
     ret Option[str]::None
 }
 
+fn validate_edge_instruction(function_name: str, item: EdgeInstruction) -> Option[str] {
+    match required_type(function_name, item.owner) {
+        Some(owner_type) => {
+            if !is_node_handle(owner_type) {
+                ret invalid(function_name, "graph edge owner must be an owning node handle")
+            }
+        }
+        None => { ret missing_type(function_name, item.owner.name) }
+    }
+    if !has_type(item.value) { ret missing_type(function_name, item.value.name) }
+    ret Option[str]::None
+}
+
 fn validate_phi_nodes(function: FnDirective) -> Option[str] {
     for block_item in function.blocks {
+        // Most lowered Encore blocks do not contain a phi. Computing their
+        // predecessor list scans the complete CFG, so doing it unconditionally
+        // made validation quadratic for large generated state machines.
+        if !block_has_phi(block_item) { continue }
         let predecessors = predecessor_names(function.blocks, block_item.name)
         let mut saw_non_phi = false
         for instruction in block_item.instructions {
@@ -175,7 +259,7 @@ fn validate_phi_nodes(function: FnDirective) -> Option[str] {
                 Instruction::Phi(item) => {
                     if saw_non_phi { ret invalid(function.name, "phi instructions must appear at the start of block '" + block_item.name + "'") }
                     if item.pairs.len() != predecessors.len() { ret invalid(function.name, "phi in block '" + block_item.name + "' must have one value for every predecessor") }
-                    let mut out_type = Type{"usize", Vec[Type]::new(), PointerKind::Plain}
+                    let mut out_type = Type{"usize", Vec[Type]::new(), RepresentationKind::Inline}
                     match required_type(function.name, item.out) {
                         Some(typ) => { out_type = typ }
                         None => { ret missing_type(function.name, item.out.name) }
@@ -196,6 +280,16 @@ fn validate_phi_nodes(function: FnDirective) -> Option[str] {
         }
     }
     ret Option[str]::None
+}
+
+fn block_has_phi(block_item: Block) -> bool {
+    for instruction in block_item.instructions {
+        match instruction {
+            Instruction::Phi(_) => { ret true }
+            _ => {}
+        }
+    }
+    ret false
 }
 
 fn predecessor_names(blocks: Vec[Block], target: str) -> Vec[str] {
@@ -223,7 +317,7 @@ fn terminator_targets(terminator: Terminator, target: str) -> bool {
     ret false
 }
 
-fn validate_terminator(function: FnDirective, block_item: Block, labels: Vec[str]) -> Option[str] {
+fn validate_terminator(function: FnDirective, block_item: Block, labels: mut StringSet) -> Option[str] {
     match block_item.terminator {
         Terminator::Ret(item) => {
             match required_type(function.name, item.value) {
@@ -235,24 +329,24 @@ fn validate_terminator(function: FnDirective, block_item: Block, labels: Vec[str
                 }
             }
         }
-        Terminator::Br(item) => { if !contains(labels, item.label) { ret invalid(function.name, "branch targets unknown block '" + item.label + "'") } }
+        Terminator::Br(item) => { if !string_set_contains(labels, item.label) { ret invalid(function.name, "branch targets unknown block '" + item.label + "'") } }
         Terminator::Cbr(item) => {
             match required_type(function.name, item.cond) {
                 Some(cond_type) => { if !is_plain_named(cond_type, "bool") { ret invalid(function.name, "conditional branch condition must have type 'bool'") } }
                 None => { ret missing_type(function.name, item.cond.name) }
             }
-            if !contains(labels, item.true_label) { ret invalid(function.name, "branch targets unknown block '" + item.true_label + "'") }
-            if !contains(labels, item.false_label) { ret invalid(function.name, "branch targets unknown block '" + item.false_label + "'") }
+            if !string_set_contains(labels, item.true_label) { ret invalid(function.name, "branch targets unknown block '" + item.true_label + "'") }
+            if !string_set_contains(labels, item.false_label) { ret invalid(function.name, "branch targets unknown block '" + item.false_label + "'") }
         }
         Terminator::Match(item) => {
             if !has_type(item.scrutinee) { ret missing_type(function.name, item.scrutinee.name) }
-            if !contains(labels, item.default_label) { ret invalid(function.name, "match targets unknown block '" + item.default_label + "'") }
-            for arm in item.arms { if !contains(labels, arm.label) { ret invalid(function.name, "match targets unknown block '" + arm.label + "'") } }
+            if !string_set_contains(labels, item.default_label) { ret invalid(function.name, "match targets unknown block '" + item.default_label + "'") }
+            for arm in item.arms { if !string_set_contains(labels, arm.label) { ret invalid(function.name, "match targets unknown block '" + arm.label + "'") } }
         }
         Terminator::Switch(item) => {
             if !has_type(item.scrutinee) { ret missing_type(function.name, item.scrutinee.name) }
-            if !contains(labels, item.default_label) { ret invalid(function.name, "switch targets unknown block '" + item.default_label + "'") }
-            for case_item in item.cases { if !contains(labels, case_item.label) { ret invalid(function.name, "switch targets unknown block '" + case_item.label + "'") } }
+            if !string_set_contains(labels, item.default_label) { ret invalid(function.name, "switch targets unknown block '" + item.default_label + "'") }
+            for case_item in item.cases { if !string_set_contains(labels, case_item.label) { ret invalid(function.name, "switch targets unknown block '" + case_item.label + "'") } }
         }
         Terminator::Unreachable => {}
     }
@@ -329,28 +423,49 @@ fn same_type_name(lhs: str, rhs: str) -> bool {
 }
 
 fn same_type(lhs: Type, rhs: Type) -> bool {
-    if !same_pointer(lhs.pointer, rhs.pointer) { ret false }
+    if !same_representation(lhs.representation, rhs.representation) { ret false }
     ret same_value_type(lhs, rhs)
 }
 
-fn same_pointer(lhs: PointerKind, rhs: PointerKind) -> bool {
+fn same_representation(lhs: RepresentationKind, rhs: RepresentationKind) -> bool {
     match lhs {
-        PointerKind::Plain => { match rhs { PointerKind::Plain => { ret true } _ => { ret false } } }
-        PointerKind::Stack => { match rhs { PointerKind::Stack => { ret true } _ => { ret false } } }
-        PointerKind::Heap => { match rhs { PointerKind::Heap => { ret true } _ => { ret false } } }
-        PointerKind::Raw => { match rhs { PointerKind::Raw => { ret true } _ => { ret false } } }
+        RepresentationKind::Inline => { match rhs { RepresentationKind::Inline => { ret true } _ => { ret false } } }
+        RepresentationKind::NodeStack => { match rhs { RepresentationKind::NodeStack => { ret true } _ => { ret false } } }
+        RepresentationKind::NodeHeap => { match rhs { RepresentationKind::NodeHeap => { ret true } _ => { ret false } } }
+        RepresentationKind::NodeAny => { match rhs { RepresentationKind::NodeAny => { ret true } _ => { ret false } } }
+        RepresentationKind::Raw => { match rhs { RepresentationKind::Raw => { ret true } _ => { ret false } } }
+        RepresentationKind::LocalPlace => { match rhs { RepresentationKind::LocalPlace => { ret true } _ => { ret false } } }
     }
     ret false
 }
 
-fn is_pointer(typ: Type) -> bool {
-    match typ.pointer { PointerKind::Plain => { ret false } _ => { ret true } }
-    ret false
+fn is_raw_address(typ: Type) -> bool {
+    ret typ.representation == RepresentationKind::Raw
+}
+
+fn is_memory_place(typ: Type) -> bool {
+    ret typ.representation == RepresentationKind::Raw || typ.representation == RepresentationKind::LocalPlace
+}
+
+fn is_node_handle(typ: Type) -> bool {
+    ret typ.representation == RepresentationKind::NodeStack ||
+        typ.representation == RepresentationKind::NodeHeap ||
+        typ.representation == RepresentationKind::NodeAny
+}
+
+fn is_field_place(typ: Type) -> bool {
+    ret is_node_handle(typ) || is_memory_place(typ)
+}
+
+fn is_constructible_value_or_node(typ: Type) -> bool {
+    ret typ.representation == RepresentationKind::Inline ||
+        typ.representation == RepresentationKind::NodeStack ||
+        typ.representation == RepresentationKind::NodeHeap
 }
 
 fn is_plain_named(typ: Type, name: str) -> bool {
     if typ.name != name { ret false }
-    match typ.pointer { PointerKind::Plain => { ret true } _ => { ret false } }
+    match typ.representation { RepresentationKind::Inline => { ret true } _ => { ret false } }
     ret false
 }
 

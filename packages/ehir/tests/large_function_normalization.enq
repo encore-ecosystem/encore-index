@@ -1,0 +1,59 @@
+import core::fmt::Debug
+import core::result::Result
+import core::testing::assert
+
+import ehirlib::{Directive, Instruction}
+import ehirlib::parse_module_text
+import ehirlib::normalize_control_flow
+import ehirlib::validate_module
+
+// Large generated state machines deliberately bypass the quadratic
+// slot-at-a-time mem2reg pass.  They must still validate, and every physical
+// stack allocation must be hoisted to the entry block so a loop cannot grow
+// the native stack once per iteration.
+fn main() -> u32 {
+    let mut source = "extern fn observe(value: u32*) -> ()\n\nfn generated(keep_going: bool) -> () {\n  $entry:\n    br $loop\n  $loop:\n    slot: u32* = salloc u32\n"
+    let mut index = 0_usize
+    while index < 520_usize {
+        let name = Debug::fmt(index)
+        source = source + "    value_" + name + ": u32 = lcpos 1_u32\n"
+        index += 1_usize
+    }
+    source = source + "    store value_519, slot\n    ignored: () = call observe(slot)\n    cbr keep_going, $loop, $done\n  $done:\n    ret void: ()\n}\n"
+
+    match validate_module(normalize_control_flow(
+        parse_module_text("large_function_normalization", source),)) {
+        Result::Ok(module) => {
+            for directive in module.directives {
+                match directive {
+                    Directive::Function(function) => {
+                        if function.name == "generated" {
+                            let mut block_index = 0_usize
+                            let mut allocation_count = 0_usize
+                            let mut allocation_block = 999_usize
+                            for block_item in function.blocks {
+                                for instruction in block_item.instructions {
+                                    match instruction {
+                                        Instruction::StackAlloc(_) => {
+                                            allocation_count += 1_usize
+                                            allocation_block = block_index
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                block_index += 1_usize
+                            }
+                            if !assert(allocation_count == 1_usize) { ret 1_u32 }
+                            if !assert(allocation_block == 0_usize) { ret 2_u32 }
+                            ret 0_u32
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            ret 3_u32
+        }
+        Result::Err(_) => { ret 4_u32 }
+    }
+    ret 5_u32
+}

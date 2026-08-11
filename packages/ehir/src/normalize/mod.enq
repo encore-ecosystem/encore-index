@@ -1,0 +1,674 @@
+//! Canonical control-flow normalization for EHIR.
+//!
+//! Encore may emit convenient multi-return state machines. Canonical EHIR has
+//! one normal exit, so ownership and last-use passes only need to close one
+//! outgoing function state.
+
+import core::option::Option
+import core::fmt::Debug
+import std::vec::Vec
+
+import refrain::core::*
+import refrain::string_set::{StringSet, string_set_with_capacity, string_set_contains, string_set_contains_or_insert}
+
+pub fn normalize_control_flow(module: Module) -> Module {
+    let mut directives = Vec[Directive]::new()
+    for directive in module.directives {
+        match directive {
+            Directive::Function(function) => {
+                directives.push(Directive::Function(normalize_function_control_flow(function)))
+            }
+            Directive::Impl(item) => {
+                let mut methods = Vec[FnDirective]::new()
+                for method in item.methods {
+                    methods.push(normalize_function_control_flow(method))
+                }
+                directives.push(impl_directive(
+                    item.generics,
+                    item.trait_name,
+                    item.trait_args,
+                    item.for_type,
+                    methods
+                ))
+            }
+            _ => { directives.push(directive) }
+        }
+    }
+    ret make_module_with_metadata(
+        module.name,
+        module.imports,
+        module.documentation,
+        module.symbol_documentation,
+        directives
+    )
+}
+
+pub fn normalize_function_control_flow(function: FnDirective) -> FnDirective {
+    // Canonicalize exits first, then promote non-escaping local places. The
+    // promotion workspace is borrowed and replacement vectors own their graph
+    // explicitly, so the pass no longer creates overlapping transient owners
+    // while iterating to a fixed point.
+    let normalized = normalize_returns(function)
+    // The source-level mem2reg pass rewrites one candidate at a time and is
+    // intentionally conservative. Its cost is quadratic on generated
+    // compiler/editor mega-functions (hundreds of seconds for one function),
+    // while LLVM already performs the same promotion in optimized profiles.
+    // Keep the precise EHIR transform for ordinary functions; for very large
+    // state machines, hoist all remaining slots once and let LLVM promote
+    // them. Hoisting preserves the bounded-stack invariant in O(n).
+    if function_instruction_count(normalized) > 512_usize {
+        ret hoist_remaining_stack_slots(normalized)
+    }
+    ret hoist_remaining_stack_slots(promote_local_stack_slots(normalized))
+}
+
+/// Gives every physical stack slot one function-lifetime allocation.
+///
+/// LLVM `alloca` executed in a loop grows the native stack on every
+/// iteration and is not reclaimed until the function returns. Slots that
+/// mem2reg cannot promote (for example because their address is passed to a
+/// synchronous callee) therefore have to dominate the CFG. EHIR stack-place
+/// variables are unique per function, so moving their allocation to the
+/// entry block preserves the address and all load/store semantics.
+fn hoist_remaining_stack_slots(function: FnDirective) -> FnDirective {
+    if function.is_extern || function.blocks.len() == 0_usize { ret function }
+
+    let mut allocations = Vec[Instruction]::new()
+    for block_item in function.blocks {
+        for instruction in block_item.instructions {
+            match instruction {
+                Instruction::StackAlloc(_) => { allocations.push(instruction) }
+                _ => {}
+            }
+        }
+    }
+    if allocations.len() == 0_usize { ret function }
+
+    let mut blocks = Vec[Block]::new()
+    let mut first = true
+    for block_item in function.blocks {
+        let mut instructions = Vec[Instruction]::new()
+        if first {
+            instructions.extend(allocations)
+            first = false
+        }
+        for instruction in block_item.instructions {
+            match instruction {
+                Instruction::StackAlloc(_) => {}
+                _ => { instructions.push(instruction) }
+            }
+        }
+        blocks.push(block(block_item.name, instructions, block_item.terminator))
+    }
+    ret FnDirective{
+        function.name,
+        function.generics,
+        function.params,
+        function.ret_type,
+        blocks,
+        function.is_extern,
+        function.is_async
+    }
+}
+
+fn normalize_returns(function: FnDirective) -> FnDirective {
+    if function.is_extern { ret function }
+    if return_count(function.blocks) <= 1_usize { ret function }
+
+    let exit_label = unique_exit_label(function.blocks)
+    let exit_value_name = unique_exit_value_name(function)
+    let ret_type = function.ret_type
+    let mut return_pairs = Vec[PhiPair]::new()
+    let mut blocks = Vec[Block]::new()
+
+    for block_item in function.blocks {
+        match block_item.terminator {
+            Terminator::Ret(return_item) => {
+                return_pairs.push(phi_pair(return_item.value, block_item.name))
+                blocks.push(block(block_item.name, block_item.instructions, br_term(exit_label)))
+            }
+            _ => { blocks.push(block_item) }
+        }
+    }
+
+    let mut exit_instructions = Vec[Instruction]::new()
+    let mut exit_value = Variable{"void", Option[Type]::Some(ret_type)}
+    if !is_void_type(ret_type) {
+        exit_value = Variable{exit_value_name, Option[Type]::Some(ret_type)}
+        exit_instructions.push(phi(exit_value, return_pairs))
+    }
+    blocks.push(block(exit_label, exit_instructions, ret_term(exit_value)))
+
+    ret FnDirective{
+        function.name,
+        function.generics,
+        function.params,
+        ret_type,
+        blocks,
+        function.is_extern,
+        function.is_async
+    }
+}
+
+struct PromotionSlot {
+    address: Variable
+    value_type: Type
+}
+
+/// Promotes compiler-generated local stack slots to ordinary EHIR SSA values.
+///
+/// This deliberately handles only non-escaping slots whose address is used by
+/// `load` and `store`. Raw buffers, element pointers and addresses passed to
+/// calls remain memory. Join blocks receive explicit phi nodes, including loop
+/// headers, so the canonical result no longer relies on backend mem2reg.
+fn promote_local_stack_slots(function: FnDirective) -> FnDirective {
+    if function.is_extern { ret function }
+    let mut out = function
+    let slots = promotion_slots(out)
+    let instruction_count = function_instruction_count(out)
+    // The current precise phi placement is slot-at-a-time. Preserve valid raw
+    // stack storage when that algorithm would become quadratic on generated
+    // state machines (notably retained editor event loops). LLVM accepts the
+    // same explicit salloc/load/store semantics; a future batch mem2reg pass
+    // can remove this guard without changing the EHIR memory model.
+    if slots.len() > 0_usize && instruction_count > 0_usize {
+        if slots.len() > 25000_usize / instruction_count { ret out }
+    }
+    for slot in slots {
+        match promote_one_slot(out, slot) {
+            Some(promoted) => { out = promoted }
+            None => {}
+        }
+    }
+    ret out
+}
+
+fn promotion_slots(function: FnDirective) -> Vec[PromotionSlot] {
+    let mut candidates = Vec[PromotionSlot]::new()
+    for block_item in function.blocks {
+        for instruction in block_item.instructions {
+            match instruction {
+                Instruction::StackAlloc(item) => {
+                    candidates.push(PromotionSlot{item.out, item.typ})
+                }
+                _ => {}
+            }
+        }
+    }
+    if candidates.len() == 0_usize { ret candidates }
+
+    let mut invalid = string_set_with_capacity(function_instruction_count(function) * 3_usize)
+    for block_item in function.blocks {
+        for instruction in block_item.instructions {
+            mark_non_promotable_instruction_uses(invalid, instruction)
+        }
+        mark_non_promotable_terminator_uses(invalid, block_item.terminator)
+    }
+
+    let mut out = Vec[PromotionSlot]::new()
+    for slot in candidates {
+        if !string_set_contains(invalid, slot.address.name) { out.push(slot) }
+    }
+    ret out
+}
+
+fn function_instruction_count(function: FnDirective) -> usize {
+    let mut count = 0_usize
+    for block_item in function.blocks {
+        count += block_item.instructions.len()
+    }
+    ret count
+}
+
+fn mark_name(set: mut StringSet, name: str) -> () {
+    string_set_contains_or_insert(set, name)
+    ret ()
+}
+
+fn mark_variables(set: mut StringSet, values: Vec[Variable]) -> () {
+    for value in values { mark_name(set, value.name) }
+    ret ()
+}
+
+fn mark_non_promotable_instruction_uses(set: mut StringSet, instruction: Instruction) -> () {
+    match instruction {
+        Instruction::StackAlloc(_) => {}
+        Instruction::Store(item) => { mark_name(set, item.src.name) }
+        Instruction::Load(item) => { mark_name(set, item.out.name) }
+        Instruction::Alias(item) => { mark_name(set, item.src.name) }
+        Instruction::Lcsos(item) => { mark_variables(set, item.args) }
+        Instruction::Lceos(item) => { match item.value.payload { Some(value) => { mark_name(set, value.name) } None => {} } }
+        Instruction::Call(item) => { mark_variables(set, item.args) }
+        Instruction::Await(item) => { mark_name(set, item.future.name) }
+        Instruction::GetField(item) => { mark_name(set, item.src.name) }
+        Instruction::SetField(item) => { mark_name(set, item.src.name) mark_name(set, item.value.name) }
+        Instruction::GetFieldPtr(item) => { mark_name(set, item.src.name) }
+        Instruction::SGetField(item) => { mark_name(set, item.src.name) }
+        Instruction::SGetFieldPtr(item) => { mark_name(set, item.src.name) }
+        Instruction::GetPtr(item) => { mark_name(set, item.src.name) }
+        Instruction::Gep(item) => { mark_name(set, item.src.name) mark_name(set, item.offset.name) }
+        Instruction::PtrCast(item) => { mark_name(set, item.src.name) }
+        Instruction::HeapRealloc(item) => { mark_name(set, item.src.name) mark_name(set, item.count.name) }
+        Instruction::HeapFree(item) => { mark_name(set, item.src.name) }
+        Instruction::Put(item) => { mark_name(set, item.dst.name) }
+        Instruction::Binary(item) => { mark_name(set, item.lhs.name) mark_name(set, item.rhs.name) }
+        Instruction::Phi(item) => {
+            for pair in item.pairs { mark_name(set, pair.value.name) }
+        }
+        Instruction::Cfree(item) => { mark_name(set, item.value.name) }
+        Instruction::AddEdge(item) => { mark_name(set, item.owner.name) mark_name(set, item.value.name) }
+        Instruction::RemoveEdge(item) => { mark_name(set, item.owner.name) mark_name(set, item.value.name) }
+        Instruction::Drop(item) => { mark_name(set, item.value.name) }
+        Instruction::Retain(item) => { mark_name(set, item.value.name) }
+        _ => {}
+    }
+    ret ()
+}
+
+fn mark_non_promotable_terminator_uses(set: mut StringSet, terminator: Terminator) -> () {
+    match terminator {
+        Terminator::Ret(item) => { mark_name(set, item.value.name) }
+        Terminator::Cbr(item) => { mark_name(set, item.cond.name) }
+        Terminator::Match(item) => { mark_name(set, item.scrutinee.name) }
+        Terminator::Switch(item) => { mark_name(set, item.scrutinee.name) }
+        _ => {}
+    }
+    ret ()
+}
+
+fn promote_one_slot(function: FnDirective, slot: PromotionSlot) -> Option[FnDirective] {
+    let block_count = function.blocks.len()
+    let live_in = slot_live_in(function.blocks, slot.address.name)
+    let mut phi_values = Vec[Option[Variable]]::new()
+    let mut outgoing = Vec[Option[Variable]]::new()
+    let mut index = 0_usize
+    while index < block_count {
+        let predecessors = predecessor_labels(function.blocks, block_name_at(function.blocks, index))
+        if predecessors.len() > 1_usize && bool_at(live_in, index) {
+            phi_values.push(Option[Variable]::Some(Variable{
+                "__ssa_" + slot.address.name + "_" + block_name_at(function.blocks, index),
+                Option[Type]::Some(slot.value_type)
+            }))
+        } else {
+            phi_values.push(Option[Variable]::None)
+        }
+        outgoing.push(Option[Variable]::None)
+        index += 1_usize
+    }
+
+    // Phi values break cycles. Stop as soon as the symbolic outgoing values
+    // stabilize; the |blocks| + 1 bound is only a malformed-CFG safeguard.
+    let mut iteration = 0_usize
+    while iteration <= block_count {
+        let mut changed = false
+        let mut next_outgoing = Vec[Option[Variable]]::new()
+        index = 0_usize
+        while index < block_count {
+            match block_at(function.blocks, index) {
+                Some(block_item) => {
+                    let mut current = incoming_value(function.blocks, outgoing, phi_values, index)
+                    for instruction in block_item.instructions {
+                        match instruction {
+                            Instruction::Store(item) => {
+                                if item.dst.name == slot.address.name { current = Option[Variable]::Some(item.src) }
+                            }
+                            _ => {}
+                        }
+                    }
+                    if !same_optional_variable(option_at(outgoing, index), current) {
+                        changed = true
+                    }
+                    next_outgoing.push(current)
+                }
+                None => { next_outgoing.push(Option[Variable]::None) }
+            }
+            index += 1_usize
+        }
+        outgoing = next_outgoing
+        iteration += 1_usize
+        if !changed { break }
+    }
+
+    if !slot_flow_is_complete(function.blocks, slot.address.name, outgoing, phi_values) {
+        ret Option[FnDirective]::None
+    }
+
+    let mut blocks = Vec[Block]::new()
+    index = 0_usize
+    while index < block_count {
+        match block_at(function.blocks, index) {
+            Some(block_item) => {
+                let predecessors = predecessor_labels(function.blocks, block_item.name)
+                let mut instructions = Vec[Instruction]::new()
+                let mut current = incoming_value(function.blocks, outgoing, phi_values, index)
+                match option_at(phi_values, index) {
+                    Some(phi_value) => {
+                        let mut pairs = Vec[PhiPair]::new()
+                        for predecessor in predecessors {
+                            match outgoing_for_label(function.blocks, outgoing, predecessor) {
+                                Some(value) => { pairs.push(phi_pair(value, predecessor)) }
+                                None => {}
+                            }
+                        }
+                        instructions.push(phi(phi_value, pairs))
+                        current = Option[Variable]::Some(phi_value)
+                    }
+                    None => {}
+                }
+                for instruction in block_item.instructions {
+                    match instruction {
+                        Instruction::StackAlloc(item) => {
+                            if item.out.name != slot.address.name { instructions.push(instruction) }
+                        }
+                        Instruction::Store(item) => {
+                            if item.dst.name == slot.address.name {
+                                // Raw stack stores retain the assigned value.
+                                // Preserve that ownership edge after removing
+                                // the physical slot.
+                                if variable_needs_store_retain(item.src) {
+                                    instructions.push(retain_value(item.src))
+                                }
+                                current = Option[Variable]::Some(item.src)
+                            } else { instructions.push(instruction) }
+                        }
+                        Instruction::Load(item) => {
+                            if item.src.name == slot.address.name {
+                                match current {
+                                    Some(value) => { instructions.push(alias(item.out, value)) }
+                                    None => { instructions.push(instruction) }
+                                }
+                            } else { instructions.push(instruction) }
+                        }
+                        _ => { instructions.push(instruction) }
+                    }
+                }
+                blocks.push(block(block_item.name, instructions, block_item.terminator))
+            }
+            None => {}
+        }
+        index += 1_usize
+    }
+
+    ret Option[FnDirective]::Some(FnDirective{
+        function.name,
+        function.generics,
+        function.params,
+        function.ret_type,
+        blocks,
+        function.is_extern,
+        function.is_async
+    })
+}
+
+fn variable_needs_store_retain(value: Variable) -> bool {
+    match value.typ {
+        Some(typ) => {
+            ret typ.representation != RepresentationKind::Raw
+                && typ.representation != RepresentationKind::LocalPlace
+        }
+        None => { ret false }
+    }
+    ret false
+}
+
+fn slot_live_in(blocks: Vec[Block], slot_name: str) -> Vec[bool] {
+    // A join needs a phi only when the slot's previous value can reach a load;
+    // early-return paths must not manufacture undefined incoming values.
+    let mut live = Vec[bool]::new()
+    let mut index = 0_usize
+    while index < blocks.len() {
+        live.push(false)
+        index += 1_usize
+    }
+
+    let mut iteration = 0_usize
+    while iteration <= blocks.len() {
+        let mut changed = false
+        let mut next_live = Vec[bool]::new()
+        index = 0_usize
+        while index < blocks.len() {
+            match block_at(blocks, index) {
+                Some(block_item) => {
+                    let mut reads_before_store = false
+                    let mut stores = false
+                    for instruction in block_item.instructions {
+                        match instruction {
+                            Instruction::Load(item) => {
+                                if item.src.name == slot_name && !stores { reads_before_store = true }
+                            }
+                            Instruction::Store(item) => {
+                                if item.dst.name == slot_name { stores = true }
+                            }
+                            _ => {}
+                        }
+                    }
+                    let next = reads_before_store || (!stores && terminator_has_live_successor(blocks, block_item.terminator, live))
+                    if bool_at(live, index) != next {
+                        changed = true
+                    }
+                    next_live.push(next)
+                }
+                None => { next_live.push(false) }
+            }
+            index += 1_usize
+        }
+        live = next_live
+        iteration += 1_usize
+        if !changed { break }
+    }
+    ret live
+}
+
+fn terminator_has_live_successor(blocks: Vec[Block], terminator: Terminator, live: Vec[bool]) -> bool {
+    let mut index = 0_usize
+    for block_item in blocks {
+        if bool_at(live, index) && terminator_targets(terminator, block_item.name) { ret true }
+        index += 1_usize
+    }
+    ret false
+}
+
+fn bool_at(values: Vec[bool], index: usize) -> bool {
+    match values.get(index) { Some(value) => { ret value } None => {} }
+    ret false
+}
+
+fn same_optional_variable(left: Option[Variable], right: Option[Variable]) -> bool {
+    match left {
+        Some(left_value) => {
+            match right {
+                Some(right_value) => { ret left_value.name == right_value.name }
+                None => { ret false }
+            }
+        }
+        None => {
+            match right { Some(_) => { ret false } None => { ret true } }
+        }
+    }
+    ret false
+}
+
+fn slot_flow_is_complete(blocks: Vec[Block], slot_name: str,
+    outgoing: Vec[Option[Variable]], phi_values: Vec[Option[Variable]],) -> bool {
+    let mut index = 0_usize
+    while index < blocks.len() {
+        match block_at(blocks, index) {
+            Some(block_item) => {
+                let mut current = incoming_value(blocks, outgoing, phi_values, index)
+                match option_at(phi_values, index) { Some(value) => { current = Option[Variable]::Some(value) } None => {} }
+                for instruction in block_item.instructions {
+                    match instruction {
+                        Instruction::Store(item) => {
+                            if item.dst.name == slot_name { current = Option[Variable]::Some(item.src) }
+                        }
+                        Instruction::Load(item) => {
+                            if item.src.name == slot_name {
+                                match current { Some(_) => {} None => { ret false } }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                match option_at(phi_values, index) {
+                    Some(_) => {
+                        for predecessor in predecessor_labels(blocks, block_item.name) {
+                            match outgoing_for_label(blocks, outgoing, predecessor) {
+                                Some(_) => {} None => { ret false }
+                            }
+                        }
+                    }
+                    None => {}
+                }
+            }
+            None => {}
+        }
+        index += 1_usize
+    }
+    ret true
+}
+
+fn incoming_value(blocks: Vec[Block], outgoing: Vec[Option[Variable]],
+    phi_values: Vec[Option[Variable]], index: usize,) -> Option[Variable] {
+    match option_at(phi_values, index) { Some(value) => { ret Option[Variable]::Some(value) } None => {} }
+    let predecessors = predecessor_labels(blocks, block_name_at(blocks, index))
+    if predecessors.len() == 1_usize {
+        match predecessors.get(0_usize) {
+            Some(label) => { ret outgoing_for_label(blocks, outgoing, label) }
+            None => {}
+        }
+    }
+    ret Option[Variable]::None
+}
+
+fn predecessor_labels(blocks: Vec[Block], target: str) -> Vec[str] {
+    let mut out = Vec[str]::new()
+    for block_item in blocks {
+        if terminator_targets(block_item.terminator, target) { out.push(block_item.name) }
+    }
+    ret out
+}
+
+fn terminator_targets(terminator: Terminator, target: str) -> bool {
+    match terminator {
+        Terminator::Br(item) => { ret item.label == target }
+        Terminator::Cbr(item) => { ret item.true_label == target || item.false_label == target }
+        Terminator::Match(item) => {
+            if item.default_label == target { ret true }
+            for arm in item.arms { if arm.label == target { ret true } }
+        }
+        Terminator::Switch(item) => {
+            if item.default_label == target { ret true }
+            for case_item in item.cases { if case_item.label == target { ret true } }
+        }
+        _ => {}
+    }
+    ret false
+}
+
+fn outgoing_for_label(blocks: Vec[Block], outgoing: Vec[Option[Variable]], label: str) -> Option[Variable] {
+    let mut index = 0_usize
+    for block_item in blocks {
+        if block_item.name == label { ret option_at(outgoing, index) }
+        index += 1_usize
+    }
+    ret Option[Variable]::None
+}
+
+fn block_at(blocks: Vec[Block], index: usize) -> Option[Block] { ret blocks.get(index) }
+
+fn block_name_at(blocks: Vec[Block], index: usize) -> str {
+    match blocks.get(index) { Some(block_item) => { ret block_item.name } None => {} }
+    ret "__missing_block"
+}
+
+fn option_at(values: Vec[Option[Variable]], index: usize) -> Option[Variable] {
+    match values.get(index) { Some(value) => { ret value } None => {} }
+    ret Option[Variable]::None
+}
+
+fn return_count(blocks: Vec[Block]) -> usize {
+    let mut count = 0_usize
+    for block_item in blocks {
+        match block_item.terminator {
+            Terminator::Ret(_) => { count += 1_usize }
+            _ => {}
+        }
+    }
+    ret count
+}
+
+fn unique_exit_label(blocks: Vec[Block]) -> str {
+    let mut suffix = 0_usize
+    loop {
+        let candidate = if suffix == 0_usize {
+            "__ehir_exit"
+        } else {
+            "__ehir_exit_" + Debug::fmt(suffix)
+        }
+        if !contains_block_label(blocks, candidate) { ret candidate }
+        suffix += 1_usize
+    }
+    ret "__ehir_exit_unreachable"
+}
+
+fn unique_exit_value_name(function: FnDirective) -> str {
+    let mut suffix = 0_usize
+    loop {
+        let candidate = if suffix == 0_usize {
+            "__ehir_exit_value"
+        } else {
+            "__ehir_exit_value_" + Debug::fmt(suffix)
+        }
+        if !function_contains_value(function, candidate) { ret candidate }
+        suffix += 1_usize
+    }
+    ret "__ehir_exit_value_unreachable"
+}
+
+fn contains_block_label(blocks: Vec[Block], expected: str) -> bool {
+    for block_item in blocks { if block_item.name == expected { ret true } }
+    ret false
+}
+
+fn function_contains_value(function: FnDirective, expected: str) -> bool {
+    for parameter in function.params { if parameter.name == expected { ret true } }
+    for block_item in function.blocks {
+        for instruction in block_item.instructions {
+            match instruction_output_name(instruction) {
+                Some(name) => { if name == expected { ret true } }
+                None => {}
+            }
+        }
+    }
+    ret false
+}
+
+fn instruction_output_name(instruction: Instruction) -> Option[str] {
+    match instruction {
+        Instruction::Lcpos(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::Alias(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::Lcsos(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::Lceos(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::Call(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::Await(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::Load(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::GetField(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::GetFieldPtr(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::SGetField(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::SGetFieldPtr(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::GetPtr(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::Gep(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::PtrCast(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::StackAlloc(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::HeapAlloc(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::HeapRealloc(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::Binary(item) => { ret Option[str]::Some(item.out.name) }
+        Instruction::Phi(item) => { ret Option[str]::Some(item.out.name) }
+        _ => { ret Option[str]::None }
+    }
+    ret Option[str]::None
+}
+
+fn is_void_type(typ: Type) -> bool {
+    ret typ.representation == RepresentationKind::Inline && (typ.name == "void" || typ.name == "()")
+}

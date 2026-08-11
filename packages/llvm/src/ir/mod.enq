@@ -129,7 +129,7 @@ fn single_line(line: str) -> Vec[str] {
 
 fn render_function_signature(func: LLVMFunction, as_declare: bool) -> str {
     let prefix = signature_prefix(as_declare) + if as_declare || func.linkage == "" { "" } else { func.linkage + " " }
-    let typed_prefix = prefix + type_text(func.ret_type)
+    let typed_prefix = prefix + abi_return_type_text(func.ret_type)
     let with_name = typed_prefix + " @" + func.name
     let with_open = with_name + "("
     let with_params = with_open + render_params(func.params)
@@ -156,8 +156,22 @@ fn render_params(params: Vec[LLVMParam]) -> str {
 }
 
 fn render_param(param: LLVMParam) -> str {
-    let typed = type_text(param.typ) + " %"
+    let typed = abi_argument_type_text(param.typ) + " %"
     ret typed + param.name
+}
+
+// LLVM's i1 is the logical representation of EHIR bool, while the platform C
+// ABI passes bool in a full register. zeroext makes that boundary explicit.
+fn abi_return_type_text(typ: LLVMType) -> str {
+    let rendered = type_text(typ)
+    if rendered == "i1" { ret "zeroext i1" }
+    ret rendered
+}
+
+fn abi_argument_type_text(typ: LLVMType) -> str {
+    let rendered = type_text(typ)
+    if rendered == "i1" { ret "i1 zeroext" }
+    ret rendered
 }
 
 fn render_instruction_line(instr: LLVMInstruction) -> str {
@@ -230,6 +244,16 @@ fn render_instruction_line(instr: LLVMInstruction) -> str {
             let aggregate = type_text(value_type(extract_data.aggregate)) + " " + value_text(extract_data.aggregate)
             ret out + aggregate + ", " + extract_data.index
         }
+        Phi(phi_data) => {
+            let mut out = "  " + value_text(phi_data.out) + " = phi " + type_text(value_type(phi_data.out)) + " "
+            let mut first = true
+            for incoming in phi_data.incoming {
+                if !first { out = out + ", " }
+                out = out + "[ " + value_text(incoming.value) + ", %" + incoming.label + " ]"
+                first = false
+            }
+            ret out
+        }
     }
 }
 
@@ -261,10 +285,10 @@ fn render_call_instruction(
     callee: str,
     args: Vec[LLVMValue]
 ) -> str {
-    let with_ret = "call " + type_text(ret_type)
+    let with_ret = "call " + abi_return_type_text(ret_type)
     let with_name = with_ret + " @" + callee
     let with_open = with_name + "("
-    let with_args = with_open + render_typed_values(args)
+    let with_args = with_open + render_call_arguments(args)
     let call_expr = with_args + ")"
 
     match out {
@@ -276,6 +300,17 @@ fn render_call_instruction(
             ret "  " + call_expr
         }
     }
+}
+
+fn render_call_arguments(values: Vec[LLVMValue]) -> str {
+    let mut out = ""
+    let mut first = true
+    for value in values {
+        if !first { out = out + ", " }
+        out = out + abi_argument_type_text(value.typ) + " " + value_text(value)
+        first = false
+    }
+    ret out
 }
 
 fn render_typed_values(values: Vec[LLVMValue]) -> str {

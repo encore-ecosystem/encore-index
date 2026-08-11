@@ -1,0 +1,42 @@
+import core::result::Result
+import core::testing::assert
+
+import ehirlib::parse_module_text
+import ehirlib::validate_module
+
+fn main() -> u32 {
+    let valid = "struct Node {\n  value: u32\n}\n\nfn update(node: Node&, value: u32) -> () {\n  $entry:\n    setfield node: Node& > 0: usize, value: u32\n    ret void: ()\n}\n"
+    match validate_module(parse_module_text("valid_node_handle", valid)) {
+        Result::Ok(_) => {}
+        Result::Err(_) => { ret 1_u32 }
+    }
+
+    let construct_any = "struct Node {\n  value: u32\n}\n\nfn bad(value: u32) -> Node& {\n  $entry:\n    node: Node& = lcsos Node&(value: u32)\n    ret node: Node&\n}\n"
+    if !assert(rejects_with(construct_any, "cannot be constructed")) { ret 2_u32 }
+
+    let load_node = "struct Node {\n  value: u32\n}\n\nfn bad(node: Node&) -> Node {\n  $entry:\n    value: Node = load node: Node&\n    ret value: Node\n}\n"
+    if !assert(rejects_with(load_node, "raw address or local place")) { ret 3_u32 }
+
+    let free_raw_as_node = "fn bad(ptr: u8*) -> () {\n  $entry:\n    cfree ptr: u8*\n    ret void: ()\n}\n"
+    if !assert(rejects_with(free_raw_as_node, "owning node handle")) { ret 4_u32 }
+
+    let retain_raw = "fn bad(ptr: u8*) -> () {\n  $entry:\n    retain ptr: u8*\n    ret void: ()\n}\n"
+    if !assert(rejects_with(retain_raw, "raw address or local place")) { ret 5_u32 }
+
+    let valid_edges = "struct Node {\n  value: u32\n}\n\nfn update(owner: Node&, child: Node<H>) -> () {\n  $entry:\n    addedge owner: Node&, child: Node<H>\n    removeedge owner: Node&, child: Node<H>\n    ret void: ()\n}\n"
+    match validate_module(parse_module_text("valid_edges", valid_edges)) {
+        Result::Ok(_) => {}
+        Result::Err(_) => { ret 6_u32 }
+    }
+    let invalid_edge_owner = "struct Node {\n  value: u32\n}\n\nfn bad(owner: Node, child: Node<H>) -> () {\n  $entry:\n    addedge owner: Node, child: Node<H>\n    ret void: ()\n}\n"
+    if !assert(rejects_with(invalid_edge_owner, "owner must be an owning node handle")) { ret 7_u32 }
+    ret 0_u32
+}
+
+fn rejects_with(source: str, expected: str) -> bool {
+    match validate_module(parse_module_text("invalid_representation", source)) {
+        Result::Ok(_) => { ret false }
+        Result::Err(message) => { ret message.contains(expected) }
+    }
+    ret false
+}

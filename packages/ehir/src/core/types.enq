@@ -2,37 +2,49 @@ import core::option::Option
 import std::vec::Vec
 
 
-pub enum PointerKind {
-    Plain
-    Stack
-    Heap
+pub enum RepresentationKind {
+    Inline
+    NodeStack
+    NodeHeap
+    NodeAny
     Raw
+    // Transitional addressable local emitted before local-to-SSA lowering.
+    // This is a place category, not an EHIR value representation.
+    LocalPlace
 }
 
 pub struct Type {
     name: str
     generics: Vec[Type]
-    pointer: PointerKind
+    representation: RepresentationKind
 }
 
-pub fn make_type(name: str, generics: Vec[Type], pointer: PointerKind) -> Type {
-    ret Type{name, generics, pointer}
+pub fn make_type(name: str, generics: Vec[Type], representation: RepresentationKind) -> Type {
+    ret Type{name, generics, representation}
 }
 
 pub fn plain_type(name: str, generics: Vec[Type]) -> Type {
-    ret Type{name, generics, PointerKind::Plain}
+    ret Type{name, generics, RepresentationKind::Inline}
 }
 
 pub fn heap_type(inner: Type) -> Type {
-    ret Type{inner.name, inner.generics, PointerKind::Heap}
+    ret Type{inner.name, inner.generics, RepresentationKind::NodeHeap}
 }
 
 pub fn stack_type(inner: Type) -> Type {
-    ret Type{inner.name, inner.generics, PointerKind::Stack}
+    ret Type{inner.name, inner.generics, RepresentationKind::NodeStack}
+}
+
+pub fn any_node_type(inner: Type) -> Type {
+    ret Type{inner.name, inner.generics, RepresentationKind::NodeAny}
 }
 
 pub fn raw_type(inner: Type) -> Type {
-    ret Type{inner.name, inner.generics, PointerKind::Raw}
+    ret Type{inner.name, inner.generics, RepresentationKind::Raw}
+}
+
+pub fn local_place_type(inner: Type) -> Type {
+    ret Type{inner.name, inner.generics, RepresentationKind::LocalPlace}
 }
 
 fn join_mangled_generics(generics: Vec[Type]) -> str {
@@ -58,20 +70,28 @@ fn join_mangled_generics(generics: Vec[Type]) -> str {
 }
 
 pub fn mangle_type_name(typ: Type) -> str {
-    match typ.pointer {
-        PointerKind::Heap => {
+    match typ.representation {
+        RepresentationKind::NodeHeap => {
             let inner = plain_type(typ.name, typ.generics)
             ret mangle_type_name(inner) + "_H"
         }
-        PointerKind::Stack => {
+        RepresentationKind::NodeStack => {
             let inner = plain_type(typ.name, typ.generics)
             ret mangle_type_name(inner) + "_S"
         }
-        PointerKind::Raw => {
+        RepresentationKind::NodeAny => {
+            let inner = plain_type(typ.name, typ.generics)
+            ret mangle_type_name(inner) + "_A"
+        }
+        RepresentationKind::Raw => {
             let inner = plain_type(typ.name, typ.generics)
             ret mangle_type_name(inner) + "_ptr"
         }
-        PointerKind::Plain => {}
+        RepresentationKind::LocalPlace => {
+            let inner = plain_type(typ.name, typ.generics)
+            ret mangle_type_name(inner) + "_local"
+        }
+        RepresentationKind::Inline => {}
     }
 
     if typ.generics.len() == 0_usize {

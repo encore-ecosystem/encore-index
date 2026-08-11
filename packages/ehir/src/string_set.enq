@@ -1,0 +1,75 @@
+//! Small internal open-addressing set for EHIR pass-local symbol names.
+
+import std::vec::Vec
+
+pub struct StringSet {
+    slots: Vec[str]
+}
+
+pub fn string_set_with_capacity(expected: usize) -> StringSet {
+    let required = expected * 2_usize + 1_usize
+    let mut capacity = 16_usize
+    while capacity < required { capacity *= 2_usize }
+    let mut slots = Vec[str]::with_capacity(capacity)
+    let mut index = 0_usize
+    while index < capacity {
+        slots.push("")
+        index += 1_usize
+    }
+    ret StringSet{slots}
+}
+
+fn string_set_hash(value: str) -> u64 {
+    let mut hash = 1469598103934665603_u64
+    let mut index = 0_usize
+    while index < value.len() {
+        match value.get_byte(index) {
+            Some(byte) => { hash = (hash ^ byte as u64) * 1099511628211_u64 }
+            None => { break }
+        }
+        index += 1_usize
+    }
+    ret hash
+}
+
+pub fn string_set_contains(set: mut StringSet, value: str) -> bool {
+    if value == "" { ret false }
+    let mask = set.slots.len() - 1_usize
+    let mut index = (string_set_hash(value) as usize) & mask
+    loop {
+        match set.slots.get(index) {
+            Some(existing) => {
+                if existing == value { ret true }
+                if existing == "" { ret false }
+            }
+            None => { ret false }
+        }
+        index = (index + 1_usize) & mask
+    }
+    ret false
+}
+
+/// Inserts `value` and reports whether it was already present.
+///
+/// The set is an addressable pass-local workspace. Borrowing that workspace
+/// avoids creating and dropping a fresh owner of its `Vec[str]` graph for
+/// every value in the module.
+pub fn string_set_contains_or_insert(set: mut StringSet, value: str) -> bool {
+    if value == "" { ret false }
+    let mask = set.slots.len() - 1_usize
+    let mut index = (string_set_hash(value) as usize) & mask
+    loop {
+        match set.slots.get(index) {
+            Some(existing) => {
+                if existing == value { ret true }
+                if existing == "" {
+                    set.slots.set(index, value)
+                    ret false
+                }
+            }
+            None => { ret false }
+        }
+        index = (index + 1_usize) & mask
+    }
+    ret false
+}

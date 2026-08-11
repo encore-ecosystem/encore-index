@@ -1,0 +1,46 @@
+import core::result::Result
+import core::testing::assert
+
+import ehirlib::{Directive, Instruction}
+import ehirlib::parse_module_text
+import ehirlib::normalize_control_flow
+import ehirlib::validate_module
+
+fn main() -> u32 {
+    let source = "extern fn observe(value: u32*) -> ()\n\nfn loop_place(keep_going: bool) -> () {\n  $entry:\n    br $header\n  $header:\n    cbr keep_going, $body, $done\n  $body:\n    slot: u32* = salloc u32\n    one: u32 = lcpos 1_u32\n    store one, slot\n    ignored: () = call observe(slot)\n    br $header\n  $done:\n    ret void: ()\n}\n"
+    match validate_module(normalize_control_flow(
+        parse_module_text("stack_allocation_hoisting", source),)) {
+        Result::Ok(module) => {
+            for directive in module.directives {
+                match directive {
+                    Directive::Function(function) => {
+                        if function.name == "loop_place" {
+                            let mut block_index = 0_usize
+                            let mut allocation_count = 0_usize
+                            let mut allocation_block = 999_usize
+                            for block_item in function.blocks {
+                                for instruction in block_item.instructions {
+                                    match instruction {
+                                        Instruction::StackAlloc(_) => {
+                                            allocation_count += 1_usize
+                                            allocation_block = block_index
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                block_index += 1_usize
+                            }
+                            if !assert(allocation_count == 1_usize) { ret 1_u32 }
+                            if !assert(allocation_block == 0_usize) { ret 2_u32 }
+                            ret 0_u32
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            ret 3_u32
+        }
+        Result::Err(_) => { ret 4_u32 }
+    }
+    ret 5_u32
+}

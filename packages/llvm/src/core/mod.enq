@@ -85,6 +85,16 @@ pub struct LLVMExtractValueInstruction {
     index: str
 }
 
+pub struct LLVMPhiIncoming {
+    value: LLVMValue
+    label: str
+}
+
+pub struct LLVMPhiInstruction {
+    out: LLVMValue
+    incoming: Vec[LLVMPhiIncoming]
+}
+
 pub enum LLVMInstruction {
     Add(LLVMAddInstruction)
     Sub(LLVMSubInstruction)
@@ -98,6 +108,7 @@ pub enum LLVMInstruction {
     Cast(LLVMCastInstruction)
     InsertValue(LLVMInsertValueInstruction)
     ExtractValue(LLVMExtractValueInstruction)
+    Phi(LLVMPhiInstruction)
 }
 
 pub struct LLVMRetTerminator {
@@ -218,6 +229,14 @@ pub fn llvm_insertvalue_instruction(out: LLVMValue, aggregate: LLVMValue, value:
 
 pub fn llvm_extractvalue_instruction(out: LLVMValue, aggregate: LLVMValue, index: str) -> LLVMInstruction {
     ret LLVMInstruction::ExtractValue(LLVMExtractValueInstruction{out, aggregate, index})
+}
+
+pub fn llvm_phi_incoming(value: LLVMValue, label: str) -> LLVMPhiIncoming {
+    ret LLVMPhiIncoming{value, label}
+}
+
+pub fn llvm_phi_instruction(out: LLVMValue, incoming: Vec[LLVMPhiIncoming]) -> LLVMInstruction {
+    ret LLVMInstruction::Phi(LLVMPhiInstruction{out, incoming})
 }
 
 pub fn llvm_ret_term(value: Option[LLVMValue], ret_type: LLVMType) -> LLVMTerminator {

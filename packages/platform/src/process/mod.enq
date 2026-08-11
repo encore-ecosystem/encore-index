@@ -5,7 +5,86 @@ import core::vec::Vec
 extern fn encore_proc_exit(code: i32) -> i32
 extern fn encore_proc_run(command: str) -> i32
 extern fn encore_proc_run_args_parts(program: str, data: usize, len: usize) -> i32
-extern fn encore_proc_run_args_capture_parts(program: str, data: usize, len: usize, output_path: str) -> i32
+extern fn encore_proc_run_args_capture_parts(program: str, data: usize, len: usize, output_path: str)
+-> i32
+extern fn encore_proc_command_output_parts(program: str, data: usize, len: usize, cwd: str) -> str
+extern fn encore_proc_command_output_status() -> i32
+
+/// Captured output and termination status from a command.
+pub struct Output {
+    status: i32
+    captured: str
+}
+
+impl for Output {
+    /// Returns the process exit status, or `-1` when it could not be started.
+    pub fn code(self: Self) -> i32 {
+        ret self.status
+    }
+
+    /// Returns whether the command exited successfully.
+    pub fn success(self: Self) -> bool {
+        ret self.status == 0_i32
+    }
+
+    /// Returns stdout and stderr in their observed order.
+    pub fn text(self: Self) -> str {
+        ret self.captured
+    }
+}
+
+/// Builds a child process invocation without a shell.
+pub struct Command {
+    program: str
+    args: Vec[str]
+    working_directory: str
+}
+
+impl for Command {
+    /// Creates a command for `program`.
+    pub fn new(program: str) -> Self {
+        ret Self {
+            program, Vec[str]::new(), ""
+        }
+    }
+
+    /// Appends one argument verbatim.
+    pub fn arg(self: Self, value: str) -> Self {
+        let mut args = self.args
+        args.push(value)
+        ret Self {
+            self.program, args, self.working_directory
+        }
+    }
+
+    /// Selects the child working directory.
+    pub fn cwd(self: Self, value: str) -> Self {
+        ret Self {
+            self.program, self.args, value
+        }
+    }
+
+    /// Runs the command and captures stdout and stderr.
+    pub fn output(self: Self) -> Output {
+        let len = self.args.len()
+        let data = if len == 0_usize {
+            0_usize
+        } else {
+            unsafe {
+                self.args.get_handle(0_usize)
+            }
+        }
+        let captured = unsafe {
+            encore_proc_command_output_parts(self.program, data, len, self.working_directory)
+        }
+        let status = unsafe {
+            encore_proc_command_output_status()
+        }
+        ret Output {
+            status, captured
+        }
+    }
+}
 
 /// Performs the `exit` operation.
 pub fn exit(code: i32) -> i32 {
@@ -24,15 +103,31 @@ pub fn run(command: str) -> i32 {
 /// Performs the `run_args` operation.
 pub fn run_args(program: str, args: Vec[str]) -> i32 {
     let len = args.len()
-    let data = if len == 0_usize { 0_usize } else { unsafe { args.get_handle(0_usize) } }
-    unsafe { ret encore_proc_run_args_parts(program, data, len) }
+    let data = if len == 0_usize {
+        0_usize
+    } else {
+        unsafe {
+            args.get_handle(0_usize)
+        }
+    }
+    unsafe {
+        ret encore_proc_run_args_parts(program, data, len)
+    }
 }
 
 /// Performs the `run_args_capture` operation.
 pub fn run_args_capture(program: str, args: Vec[str], output_path: str) -> i32 {
     let len = args.len()
-    let data = if len == 0_usize { 0_usize } else { unsafe { args.get_handle(0_usize) } }
-    unsafe { ret encore_proc_run_args_capture_parts(program, data, len, output_path) }
+    let data = if len == 0_usize {
+        0_usize
+    } else {
+        unsafe {
+            args.get_handle(0_usize)
+        }
+    }
+    unsafe {
+        ret encore_proc_run_args_capture_parts(program, data, len, output_path)
+    }
 }
 
 /// Performs the `success_code` operation.

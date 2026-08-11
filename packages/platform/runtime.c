@@ -370,6 +370,41 @@ uint64_t encore_clock_ms(uint8_t kind) {
 #endif
 }
 
+uint64_t encore_clock_ns(uint8_t kind) {
+#ifdef _WIN32
+    if (kind == 0) {
+        FILETIME ft;
+        GetSystemTimeAsFileTime(&ft);
+        ULARGE_INTEGER value;
+        value.LowPart = ft.dwLowDateTime;
+        value.HighPart = ft.dwHighDateTime;
+        return (uint64_t)(value.QuadPart * 100ULL);
+    }
+
+    LARGE_INTEGER frequency;
+    LARGE_INTEGER counter;
+    if (QueryPerformanceFrequency(&frequency) && QueryPerformanceCounter(&counter) && frequency.QuadPart > 0) {
+        const uint64_t whole = (uint64_t)(counter.QuadPart / frequency.QuadPart);
+        const uint64_t remainder = (uint64_t)(counter.QuadPart % frequency.QuadPart);
+        return whole * 1000000000ULL +
+               (remainder * 1000000000ULL) / (uint64_t)frequency.QuadPart;
+    }
+    return (uint64_t)GetTickCount64() * 1000000ULL;
+#else
+    struct timespec ts;
+    clockid_t clock_kind = kind == 0 ? CLOCK_REALTIME : CLOCK_MONOTONIC;
+    if (clock_gettime(clock_kind, &ts) == 0) {
+        return ((uint64_t)ts.tv_sec * 1000000000ULL) + (uint64_t)ts.tv_nsec;
+    }
+
+    struct timeval tv;
+    if (gettimeofday(&tv, NULL) == 0) {
+        return ((uint64_t)tv.tv_sec * 1000000000ULL) + ((uint64_t)tv.tv_usec * 1000ULL);
+    }
+    return 0;
+#endif
+}
+
 bool encore_sleep_ms(uint64_t ms) {
 #ifdef _WIN32
     Sleep((DWORD)ms);
@@ -1478,6 +1513,129 @@ int32_t encore_proc_run_args_capture_parts(encore_str program, size_t raw_args, 
     int32_t result = encore_proc_run_args_impl(program, raw_args, args_len, output_c);
     free(output_c);
     return result;
+}
+
+#ifdef _WIN32
+__declspec(thread) static int32_t g_proc_output_status = -1;
+#else
+static _Thread_local int32_t g_proc_output_status = -1;
+#endif
+
+static void encore_proc_free_argv(char **argv, size_t args_len) {
+    if (argv == NULL) return;
+    for (size_t index = 0; index < args_len + 1; index += 1) free(argv[index]);
+    free(argv);
+}
+
+static char **encore_proc_make_argv(encore_str program, size_t raw_args, size_t args_len) {
+    encore_str *args = (encore_str *)(uintptr_t)raw_args;
+    char **argv = calloc(args_len + 2, sizeof(char *));
+    if (argv == NULL) return NULL;
+    argv[0] = encore_to_cstr(program);
+    if (argv[0] == NULL) { free(argv); return NULL; }
+    for (size_t index = 0; index < args_len; index += 1) {
+        argv[index + 1] = encore_to_cstr(args[index]);
+        if (argv[index + 1] == NULL) {
+            encore_proc_free_argv(argv, index);
+            return NULL;
+        }
+    }
+    return argv;
+}
+
+encore_str encore_proc_command_output_parts(encore_str program, size_t raw_args, size_t args_len, encore_str cwd) {
+    g_proc_output_status = -1;
+    char **argv = encore_proc_make_argv(program, raw_args, args_len);
+    char *cwd_c = encore_to_cstr(cwd);
+    if (argv == NULL || cwd_c == NULL) {
+        encore_proc_free_argv(argv, args_len);
+        free(cwd_c);
+        return encore_empty_str();
+    }
+
+#ifdef _WIN32
+    /* Windows support keeps the current directory unchanged. A non-empty cwd
+       is rejected until the CreateProcessW implementation lands. */
+    if (cwd_c[0] != '\0') {
+        encore_proc_free_argv(argv, args_len);
+        free(cwd_c);
+        return encore_empty_str();
+    }
+    FILE *capture = tmpfile();
+    if (capture == NULL) {
+        encore_proc_free_argv(argv, args_len);
+        free(cwd_c);
+        return encore_empty_str();
+    }
+    int capture_fd = _fileno(capture), saved_stdout = _dup(1), saved_stderr = _dup(2);
+    if (capture_fd >= 0 && saved_stdout >= 0 && saved_stderr >= 0 &&
+        _dup2(capture_fd, 1) == 0 && _dup2(capture_fd, 2) == 0) {
+        intptr_t status = _spawnvp(_P_WAIT, argv[0], (const char *const *)argv);
+        if (status >= 0 && status <= INT32_MAX) g_proc_output_status = (int32_t)status;
+    }
+    fflush(stdout); fflush(stderr);
+    if (saved_stdout >= 0) { _dup2(saved_stdout, 1); _close(saved_stdout); }
+    if (saved_stderr >= 0) { _dup2(saved_stderr, 2); _close(saved_stderr); }
+    fseek(capture, 0, SEEK_END);
+    long captured_size = ftell(capture);
+    rewind(capture);
+    char *buffer = captured_size > 0 ? malloc((size_t)captured_size + 1) : NULL;
+    size_t used = buffer == NULL ? 0 : fread(buffer, 1, (size_t)captured_size, capture);
+    fclose(capture);
+#else
+    int descriptors[2];
+    if (pipe(descriptors) != 0) {
+        encore_proc_free_argv(argv, args_len);
+        free(cwd_c);
+        return encore_empty_str();
+    }
+    pid_t child = fork();
+    if (child == 0) {
+        close(descriptors[0]);
+        if (dup2(descriptors[1], STDOUT_FILENO) < 0 || dup2(descriptors[1], STDERR_FILENO) < 0) _Exit(126);
+        close(descriptors[1]);
+        if (cwd_c[0] != '\0' && chdir(cwd_c) != 0) _Exit(126);
+        execvp(argv[0], argv);
+        _Exit(127);
+    }
+    close(descriptors[1]);
+    char *buffer = NULL;
+    size_t used = 0, capacity = 0;
+    if (child > 0) {
+        char chunk[4096];
+        ssize_t count = 0;
+        while ((count = read(descriptors[0], chunk, sizeof(chunk))) > 0) {
+            size_t required = used + (size_t)count + 1;
+            if (required > capacity) {
+                size_t next = capacity == 0 ? 4096 : capacity * 2;
+                while (next < required) next *= 2;
+                char *grown = realloc(buffer, next);
+                if (grown == NULL) { free(buffer); buffer = NULL; used = 0; break; }
+                buffer = grown; capacity = next;
+            }
+            memcpy(buffer + used, chunk, (size_t)count);
+            used += (size_t)count;
+        }
+        int status = 0;
+        if (waitpid(child, &status, 0) >= 0) {
+            if (WIFEXITED(status)) g_proc_output_status = WEXITSTATUS(status);
+            else if (WIFSIGNALED(status)) g_proc_output_status = 128 + WTERMSIG(status);
+        }
+    }
+    close(descriptors[0]);
+#endif
+    encore_proc_free_argv(argv, args_len);
+    free(cwd_c);
+    if (buffer == NULL || used == 0) {
+        free(buffer);
+        return encore_empty_str();
+    }
+    buffer[used] = '\0';
+    return encore_from_owned_buffer(buffer, used);
+}
+
+int32_t encore_proc_command_output_status(void) {
+    return g_proc_output_status;
 }
 
 /* Compatibility with bootstrap objects emitted before Vec extern arguments

@@ -2,11 +2,23 @@ import core::option::Option
 import core::panic::panic
 import core::fmt::Debug
 import std::vec::Vec
+import std::thread::JoinHandle
 
 extern fn encore_str_slice_bytes(value: str, start: usize, byte_len: usize) -> str
 extern fn encore_text_builder_new() -> usize
 extern fn encore_text_builder_append(builder: usize, value: str) -> ()
 extern fn encore_text_builder_finish(builder: usize) -> str
+
+/// Stable textual input for one virtual EHIR module in a bundle.
+pub struct EhirModuleSource {
+    module_id: str
+    text: str
+}
+
+impl for EhirModuleSource {
+    pub fn id(self: Self) -> str { ret self.module_id }
+    pub fn source(self: Self) -> str { ret self.text }
+}
 
 fn byte_slice(value: str, start: usize, byte_len: usize) -> str {
     ret unsafe { encore_str_slice_bytes(value, start, byte_len) }
@@ -25,7 +37,7 @@ fn join_line_range(lines: Vec[str], start: usize, end: usize) -> str {
     ret unsafe { encore_text_builder_finish(builder) }
 }
 
-import refrain::core::PointerKind
+import refrain::core::RepresentationKind
 import refrain::core::Type
 import refrain::core::Parameter
 import refrain::core::Variable
@@ -60,6 +72,8 @@ import refrain::core::halloc
 import refrain::core::hfree
 import refrain::core::hrealloc
 import refrain::core::cfree
+import refrain::core::add_edge
+import refrain::core::remove_edge
 import refrain::core::drop_value
 import refrain::core::retain_value
 import refrain::core::add
@@ -115,27 +129,54 @@ import refrain::core::trait_method
 import refrain::core::trait_directive
 import refrain::core::impl_directive
 
+/// A parsed EHIR bundle together with the exact per-module textual sources
+/// from which it was built. Compiler drivers use this typed boundary to feed a
+/// backend without scanning and parsing the complete bundle a second time,
+/// while the source slices remain available for persistent cache identities.
+pub struct ParsedModuleBundle {
+    typed_bundle: ModuleBundle
+    module_sources: Vec[EhirModuleSource]
+}
+
+struct ScannedModuleBundle {
+    entry_module: str
+    module_sources: Vec[EhirModuleSource]
+}
+
+struct ParsedModuleChunk {
+    index: usize
+    module: Module
+}
+
+impl for ParsedModuleBundle {
+    pub fn bundle(self: Self) -> ModuleBundle { ret self.typed_bundle }
+    pub fn sources(self: Self) -> Vec[EhirModuleSource] { ret self.module_sources }
+}
+
 pub fn parse_type_text(source: str) -> Type {
     let mut value = trim_text(source)
-    let mut pointer = PointerKind::Plain
+    let mut representation = RepresentationKind::Inline
     if starts_with_text(value, "mut ") {
-        pointer = PointerKind::Stack
+        // Transitional pre-SSA spelling emitted by the Encore frontend.
+        // It denotes an addressable local place, never a stack object node.
+        // The local-to-SSA pass removes it before canonical EHIR.
+        representation = RepresentationKind::LocalPlace
         value = trim_text(value.slice(4_usize, value.len() - 4_usize))
     }
     elif ends_with_text(value, "<H>") {
-        pointer = PointerKind::Heap
+        representation = RepresentationKind::NodeHeap
         value = trim_text(value.slice(0_usize, value.len() - 3_usize))
     }
     elif ends_with_text(value, "<S>") {
-        pointer = PointerKind::Stack
+        representation = RepresentationKind::NodeStack
         value = trim_text(value.slice(0_usize, value.len() - 3_usize))
     }
     elif ends_with_text(value, "*") {
-        pointer = PointerKind::Raw
+        representation = RepresentationKind::Raw
         value = trim_text(value.slice(0_usize, value.len() - 1_usize))
     }
     elif ends_with_text(value, "&") {
-        pointer = PointerKind::Raw
+        representation = RepresentationKind::NodeAny
         value = trim_text(value.slice(0_usize, value.len() - 1_usize))
     }
 
@@ -146,7 +187,7 @@ pub fn parse_type_text(source: str) -> Type {
             items.push(parse_type_text(part))
         }
         if items.len() > 1_usize {
-            ret make_type("__tuple_" + Debug::fmt(items.len()), items, pointer)
+            ret make_type("__tuple_" + Debug::fmt(items.len()), items, representation)
         }
     }
 
@@ -155,7 +196,7 @@ pub fn parse_type_text(source: str) -> Type {
         if value.len() == 0_usize {
             panic("EHIR type must not be empty")
         }
-        ret make_type(value, Vec[Type]::new(), pointer)
+        ret make_type(value, Vec[Type]::new(), representation)
     }
     if !ends_with_text(value, "]") {
         panic("Unclosed EHIR generic type: " + source)
@@ -167,7 +208,7 @@ pub fn parse_type_text(source: str) -> Type {
     for part in split_top_level_text(inner, ",") {
         generics.push(parse_type_text(part))
     }
-    ret make_type(name, generics, pointer)
+    ret make_type(name, generics, representation)
 }
 
 pub fn parse_parameter_text(source: str) -> Parameter {
@@ -226,6 +267,14 @@ pub fn parse_instruction_text(source: str) -> Instruction {
     }
     if starts_with_text(value, "cfree ") {
         ret cfree(parse_variable_text(trim_text(value.slice(6_usize, value.len() - 6_usize))))
+    }
+    if starts_with_text(value, "addedge ") {
+        let operands = split_top_level_text(value.slice(8_usize, value.len() - 8_usize), ",")
+        ret add_edge(parse_variable_text(required_part(operands, 0_usize)), parse_variable_text(required_part(operands, 1_usize)))
+    }
+    if starts_with_text(value, "removeedge ") {
+        let operands = split_top_level_text(value.slice(11_usize, value.len() - 11_usize), ",")
+        ret remove_edge(parse_variable_text(required_part(operands, 0_usize)), parse_variable_text(required_part(operands, 1_usize)))
     }
     if starts_with_text(value, "drop ") {
         ret drop_value(parse_variable_text(trim_text(value.slice(5_usize, value.len() - 5_usize))))
@@ -306,9 +355,20 @@ pub fn parse_instruction_text(source: str) -> Instruction {
     }
     if opcode == "getfield" || opcode == "getfieldptr" || opcode == "sgetfield" || opcode == "sgetfieldptr" {
         let separator = find_text(operands_text, " > ")
-        if separator >= operands_text.len() { panic("Malformed EHIR field instruction: " + source) }
-        let src = parse_variable_text(trim_text(operands_text.slice(0_usize, separator)))
-        let field = parse_variable_text(trim_text(operands_text.slice(separator + 3_usize, operands_text.len() - separator - 3_usize)))
+        let mut src_text = ""
+        let mut field_text = ""
+        if separator < operands_text.len() {
+            src_text = trim_text(operands_text.slice(0_usize, separator))
+            field_text = trim_text(operands_text.slice(separator + 3_usize,
+                operands_text.len() - separator - 3_usize))
+        } else {
+            let operands = split_top_level_text(operands_text, ",")
+            if operands.len() != 2_usize { panic("Malformed EHIR field instruction: " + source) }
+            src_text = required_part(operands, 0_usize)
+            field_text = required_part(operands, 1_usize)
+        }
+        let src = parse_variable_text(src_text)
+        let field = parse_variable_text(field_text)
         if opcode == "getfield" { ret getfield(out, src, field) }
         if opcode == "getfieldptr" { ret getfieldptr(out, src, field) }
         if opcode == "sgetfield" { ret sgetfield(out, src, field) }
@@ -367,7 +427,7 @@ pub fn parse_terminator_text(source: str) -> Terminator {
     if starts_with_text(value, "cbr ") {
         let operands = split_top_level_text(value.slice(4_usize, value.len() - 4_usize), ",")
         ret cbr_term(
-            untyped_var(required_part(operands, 0_usize)),
+            parse_variable_text(required_part(operands, 0_usize)),
             strip_label(required_part(operands, 1_usize)),
             strip_label(required_part(operands, 2_usize))
         )
@@ -579,6 +639,8 @@ fn resolve_instruction_types(instruction: Instruction, known: Vec[Parameter]) ->
         }
         Instruction::HeapFree(data) => { ret hfree(resolve_variable_type(data.src, known)) }
         Instruction::Cfree(data) => { ret cfree(resolve_variable_type(data.value, known)) }
+        Instruction::AddEdge(data) => { ret add_edge(resolve_variable_type(data.owner, known), resolve_variable_type(data.value, known)) }
+        Instruction::RemoveEdge(data) => { ret remove_edge(resolve_variable_type(data.owner, known), resolve_variable_type(data.value, known)) }
         Instruction::Drop(data) => { ret drop_value(resolve_variable_type(data.value, known)) }
         Instruction::Retain(data) => { ret retain_value(resolve_variable_type(data.value, known)) }
         _ => { ret instruction }
@@ -759,10 +821,61 @@ fn directive_name(directive: Directive) -> str {
     }
 }
 
-pub fn parse_module_bundle_text(entry_module: str, source: str) -> ModuleBundle {
+/// Parses a bundle once and returns both its typed graph and stable module
+/// source records. This is the preferred compiler/backend process boundary.
+pub fn parse_module_bundle_artifact(entry_module: str, source: str) -> ParsedModuleBundle {
+    let scanned = scan_module_bundle_text(entry_module, source)
+    let mut modules = Vec[Module]::new()
+    for module_source in scanned.module_sources {
+        modules.push(parse_module_source_record(module_source))
+    }
+    ret ParsedModuleBundle{
+        make_module_bundle(scanned.entry_module, modules), scanned.module_sources
+    }
+}
+
+/// Parses independent module bodies concurrently while preserving their
+/// source order in the returned bundle. The parser uses the caller's complete
+/// `--jobs` budget, capped only by the number of independent modules.
+pub fn parse_module_bundle_artifact_parallel(entry_module: str, source: str,
+    requested_jobs: usize,) -> ParsedModuleBundle {
+    let scanned = scan_module_bundle_text(entry_module, source)
+    let worker_count = module_parse_jobs(requested_jobs, scanned.module_sources.len())
+    if worker_count <= 1_usize {
+        let mut modules = Vec[Module]::new()
+        for module_source in scanned.module_sources {
+            modules.push(parse_module_source_record(module_source))
+        }
+        ret ParsedModuleBundle{
+            make_module_bundle(scanned.entry_module, modules), scanned.module_sources
+        }
+    }
+    let mut pending = Vec[JoinHandle[Vec[ParsedModuleChunk]]]::new()
+    let mut worker = 0_usize
+    while worker < worker_count {
+        pending.push(spawn parse_module_source_batch(
+            scanned.module_sources, worker, worker_count,))
+        worker += 1_usize
+    }
+    let mut chunks = Vec[ParsedModuleChunk]::new()
+    for handle in pending { chunks.extend(handle.join()) }
+    let mut modules = Vec[Module]::new()
+    let mut index = 0_usize
+    while index < scanned.module_sources.len() {
+        for chunk in chunks {
+            if chunk.index == index { modules.push(chunk.module) }
+        }
+        index += 1_usize
+    }
+    ret ParsedModuleBundle{
+        make_module_bundle(scanned.entry_module, modules), scanned.module_sources
+    }
+}
+
+fn scan_module_bundle_text(entry_module: str, source: str) -> ScannedModuleBundle {
     let lines = split_lines_text(source)
     let mut entry = entry_module
-    let mut modules = Vec[Module]::new()
+    let mut sources = Vec[EhirModuleSource]::new()
     let mut index = 0_usize
     while index < lines.len() {
         let line = trim_text(required_part(lines, index))
@@ -776,19 +889,59 @@ pub fn parse_module_bundle_text(entry_module: str, source: str) -> ModuleBundle 
         if !starts_with_text(line, "module ") || !ends_with_text(line, " {") {
             panic("Malformed EHIR module header: " + line)
         }
+        let module_start = index
         let module_id = trim_text(line.slice(7_usize, line.len() - 9_usize))
         if module_id == "" { panic("EHIR module id must not be empty") }
-        let start = index + 1_usize
         let mut depth = brace_delta(line)
-        index = start
+        index += 1_usize
         while index < lines.len() && depth > 0_isize {
             depth = depth + brace_delta(required_part(lines, index))
             index = index + 1_usize
         }
         if depth != 0_isize { panic("Unclosed EHIR module: " + module_id) }
-        modules.push(parse_module_text(module_id, join_line_range(lines, start, index - 1_usize)))
+        sources.push(EhirModuleSource{module_id, join_line_range(lines, module_start, index)})
     }
-    ret make_module_bundle(entry, modules)
+    ret ScannedModuleBundle{entry, sources}
+}
+
+fn parse_module_source_record(source: EhirModuleSource) -> Module {
+    let lines = split_lines_text(source.text)
+    if lines.len() < 2_usize { panic("Malformed EHIR module: " + source.module_id) }
+    ret parse_module_text(source.module_id, join_line_range(lines, 1_usize, lines.len() - 1_usize))
+}
+
+fn parse_module_source_batch(sources: Vec[EhirModuleSource], worker_index: usize,
+    worker_count: usize,) -> Vec[ParsedModuleChunk] {
+    let mut out = Vec[ParsedModuleChunk]::new()
+    let mut index = worker_index
+    while index < sources.len() {
+        match sources.get(index) {
+            Some(source) => {
+                out.push(ParsedModuleChunk{index, parse_module_source_record(source)})
+            }
+            None => {}
+        }
+        index += worker_count
+    }
+    ret out
+}
+
+fn module_parse_jobs(requested: usize, module_count: usize) -> usize {
+    if module_count == 0_usize { ret 1_usize }
+    let mut jobs = if requested == 0_usize { 1_usize } else { requested }
+    if jobs > module_count { jobs = module_count }
+    ret jobs
+}
+
+pub fn parse_module_bundle_text(entry_module: str, source: str) -> ModuleBundle {
+    ret parse_module_bundle_artifact(entry_module, source).bundle()
+}
+
+/// Splits a bundle with the same brace-aware scanner as the parser. This lets
+/// incremental backends fingerprint individual module inputs without
+/// serializing the parsed graph back to text.
+pub fn split_module_bundle_text(source: str) -> Vec[EhirModuleSource] {
+    ret scan_module_bundle_text("", source).module_sources
 }
 
 pub fn parse_trait_text(source: str) -> Directive {
@@ -851,6 +1004,11 @@ pub fn parse_impl_text(source: str) -> Directive {
             continue
         }
         if starts_with_text(line, "///") {
+            index = index + 1_usize
+            continue
+        }
+        if starts_with_text(line, "extern fn ") {
+            methods.push(parse_function_text(line))
             index = index + 1_usize
             continue
         }

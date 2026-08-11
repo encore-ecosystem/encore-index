@@ -1,0 +1,12 @@
+[project]
+name = "lsp"
+version = "0.2.0"
+repository = "https://github.com/encore-ecosystem/encore-index"
+encore = ">=0.2.0, <0.3.0"
+description = "Encore language server implemented in Encore"
+readme = "README.md"
+licence = "MIT"
+dependencies = [
+    "path@../../encore",
+    "path@../packages/json"
+]

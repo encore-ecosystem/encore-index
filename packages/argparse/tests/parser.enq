@@ -1,0 +1,60 @@
+import core::option::Option
+import core::vec::Vec
+import refrain::{CommandSpec, OptionSpec, ParseOutcome, ParsedArgs, parse}
+
+fn main() -> u32 {
+    if !parses_flags_values_and_positionals() { ret 1_u32 }
+    if !preserves_repeated_values_and_rest() { ret 2_u32 }
+    if !rejects_unknown_options() { ret 3_u32 }
+    ret 0_u32
+}
+
+fn parses_flags_values_and_positionals() -> bool {
+    let spec = CommandSpec::new("build")
+        .option(OptionSpec::flag("--verbose", "-v", "verbose output"))
+        .option(OptionSpec::value("--profile", "-p", "name", "profile"))
+        .positionals(1_usize, 1_usize)
+    let mut args = Vec[str]::new()
+    args.push("--verbose")
+    args.push("--profile")
+    args.push("release")
+    args.push("project")
+    match parse(spec, args) {
+        ParseOutcome::Ok(parsed) => {
+            ret parsed.has("--verbose") && parsed.value("--profile", "") == "release"
+                && parsed.positional(0_usize) == Option[str]::Some("project")
+        }
+        ParseOutcome::Err(_) => { ret false }
+    }
+}
+
+fn preserves_repeated_values_and_rest() -> bool {
+    let spec = CommandSpec::new("run")
+        .option(OptionSpec::repeated("--feature", "", "name", "feature"))
+        .rest(true)
+    let mut args = Vec[str]::new()
+    args.push("--feature")
+    args.push("one")
+    args.push("--")
+    args.push("program")
+    args.push("arg")
+    match parse(spec, args) {
+        ParseOutcome::Ok(parsed) => {
+            let values = parsed.values("--feature")
+            let rest = parsed.rest()
+            ret values.len() == 1_usize && values.get(0_usize) == Option[str]::Some("one")
+                && rest.len() == 2_usize && rest.get(1_usize) == Option[str]::Some("arg")
+        }
+        ParseOutcome::Err(_) => { ret false }
+    }
+}
+
+fn rejects_unknown_options() -> bool {
+    let spec = CommandSpec::new("check")
+    let mut args = Vec[str]::new()
+    args.push("--unknown")
+    match parse(spec, args) {
+        ParseOutcome::Ok(_) => { ret false }
+        ParseOutcome::Err(error) => { ret error == "unknown option '--unknown'" }
+    }
+}

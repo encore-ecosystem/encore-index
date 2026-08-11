@@ -1,6 +1,7 @@
 //! Provides clocks, counters, and sleeping.
 
 extern fn encore_clock_ms(kind: u8) -> u64
+extern fn encore_clock_ns(kind: u8) -> u64
 extern fn encore_sleep_ms(ms: u64) -> bool
 
 /// Performs the `time` operation.
@@ -31,5 +32,12 @@ pub fn sleep_ms(ms: u64) -> bool {
 pub fn perf_counter_ms() -> u64 {
     unsafe {
         ret encore_clock_ms(1_u8)
+    }
+}
+
+/// Returns the monotonic high-resolution counter in nanoseconds.
+pub fn perf_counter_ns() -> u64 {
+    unsafe {
+        ret encore_clock_ns(1_u8)
     }
 }

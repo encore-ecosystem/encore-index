@@ -4,4 +4,4 @@ version = "0.0.0"
 description = "LLVM IR builder for encore"
 readme = "README.md"
 licence = "MIT"
-dependencies = ["index@std@1.0.0"]
+dependencies = ["path@../std"]

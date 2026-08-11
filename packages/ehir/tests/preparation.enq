@@ -1,0 +1,17 @@
+import core::testing::assert
+
+import ehirlib::PreparationOutcome
+import ehirlib::parse_module_text
+import ehirlib::prepare_module
+
+fn main() -> u32 {
+    let source = "fn answer() -> u32 {\n  $entry:\n    value: u32 = lcpos 42_u32\n    ret value: u32\n}\n"
+    match prepare_module(parse_module_text("preparation", source)) {
+        PreparationOutcome::Ready(module) => {
+            if !assert(module.name == "preparation") { ret 1_u32 }
+            if !assert(module.directives.len() == 1_usize) { ret 2_u32 }
+        }
+        PreparationOutcome::Error(_) => { ret 3_u32 }
+    }
+    ret 0_u32
+}

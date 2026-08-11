@@ -4,4 +4,4 @@ version = "0.0.0"
 description = ""
 readme = "README.md"
 licence = "MIT"
-dependencies = ["index@std@1.0.0"]
+dependencies = ["path@../std"]

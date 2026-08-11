@@ -1,0 +1,203 @@
+import encore::frontend::TokenType
+
+pub fn is_keyword_token(token_type: TokenType) -> bool {
+    match token_type {
+        TokenType::KW_FN => {
+            ret true
+        }
+        TokenType::KW_STRUCT => {
+            ret true
+        }
+        TokenType::KW_TRAIT => {
+            ret true
+        }
+        TokenType::KW_ENUM => {
+            ret true
+        }
+        TokenType::KW_IMPL => {
+            ret true
+        }
+        TokenType::KW_FOR => {
+            ret true
+        }
+        TokenType::KW_LET => {
+            ret true
+        }
+        TokenType::KW_MUT => {
+            ret true
+        }
+        TokenType::KW_RET => {
+            ret true
+        }
+        TokenType::KW_WHILE => {
+            ret true
+        }
+        TokenType::KW_LOOP => {
+            ret true
+        }
+        TokenType::KW_DO => {
+            ret true
+        }
+        TokenType::KW_CONTINUE => {
+            ret true
+        }
+        TokenType::KW_BREAK => {
+            ret true
+        }
+        TokenType::KW_IF => {
+            ret true
+        }
+        TokenType::KW_ELIF => {
+            ret true
+        }
+        TokenType::KW_ELSE => {
+            ret true
+        }
+        TokenType::KW_MATCH => {
+            ret true
+        }
+        TokenType::KW_PUB => {
+            ret true
+        }
+        TokenType::KW_IMPORT => {
+            ret true
+        }
+        TokenType::KW_AS => {
+            ret true
+        }
+        TokenType::KW_EXTERN => {
+            ret true
+        }
+        TokenType::KW_UNSAFE => {
+            ret true
+        }
+        TokenType::KW_EHIR => {
+            ret true
+        }
+        TokenType::BOOLEAN => {
+            ret true
+        }
+        _ => {
+            ret false
+        }
+    }
+}
+
+pub fn is_operator_token(token_type: TokenType) -> bool {
+    match token_type {
+        TokenType::SCOPE => {
+            ret true
+        }
+        TokenType::PLUS => {
+            ret true
+        }
+        TokenType::MINUS => {
+            ret true
+        }
+        TokenType::ASTERISK => {
+            ret true
+        }
+        TokenType::SLASH => {
+            ret true
+        }
+        TokenType::PERCENT => {
+            ret true
+        }
+        TokenType::EQUAL_EQUAL => {
+            ret true
+        }
+        TokenType::BANG_EQUAL => {
+            ret true
+        }
+        TokenType::LESS => {
+            ret true
+        }
+        TokenType::GREATER => {
+            ret true
+        }
+        TokenType::LESS_EQUAL => {
+            ret true
+        }
+        TokenType::GREATER_EQUAL => {
+            ret true
+        }
+        TokenType::AND_AND => {
+            ret true
+        }
+        TokenType::PIPE_PIPE => {
+            ret true
+        }
+        TokenType::BANG => {
+            ret true
+        }
+        TokenType::AMPERSAND => {
+            ret true
+        }
+        TokenType::PIPE => {
+            ret true
+        }
+        TokenType::CARET => {
+            ret true
+        }
+        TokenType::TILDE => {
+            ret true
+        }
+        TokenType::LEFT_SHIFT => {
+            ret true
+        }
+        TokenType::RIGHT_SHIFT => {
+            ret true
+        }
+        TokenType::ASSIGN => {
+            ret true
+        }
+        TokenType::PLUS_EQUAL => {
+            ret true
+        }
+        TokenType::MINUS_EQUAL => {
+            ret true
+        }
+        TokenType::ASTERISK_EQUAL => {
+            ret true
+        }
+        TokenType::SLASH_EQUAL => {
+            ret true
+        }
+        TokenType::PERCENT_EQUAL => {
+            ret true
+        }
+        TokenType::AMPERSAND_EQUAL => {
+            ret true
+        }
+        TokenType::PIPE_EQUAL => {
+            ret true
+        }
+        TokenType::CARET_EQUAL => {
+            ret true
+        }
+        TokenType::LEFT_SHIFT_EQUAL => {
+            ret true
+        }
+        TokenType::RIGHT_SHIFT_EQUAL => {
+            ret true
+        }
+        TokenType::INCREMENT => {
+            ret true
+        }
+        TokenType::DECREMENT => {
+            ret true
+        }
+        TokenType::QUESTION => {
+            ret true
+        }
+        TokenType::ARROW => {
+            ret true
+        }
+        TokenType::FAT_ARROW => {
+            ret true
+        }
+        _ => {
+            ret false
+        }
+    }
+}

@@ -1,0 +1,18 @@
+import core::testing:: *
+import std::process::Command
+
+fn main() -> u32 {
+    let captured = Command::new("sh")
+    .arg("-c")
+    .arg("printf zodiac; exit 7")
+    .output()
+    if !assert(captured.code() == 7_i32) || !assert(captured.text() == "zodiac") {
+        ret 1_u32
+    }
+
+    let located = Command::new("pwd").cwd(".").output()
+    if !assert(located.success()) || !assert(located.text().contains("packages/std")) {
+        ret 1_u32
+    }
+    ret 0_u32
+}

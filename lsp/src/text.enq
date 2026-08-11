@@ -1,0 +1,304 @@
+import core::option::Option
+
+extern fn encore_str_find_byte_from(value: str, needle: u8, start: usize) -> usize
+extern fn encore_str_line_start_byte(value: str, target_line: usize) -> usize
+
+pub fn utf16_len(value: str) -> usize {
+    let mut units = 0_usize
+    let mut index = 0_usize
+    while index < value.char_len() {
+        match value.get(index) {
+            Some(ch) => {
+                if (ch.byte_at(0_usize) as usize) >= 240_usize {
+                    units = units + 2_usize
+                } else {
+                    units = units + 1_usize
+                }
+            }
+            None => {
+            }
+        }
+        index = index + 1_usize
+    }
+    ret units
+}
+
+pub fn character_index_from_utf16(value: str, target_units: usize) -> usize {
+    let mut units = 0_usize
+    let mut index = 0_usize
+    while index < value.char_len() {
+        match value.get(index) {
+            Some(ch) => {
+                let width = if (ch.byte_at(0_usize) as usize) >= 240_usize {
+                    2_usize
+                } else {
+                    1_usize
+                }
+                if units + width > target_units {
+                    ret index
+                }
+                units = units + width
+            }
+            None => {
+            }
+        }
+        index = index + 1_usize
+    }
+    ret index
+}
+
+pub fn utf16_column(value: str, character_index: usize) -> usize {
+    let count = if character_index < value.char_len() {
+        character_index
+    } else {
+        value.char_len()
+    }
+    ret utf16_len(value.slice(0_usize, count))
+}
+
+pub fn line_text_at(text: str, target_line: usize) -> Option[str] {
+    let start = unsafe {
+        encore_str_line_start_byte(text, target_line)
+    }
+    if start > text.byte_len() {
+        ret Option[str]::None
+    }
+    let mut end = unsafe {
+        encore_str_find_byte_from(text, 10_u8, start)
+    }
+    if end > start && text.byte_at(end - 1_usize) == 13_u8 {
+        end -= 1_usize
+    }
+    ret Option[str]::Some(text.slice_bytes(start, end - start))
+}
+
+pub fn find_in_line_at_or_after(line: str, needle: str, start: usize) -> usize {
+    if needle.byte_len() == 0_usize {
+        ret start
+    }
+    if needle.byte_len() > line.byte_len() {
+        ret start
+    }
+    let mut byte_index = byte_index_for_character(line, start)
+    while byte_index + needle.byte_len() <= line.byte_len() {
+        if starts_at_byte(line, needle, byte_index) {
+            ret character_index_for_byte(line, byte_index)
+        }
+        byte_index += 1_usize
+    }
+    ret start
+}
+
+fn byte_index_for_character(value: str, character: usize) -> usize {
+    let mut byte_index = 0_usize
+    let mut index = 0_usize
+    while index < character && index < value.char_len() {
+        match value.get(index) {
+            Some(ch) => {
+                byte_index += ch.byte_len()
+            }
+            None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret byte_index
+}
+
+fn character_index_for_byte(value: str, target: usize) -> usize {
+    let mut byte_index = 0_usize
+    let mut character = 0_usize
+    while byte_index < target && character < value.char_len() {
+        match value.get(character) {
+            Some(ch) => {
+                byte_index += ch.byte_len()
+            }
+            None => {
+            }
+        }
+        character += 1_usize
+    }
+    ret character
+}
+
+fn starts_at_byte(value: str, needle: str, offset: usize) -> bool {
+    if offset + needle.byte_len() > value.byte_len() {
+        ret false
+    }
+    let mut index = 0_usize
+    while index < needle.byte_len() {
+        if value.byte_at(offset + index) != needle.byte_at(index) {
+            ret false
+        }
+        index += 1_usize
+    }
+    ret true
+}
+
+pub fn contains_substring(value: str, needle: str) -> bool {
+    if needle.char_len() == 0_usize {
+        ret true
+    }
+    if needle.char_len() > value.char_len() {
+        ret false
+    }
+    let mut index = 0_usize
+    while index + needle.char_len() <= value.char_len() {
+        if starts_at(value, needle, index) {
+            ret true
+        }
+        index += 1_usize
+    }
+    ret false
+}
+
+pub fn document_last_line(text: str) -> usize {
+    let mut line = 0_usize
+    let mut index = 0_usize
+    while index < text.char_len() {
+        match text.get(index) {
+            Option[str]::Some(ch) => {
+                if ch == "\n" {
+                    line += 1_usize
+                }
+            }
+            Option[str]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret line
+}
+
+pub fn trim_trailing_index(text: str) -> usize {
+    let mut end = text.char_len()
+    while end > 0_usize {
+        match text.get(end - 1_usize) {
+            Option[str]::Some(ch) => {
+                if ch == " " || ch == "\t" {
+                    end -= 1_usize
+                } else {
+                    ret end
+                }
+            }
+            Option[str]::None => {
+                ret end
+            }
+        }
+    }
+    ret end
+}
+
+pub fn parse_usize(value_text: str) -> usize {
+    let mut value = 0_usize
+    let mut index = 0_usize
+    while index < value_text.len() {
+        match value_text.get_byte_at(index) {
+            Option[u8]::Some(byte) => {
+                if byte >= 48_u8 && byte <= 57_u8 {
+                    value = value * 10_usize +((byte - 48_u8) as usize)
+                } else {
+                    ret value
+                }
+            }
+            Option[u8]::None => {
+                ret value
+            }
+        }
+        index += 1_usize
+    }
+    ret value
+}
+
+pub fn min_usize(left: usize, right: usize) -> usize {
+    if left < right {
+        ret left
+    }
+    ret right
+}
+
+pub fn is_identifier_name(value: str) -> bool {
+    if value.len() == 0_usize {
+        ret false
+    }
+    match value.get_byte_at(0_usize) {
+        Option[u8]::Some(first) => {
+            if !is_identifier_start_byte(first) {
+                ret false
+            }
+        }
+        Option[u8]::None => {
+            ret false
+        }
+    }
+
+    let mut index = 1_usize
+    while index < value.len() {
+        match value.get_byte_at(index) {
+            Option[u8]::Some(byte) => {
+                if !is_identifier_continue_byte(byte) {
+                    ret false
+                }
+            }
+            Option[u8]::None => {
+                ret false
+            }
+        }
+        index += 1_usize
+    }
+    ret true
+}
+
+fn is_identifier_start_byte(byte: u8) -> bool {
+    if byte >= 65_u8 && byte <= 90_u8 {
+        ret true
+    }
+    if byte >= 97_u8 && byte <= 122_u8 {
+        ret true
+    }
+    ret byte == 95_u8
+}
+
+fn is_identifier_continue_byte(byte: u8) -> bool {
+    if is_identifier_start_byte(byte) {
+        ret true
+    }
+    ret byte >= 48_u8 && byte <= 57_u8
+}
+
+fn starts_at(value: str, needle: str, offset: usize) -> bool {
+    if offset + needle.char_len() > value.char_len() {
+        ret false
+    }
+    let mut index = 0_usize
+    while index < needle.char_len() {
+        if value.get(offset + index).unwrap_or("") != needle.get(index).unwrap_or("") {
+            ret false
+        }
+        index += 1_usize
+    }
+    ret true
+}
+
+#attr(test)
+fn line_text_uses_byte_bounds_and_trims_cr() -> bool {
+    let source = "first\r\nПривет 😀\nthird"
+    match line_text_at(source, 1_usize) {
+        Some(line) => {
+            if line != "Привет 😀" {
+                ret false
+            }
+        }
+        None => {
+            ret false
+        }
+    }
+    match line_text_at(source, 3_usize) {
+        Some(_line) => {
+            ret false
+        }
+        None => {
+        }
+    }
+    ret true
+}

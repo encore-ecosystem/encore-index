@@ -166,6 +166,13 @@ pub struct CfreeInstruction {
     value: Variable
 }
 
+/// Updates the graph topology owned by `owner` for every node handle nested
+/// in `value`. The backend expands this structurally for aggregates.
+pub struct EdgeInstruction {
+    owner: Variable
+    value: Variable
+}
+
 pub struct DropInstruction {
     value: Variable
 }
@@ -236,6 +243,8 @@ pub enum Instruction {
     Put(PutInstruction)
     Binary(BinaryInstruction)
     Phi(PhiInstruction)
+    AddEdge(EdgeInstruction)
+    RemoveEdge(EdgeInstruction)
     Cfree(CfreeInstruction)
     Drop(DropInstruction)
     Retain(RetainInstruction)
@@ -420,6 +429,14 @@ pub fn phi(out: Variable, pairs: Vec[PhiPair]) -> Instruction {
 
 pub fn cfree(value: Variable) -> Instruction {
     ret Instruction::Cfree(CfreeInstruction{value})
+}
+
+pub fn add_edge(owner: Variable, value: Variable) -> Instruction {
+    ret Instruction::AddEdge(EdgeInstruction{owner, value})
+}
+
+pub fn remove_edge(owner: Variable, value: Variable) -> Instruction {
+    ret Instruction::RemoveEdge(EdgeInstruction{owner, value})
 }
 
 pub fn drop_value(value: Variable) -> Instruction {

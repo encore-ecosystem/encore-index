@@ -1,0 +1,61 @@
+import core::option::Option
+
+pub fn uri_to_path(uri: str) -> str {
+    let prefix = "file://"
+    if starts_with(uri, prefix) {
+        ret uri.slice(prefix.len(), uri.len() - prefix.len())
+    }
+    ret uri
+}
+
+pub fn path_to_uri(path: str) -> str {
+    ret "file://" + path
+}
+
+pub fn join_path(base: str, part: str) -> str {
+    if base == "" {
+        ret part
+    }
+    if part == "" {
+        ret base
+    }
+    if starts_with(part, path_separator()) {
+        ret part
+    }
+    if ends_with(base, path_separator()) {
+        ret base + part
+    }
+    ret base + path_separator() + part
+}
+
+pub fn ends_with(value: str, suffix: str) -> bool {
+    if suffix.len() > value.len() {
+        ret false
+    }
+    ret starts_at(value, suffix, value.len() - suffix.len())
+}
+
+pub fn starts_with(value: str, prefix: str) -> bool {
+    if prefix.len() > value.len() {
+        ret false
+    }
+    ret starts_at(value, prefix, 0_usize)
+}
+
+pub fn starts_at(value: str, needle: str, offset: usize) -> bool {
+    if offset + needle.len() > value.len() {
+        ret false
+    }
+    let mut index = 0_usize
+    while index < needle.len() {
+        if value.get(offset + index).unwrap_or("") != needle.get(index).unwrap_or("") {
+            ret false
+        }
+        index += 1_usize
+    }
+    ret true
+}
+
+fn path_separator() -> str {
+    ret "/"
+}

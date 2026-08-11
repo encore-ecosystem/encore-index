@@ -529,6 +529,12 @@ fn normalize_instruction(build: mut CoroutineBuild, instruction: Instruction) ->
         Instruction::HeapFree(item) => { lowered = hfree(read_value(build, out, item.src, "free")) }
         Instruction::Binary(item) => { lowered = binary(item.out, read_value(build, out, item.lhs, "binary_lhs"), read_value(build, out, item.rhs, "binary_rhs"), item.op) }
         Instruction::Cfree(item) => { lowered = cfree(read_value(build, out, item.value, "cfree")) }
+        Instruction::AddEdge(item) => {
+            lowered = add_edge(read_value(build, out, item.owner, "edge_owner"), read_value(build, out, item.value, "edge_value"))
+        }
+        Instruction::RemoveEdge(item) => {
+            lowered = remove_edge(read_value(build, out, item.owner, "edge_owner"), read_value(build, out, item.value, "edge_value"))
+        }
         Instruction::Drop(item) => {
             if is_awaited_value(build, item.value.name) { ret out }
             lowered = drop_value(read_value(build, out, item.value, "drop"))
@@ -704,7 +710,7 @@ fn is_stack_value(build: CoroutineBuild, name: str) -> bool {
 
 fn make_slots(definitions: Vec[Variable]) -> Vec[Variable] {
     let mut out = Vec[Variable]::new()
-    for value in definitions { out.push(var("__async_slot_" + value.name, stack_type(required_type_or_usize(value)))) }
+    for value in definitions { out.push(var("__async_slot_" + value.name, raw_type(required_type_or_usize(value)))) }
     ret out
 }
 
@@ -721,7 +727,7 @@ fn slot_for(build: CoroutineBuild, name: str) -> Variable {
         }
         index = index + 1_usize
     }
-    ret var("__async_missing_slot_" + name, stack_type(plain_type("usize", Vec[Type]::new())))
+    ret var("__async_missing_slot_" + name, raw_type(plain_type("usize", Vec[Type]::new())))
 }
 
 fn has_definition(build: CoroutineBuild, name: str) -> bool {
@@ -741,7 +747,7 @@ fn build_fresh(build: mut CoroutineBuild, purpose: str, typ: Type) -> Variable {
 }
 
 fn child_slot(index: usize, typ: Type) -> Variable {
-    ret var("__async_child_slot_" + usize_text(index), stack_type(typ))
+    ret var("__async_child_slot_" + usize_text(index), raw_type(typ))
 }
 
 fn site_step(index: usize, typ: Type) -> Variable {
@@ -1000,6 +1006,14 @@ fn add_instruction_uses(out: mut Vec[Variable], instruction: Instruction) -> () 
         }
         Instruction::Phi(_) => {}
         Instruction::Cfree(item) => { add_unique(out, item.value) }
+        Instruction::AddEdge(item) => {
+            add_unique(out, item.owner)
+            add_unique(out, item.value)
+        }
+        Instruction::RemoveEdge(item) => {
+            add_unique(out, item.owner)
+            add_unique(out, item.value)
+        }
         Instruction::Drop(item) => { add_unique(out, item.value) }
         Instruction::Retain(item) => { add_unique(out, item.value) }
         _ => {}

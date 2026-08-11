@@ -1,0 +1,330 @@
+//! Typed command-line argument parsing for Encore tools.
+//! The raw process boundary remains intentionally small and explicit.
+
+import core::option::Option
+import core::vec::Vec
+import std::os
+
+/// Describes how an option consumes command-line tokens.
+pub enum OptionKind {
+    Flag
+    Value
+    RepeatedValue
+}
+
+/// A single long or short option accepted by a command.
+pub struct OptionSpec {
+    short_name: str
+    long_name: str
+    kind: OptionKind
+    required: bool
+    hidden: bool
+    value_name: str
+    help: str
+}
+
+impl for OptionSpec {
+    /// Creates a boolean flag.
+    pub fn flag(long_name: str, short_name: str, help: str) -> Self {
+        ret Self {
+            short_name, long_name, OptionKind::Flag, false, false, "", help
+        }
+    }
+
+    /// Creates an option that consumes one value.
+    pub fn value(long_name: str, short_name: str, value_name: str, help: str) -> Self {
+        ret Self {
+            short_name, long_name, OptionKind::Value, false, false, value_name, help
+        }
+    }
+
+    /// Creates an option that may occur more than once.
+    pub fn repeated(long_name: str, short_name: str, value_name: str, help: str) -> Self {
+        ret Self {
+            short_name, long_name, OptionKind::RepeatedValue, false, false, value_name, help
+        }
+    }
+
+    /// Marks the option as required.
+    pub fn required(self: mut Self) -> Self {
+        self.required = true
+        ret self
+    }
+
+    /// Hides the option from generated help while still allowing it to parse.
+    pub fn hidden(self: mut Self) -> Self {
+        self.hidden = true
+        ret self
+    }
+
+    pub fn short(self: Self) -> str {
+        ret self.short_name
+    }
+    pub fn long(self: Self) -> str {
+        ret self.long_name
+    }
+    pub fn kind(self: Self) -> OptionKind {
+        ret self.kind
+    }
+    pub fn is_required(self: Self) -> bool {
+        ret self.required
+    }
+    pub fn is_hidden(self: Self) -> bool {
+        ret self.hidden
+    }
+    pub fn value_label(self: Self) -> str {
+        ret self.value_name
+    }
+    pub fn description(self: Self) -> str {
+        ret self.help
+    }
+}
+
+/// The grammar for one command.
+pub struct CommandSpec {
+    name: str
+    options: Vec[OptionSpec]
+    minimum_positionals: usize
+    maximum_positionals: usize
+    allow_rest: bool
+}
+
+impl for CommandSpec {
+    pub fn new(name: str) -> Self {
+        ret Self {
+            name, Vec[OptionSpec]::new(), 0_usize, 0_usize, false
+        }
+    }
+
+    pub fn option(self: mut Self, value: OptionSpec) -> Self {
+        self.options.push(value)
+        ret self
+    }
+
+    pub fn positionals(self: mut Self, minimum: usize, maximum: usize) -> Self {
+        self.minimum_positionals = minimum
+        self.maximum_positionals = maximum
+        ret self
+    }
+
+    pub fn rest(self: mut Self, enabled: bool) -> Self {
+        self.allow_rest = enabled
+        ret self
+    }
+
+    pub fn command_name(self: Self) -> str {
+        ret self.name
+    }
+    pub fn option_specs(self: Self) -> Vec[OptionSpec] {
+        ret self.options
+    }
+}
+
+struct ParsedValue {
+    name: str
+    value: str
+}
+
+/// Parsed command-line values. Values are kept in source order for repeated
+/// options and positionals are kept separate from option values.
+pub struct ParsedArgs {
+    command: str
+    values: Vec[ParsedValue]
+    positionals: Vec[str]
+    rest: Vec[str]
+}
+
+impl for ParsedArgs {
+    pub fn command_name(self: Self) -> str {
+        ret self.command
+    }
+
+    pub fn has(self: Self, name: str) -> bool {
+        for value in self.values {
+            if value.name == name {
+                ret true
+            }
+        }
+        ret false
+    }
+
+    pub fn value(self: Self, name: str, fallback: str) -> str {
+        let mut index = self.values.len()
+        while index > 0_usize {
+            index -= 1_usize
+            match self.values.get(index) {
+                Some(value) => {
+                    if value.name == name {
+                        ret value.value
+                    }
+                }
+                None => {
+                }
+            }
+        }
+        ret fallback
+    }
+
+    pub fn values(self: Self, name: str) -> Vec[str] {
+        let mut out = Vec[str]::new()
+        for value in self.values {
+            if value.name == name {
+                out.push(value.value)
+            }
+        }
+        ret out
+    }
+
+    pub fn positional(self: Self, index: usize) -> Option[str] {
+        ret self.positionals.get(index)
+    }
+
+    pub fn positional_count(self: Self) -> usize {
+        ret self.positionals.len()
+    }
+    pub fn rest(self: Self) -> Vec[str] {
+        ret self.rest
+    }
+}
+
+/// The parser outcome deliberately uses a package-local enum rather than a
+/// generic `Result`. This keeps the command parser ABI small and avoids
+/// instantiating a large error graph in every command binary.
+pub enum ParseOutcome {
+    Ok(ParsedArgs)
+    Err(str)
+}
+
+impl for ParseOutcome {
+    pub fn error_message(self: Self) -> str {
+        ret match self {
+            ParseOutcome::Err(message) => message
+            ParseOutcome::Ok(_) => ""
+        }
+    }
+}
+
+fn parse_error(message: str) -> ParseOutcome {
+    ret ParseOutcome::Err(message)
+}
+
+/// Parses arguments after the command token.
+pub fn parse(spec: CommandSpec, args: Vec[str]) -> ParseOutcome {
+    let options = spec.options
+    let mut parsed = ParsedArgs {
+        spec.name, Vec[ParsedValue]::new(), Vec[str]::new(), Vec[str]::new()
+    }
+    let mut index = 0_usize
+    let mut after_separator = false
+
+    while index < args.len() {
+        let token = match args.get(index) {
+            Some(value) => value
+            None => ""
+        }
+        if after_separator {
+            if !spec.allow_rest {
+                ret parse_error("unexpected argument after '--': '" + token + "'")
+            }
+            parsed.rest.push(token)
+            index += 1_usize
+            continue
+        }
+        if token == "--" {
+            after_separator = true
+            index += 1_usize
+            continue
+        }
+        if starts_with_dash(token) {
+            match find_option(options, token) {
+                Some(option) => {
+                    if option.kind == OptionKind::Flag {
+                        parsed.values.push(ParsedValue {
+                                option.long_name, "true"
+                            }
+                            ,
+                        )
+                    } else {
+                        if index + 1_usize >= args.len() {
+                            ret parse_error("option '" + token + "' requires a value")
+                        }
+                        index += 1_usize
+                        let value = match args.get(index) {
+                            Some(next) => next
+                            None => ""
+                        }
+                        parsed.values.push(ParsedValue {
+                                option.long_name, value
+                            }
+                            ,
+                        )
+                    }
+                }
+                None => {
+                    ret parse_error("unknown option '" + token + "'")
+                }
+            }
+        } else {
+            if parsed.positionals.len() >= spec.maximum_positionals {
+                if spec.allow_rest && after_separator {
+                    parsed.rest.push(token)
+                } else {
+                    ret parse_error("unexpected positional argument '" + token + "'")
+                }
+            } else {
+                parsed.positionals.push(token)
+            }
+        }
+        index += 1_usize
+    }
+
+    if parsed.positionals.len() < spec.minimum_positionals {
+        ret parse_error("missing required positional argument")
+    }
+    for option in options {
+        if option.required && !parsed.has(option.long_name) {
+            ret parse_error("missing required option '" + option.long_name + "'")
+        }
+    }
+    ret ParseOutcome::Ok(parsed)
+}
+
+fn find_option(options: Vec[OptionSpec], token: str) -> Option[OptionSpec] {
+    for option in options {
+        if token == option.long_name ||(option.short_name != "" && token == option.short_name) {
+            ret Option[OptionSpec]::Some(option)
+        }
+    }
+    ret Option[OptionSpec]::None
+}
+
+fn starts_with_dash(value: str) -> bool {
+    ret value.len() > 0_usize && value.slice(0_usize, 1_usize) == "-"
+}
+
+/// Returns the process argument count through the parser boundary.
+pub fn process_arg_count() -> usize {
+    ret os::argc()
+}
+
+/// Returns one raw process argument through the parser boundary.
+pub fn process_arg(index: usize) -> Option[str] {
+    ret os::argv(index)
+}
+
+/// Copies process arguments beginning at `start` for a command parser.
+pub fn process_args(start: usize) -> Vec[str] {
+    let mut out = Vec[str]::new()
+    let mut index = start
+    while index < process_arg_count() {
+        match process_arg(index) {
+            Some(value) => {
+                out.push(value)
+            }
+            None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret out
+}

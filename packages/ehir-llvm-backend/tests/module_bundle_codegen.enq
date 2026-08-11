@@ -1,18 +1,23 @@
 import core::option::Option
 import core::testing::assert
+import std::vec::Vec
 
-import ehirlib::parse_module_bundle_text
-import refrain::codegen::emit_ir_bundle_for_target_parallel
+import ehirlib::{parse_module_bundle_text, module_bundle_to_string}
+import refrain::codegen::{emit_ir_bundle_for_target_parallel, emit_ir_bundle_for_target_selected, incremental_codegen_context_bundle}
 
 fn main() -> u32 {
     let source = "entry beta\n\n" +
         "module alpha {\n" +
         "fn alpha() -> u32 {\n  $entry:\n    value: u32 = lcpos 7_u32\n    ret value: u32\n}\n\n" +
         "fn identity[T](value: T) -> T {\n  $entry:\n    ret value: T\n}\n\n" +
+        "fn choose[T](flag: bool, left: T, right: T) -> T {\n  $entry:\n    cbr flag, $left, $right\n  $left:\n    ret left: T\n  $right:\n    ret right: T\n}\n\n" +
         "struct Counter {\n  value: u32\n}\n\n" +
+        "enum Maybe[T] {\n  Some(T)\n  None\n}\n\n" +
+        "struct Envelope {\n  value: Maybe[Counter]\n}\n\n" +
+        "fn read_envelope(value: Envelope) -> u32 {\n  $entry:\n    result: u32 = lcpos 1_u32\n    ret result: u32\n}\n\n" +
         "impl Counter {\n  fn read(self: Counter) -> u32 {\n    $entry:\n      value: u32 = lcpos 9_u32\n      ret value: u32\n  }\n}\n}\n\n" +
         "module beta {\nimport alpha\n\n" +
-        "fn main() -> u32 {\n  $entry:\n    base: u32 = call alpha()\n    value: u32 = call identity[u32](base: u32)\n    ret value: u32\n}\n}\n"
+        "fn main() -> u32 {\n  $entry:\n    base: u32 = call alpha()\n    value: u32 = call identity[u32](base: u32)\n    flag: bool = lcpos true\n    left: str = lcpos \"left\"_str\n    right: str = lcpos \"right\"_str\n    chosen: str = call choose[str](flag: bool, left: str, right: str)\n    drop chosen: str\n    ret value: u32\n}\n}\n"
     let bundle = parse_module_bundle_text("", source)
     let modules = emit_ir_bundle_for_target_parallel(bundle, "x86_64-unknown-linux-gnu", 64_usize, 2_usize)
     if !assert(modules.len() == 2_usize) { ret 1_u32 }
@@ -26,8 +31,36 @@ fn main() -> u32 {
     if !assert(alpha_ir.contains("declare i32 @main")) { ret 3_u32 }
     if !assert(beta_ir.contains("declare i32 @alpha")) { ret 4_u32 }
     if !assert(beta_ir.contains("define i32 @main")) { ret 5_u32 }
-    if !assert(beta_ir.contains("define linkonce_odr i32 @identity__u32")) { ret 6_u32 }
+    if !assert(alpha_ir.contains("define i32 @identity__u32")) { ret 6_u32 }
     if !assert(alpha_ir.contains("define i32 @Counter__read")) { ret 7_u32 }
     if !assert(beta_ir.contains("declare i32 @Counter__read")) { ret 8_u32 }
+    if !assert(alpha_ir.contains("define i8* @choose__str")) { ret 9_u32 }
+    if !assert(alpha_ir.contains("phi i8*")) { ret 10_u32 }
+    // Program-wide helpers are defined exactly once by support CGU zero;
+    // callers in every other CGU receive declarations instead of compiling
+    // duplicate linkonce bodies.
+    if !assert(beta_ir.contains("declare i32 @identity__u32")) { ret 11_u32 }
+    if !assert(beta_ir.contains("declare i8* @choose__str")) { ret 12_u32 }
+    if !assert(alpha_ir.contains("%Maybe_Counter = type")) { ret 13_u32 }
+    if !assert(!alpha_ir.contains("%Maybe_T = type")) { ret 14_u32 }
+    let mut selected = Vec[usize]::new()
+    selected.push(1_usize)
+    let beta_only = emit_ir_bundle_for_target_selected(bundle,
+        "x86_64-unknown-linux-gnu", 64_usize, 2_usize, selected,)
+    // An incremental request for beta also emits alpha, the support owner, so
+    // changes in generic/concrete-type closure cannot leave a stale helper.
+    if !assert(beta_only.len() == 2_usize) { ret 15_u32 }
+    let mut saw_alpha = false
+    let mut saw_beta = false
+    for module in beta_only {
+        if module.module_id == "alpha" { saw_alpha = true }
+        if module.module_id == "beta" { saw_beta = true }
+    }
+    if !assert(saw_alpha && saw_beta) { ret 16_u32 }
+    let context_text = module_bundle_to_string(incremental_codegen_context_bundle(
+        parse_module_bundle_text("", source)))
+    if !assert(context_text.contains("extern fn alpha() -> u32")) { ret 18_u32 }
+    if !assert(!context_text.contains("fn alpha() -> u32 {")) { ret 19_u32 }
+    if !assert(context_text.contains("fn identity[T](value: T) -> T {")) { ret 20_u32 }
     ret 0_u32
 }

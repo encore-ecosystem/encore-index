@@ -370,8 +370,8 @@ typedef struct {
     encore_str_object *object;
 } encore_str;
 
-static encore_str encore_empty_str(void);
-static encore_str encore_from_owned_buffer(char *buffer, size_t len);
+encore_str encore_empty_str(void);
+encore_str encore_from_owned_buffer(char *buffer, size_t len);
 
 static struct {
     _Atomic size_t ref_count;
@@ -379,14 +379,14 @@ static struct {
     char data[1];
 } g_empty_str_object = {.ref_count = 0, .len = 0, .data = {0}};
 
-static char *encore_str_data(encore_str value) {
+char *encore_str_data(encore_str value) {
     if (value.object == NULL) {
         return g_empty_str_object.data;
     }
     return value.object->data;
 }
 
-static size_t encore_str_size(encore_str value) {
+size_t encore_str_size(encore_str value) {
     if (value.object == NULL) {
         return 0;
     }
@@ -689,11 +689,11 @@ void encore_text_builder_discard(void *raw_builder) {
     free(builder);
 }
 
-static encore_str encore_empty_str(void) {
+encore_str encore_empty_str(void) {
     return (encore_str){.object = (encore_str_object *)&g_empty_str_object};
 }
 
-static char *encore_to_cstr(encore_str value) {
+char *encore_to_cstr(encore_str value) {
     size_t len = encore_str_size(value);
     char *buffer = malloc(len + 1);
     if (buffer == NULL) {
@@ -708,7 +708,7 @@ static char *encore_to_cstr(encore_str value) {
     return buffer;
 }
 
-static encore_str encore_from_owned_buffer(char *buffer, size_t len) {
+encore_str encore_from_owned_buffer(char *buffer, size_t len) {
     if (buffer == NULL) {
         return encore_empty_str();
     }
@@ -847,7 +847,7 @@ encore_str encore_unescape_string_literal(encore_str value) {
     return encore_from_owned_buffer(output, written);
 }
 
-static encore_str encore_from_cstr_copy(const char *value) {
+encore_str encore_from_cstr_copy(const char *value) {
     if (value == NULL) {
         return encore_empty_str();
     }

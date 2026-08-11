@@ -1,6 +1,7 @@
 //! Provides the `lib` module.
 
 pub import refrain::cast
+pub import refrain::call
 pub import refrain::fmt
 pub import refrain::future
 pub import refrain::iter

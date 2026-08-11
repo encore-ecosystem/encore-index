@@ -1,0 +1,326 @@
+import core::fmt::Debug
+import core::option::Option
+import core::result::Result
+import core::vec::Vec
+
+import json::Json
+import json::ParseError
+import json::field
+import json::parse
+import json::stringify
+import mod::paths::starts_with
+import mod::text::parse_usize
+
+extern fn encore_io_read(fd: i32, max_bytes: usize) -> str
+extern fn encore_io_write(fd: i32, value: str) -> i32
+
+pub fn read_lsp_message() -> Option[Json] {
+    let mut content_length = 0_usize
+    loop {
+        let line_result: Option[str] = read_stdio_line()
+        match line_result {
+            Option[str]::Some(line) => {
+                if line == "\r\n" || line == "\n" {
+                    break
+                }
+                if starts_with(line, "Content-Length:") {
+                    content_length = parse_header_usize(line)
+                }
+            }
+            Option[str]::None => {
+                ret Option[Json]::None
+            }
+        }
+    }
+
+    if content_length == 0_usize {
+        ret Option[Json]::None
+    }
+
+    let body_result: Option[str] = read_stdio_exact(content_length)
+    match body_result {
+        Option[str]::Some(body) => {
+            match parse(body) {
+                Result[Json, ParseError]::Ok(message) => {
+                    ret Option[Json]::Some(message)
+                }
+                Result[Json, ParseError]::Err(err) => {
+                    send_protocol_error("-32700", "Parse error at " + Debug::fmt(err.position()) + ": "
+                        + err.message(),)
+                    // A malformed frame must not terminate a long-running editor
+                    // session. Read the next independently framed request.
+                    ret read_lsp_message()
+                }
+            }
+        }
+        Option[str]::None => {
+            ret Option[Json]::None
+        }
+    }
+}
+
+pub fn send_response(id: Json, result: Json) ->() {
+    if id.is_null() {
+        ret()
+    }
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("jsonrpc", Json::String("2.0")))
+    fields.push(field("id", id))
+    fields.push(field("result", result))
+    write_lsp_payload(Json::Object(fields))
+    ret()
+}
+
+pub fn send_error(id: Json, code: str, message: str) ->() {
+    if id.is_null() {
+        ret()
+    }
+    let mut error_fields = Vec[(str, Json)]::new()
+    error_fields.push(field("code", Json::Number(code)))
+    error_fields.push(field("message", Json::String(message)))
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("jsonrpc", Json::String("2.0")))
+    fields.push(field("id", id))
+    fields.push(field("error", Json::Object(error_fields)))
+    write_lsp_payload(Json::Object(fields))
+    ret()
+}
+
+fn send_protocol_error(code: str, message: str) ->() {
+    let mut error_fields = Vec[(str, Json)]::new()
+    error_fields.push(field("code", Json::Number(code)))
+    error_fields.push(field("message", Json::String(message)))
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("jsonrpc", Json::String("2.0")))
+    fields.push(field("id", Json::Null))
+    fields.push(field("error", Json::Object(error_fields)))
+    write_lsp_payload(Json::Object(fields))
+    ret()
+}
+
+pub fn send_notification(method: str, params: Json) ->() {
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("jsonrpc", Json::String("2.0")))
+    fields.push(field("method", Json::String(method)))
+    fields.push(field("params", params))
+    write_lsp_payload(Json::Object(fields))
+    ret()
+}
+
+pub fn log_message(message: str) ->() {
+    let mut params = Vec[(str, Json)]::new()
+    params.push(field("type", Json::Number("1")))
+    params.push(field("message", Json::String(message)))
+    send_notification("window/logMessage", Json::Object(params))
+    ret()
+}
+
+pub fn json_get(value: Json, key: str) -> Json {
+    match value.get(key) {
+        Option[Json]::Some(found) => {
+            ret found
+        }
+        Option[Json]::None => {
+            ret Json::Null
+        }
+    }
+}
+
+pub fn json_get_str(value: Json, key: str, default: str) -> str {
+    match json_get(value, key).as_str() {
+        Option[str]::Some(text) => {
+            ret text
+        }
+        Option[str]::None => {
+            ret default
+        }
+    }
+}
+
+pub fn json_usize(value: usize) -> Json {
+    ret Json::Number(Debug::fmt(value))
+}
+
+pub fn json_number_usize(value: Json, default: usize) -> usize {
+    match value.as_number() {
+        Option[str]::Some(raw) => {
+            ret parse_usize(raw)
+        }
+        Option[str]::None => {
+            ret default
+        }
+    }
+}
+
+pub fn json_array_3(a: str, b: str, c: str) -> Json {
+    let mut values = Vec[Json]::new()
+    values.push(Json::String(a))
+    values.push(Json::String(b))
+    values.push(Json::String(c))
+    ret Json::Array(values)
+}
+
+pub fn json_array_4(a: str, b: str, c: str, d: str) -> Json {
+    let mut values = Vec[Json]::new()
+    values.push(Json::String(a))
+    values.push(Json::String(b))
+    values.push(Json::String(c))
+    values.push(Json::String(d))
+    ret Json::Array(values)
+}
+
+pub fn make_range(line: usize, column: usize, length: usize) -> Json {
+    ret range_between(line, column, line, column + length)
+}
+
+pub fn range_between(start_line: usize, start_character: usize, end_line: usize, end_character: usize)
+-> Json {
+    let mut start = Vec[(str, Json)]::new()
+    start.push(field("line", json_usize(start_line)))
+    start.push(field("character", json_usize(start_character)))
+
+    let mut end = Vec[(str, Json)]::new()
+    end.push(field("line", json_usize(end_line)))
+    end.push(field("character", json_usize(end_character)))
+
+    let mut range = Vec[(str, Json)]::new()
+    range.push(field("start", Json::Object(start)))
+    range.push(field("end", Json::Object(end)))
+    ret Json::Object(range)
+}
+
+pub fn location_json(uri: str, range: Json) -> Json {
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("uri", Json::String(uri)))
+    fields.push(field("range", range))
+    ret Json::Object(fields)
+}
+
+pub fn text_edit(range: Json, new_text: str) -> Json {
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("range", range))
+    fields.push(field("newText", Json::String(new_text)))
+    ret Json::Object(fields)
+}
+
+pub fn semantic_tokens_provider() -> Json {
+    let mut legend = Vec[(str, Json)]::new()
+    legend.push(field("tokenTypes", semantic_token_types()))
+    legend.push(field("tokenModifiers", semantic_token_modifiers()))
+
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("legend", Json::Object(legend)))
+    fields.push(field("full", Json::Bool(true)))
+    ret Json::Object(fields)
+}
+
+pub fn bool_provider(resolve_provider: bool) -> Json {
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("resolveProvider", Json::Bool(resolve_provider)))
+    ret Json::Object(fields)
+}
+
+pub fn rename_provider() -> Json {
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("prepareProvider", Json::Bool(true)))
+    ret Json::Object(fields)
+}
+
+pub fn signature_help_provider() -> Json {
+    let mut triggers = Vec[Json]::new()
+    triggers.push(Json::String("("))
+    triggers.push(Json::String(","))
+
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("triggerCharacters", Json::Array(triggers)))
+    ret Json::Object(fields)
+}
+
+fn write_lsp_payload(payload: Json) ->() {
+    let body = stringify(payload)
+    write_stdout("Content-Length: " + Debug::fmt(body.byte_len()) + "\r\n\r\n" + body)
+    ret()
+}
+
+fn read_stdio_exact(size: usize) -> Option[str] {
+    let mut out = ""
+    while out.byte_len() < size {
+        let chunk = read_stdin(size - out.byte_len())
+        if chunk.len() == 0_usize {
+            ret Option[str]::None
+        }
+        out += chunk
+    }
+    ret Option[str]::Some(out)
+}
+
+fn read_stdio_line() -> Option[str] {
+    let mut out = ""
+    loop {
+        let chunk = read_stdin(1_usize)
+        if chunk.len() == 0_usize {
+            if out.len() == 0_usize {
+                ret Option[str]::None
+            }
+            ret Option[str]::Some(out)
+        }
+        out += chunk
+        if chunk == "\n" {
+            ret Option[str]::Some(out)
+        }
+    }
+}
+
+fn read_stdin(max_bytes: usize) -> str {
+    unsafe {
+        ret encore_io_read(0_i32, max_bytes)
+    }
+}
+
+fn write_stdout(value: str) -> i32 {
+    unsafe {
+        ret encore_io_write(1_i32, value)
+    }
+}
+
+fn semantic_token_types() -> Json {
+    let mut values = Vec[Json]::new()
+    values.push(Json::String("keyword"))
+    values.push(Json::String("function"))
+    values.push(Json::String("type"))
+    values.push(Json::String("struct"))
+    values.push(Json::String("enum"))
+    values.push(Json::String("interface"))
+    values.push(Json::String("variable"))
+    values.push(Json::String("number"))
+    values.push(Json::String("string"))
+    values.push(Json::String("operator"))
+    values.push(Json::String("comment"))
+    values.push(Json::String("namespace"))
+    ret Json::Array(values)
+}
+
+fn semantic_token_modifiers() -> Json {
+    let mut values = Vec[Json]::new()
+    values.push(Json::String("declaration"))
+    values.push(Json::String("definition"))
+    ret Json::Array(values)
+}
+
+fn parse_header_usize(line: str) -> usize {
+    let mut value = 0_usize
+    let mut index = 0_usize
+    while index < line.len() {
+        match line.get_byte_at(index) {
+            Option[u8]::Some(byte) => {
+                if byte >= 48_u8 && byte <= 57_u8 {
+                    value = value * 10_usize +((byte - 48_u8) as usize)
+                }
+            }
+            Option[u8]::None => {
+            }
+        }
+        index += 1_usize
+    }
+    ret value
+}

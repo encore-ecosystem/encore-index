@@ -1,0 +1,19 @@
+//! C-compatible bool declarations, definitions and calls retain zeroext.
+
+import core::testing::assert
+import ehirlib::parse_module_text
+import refrain::codegen::emit_ir
+
+fn main() -> u32 {
+    let source = "extern fn native_bool(value: bool) -> bool\n\n" +
+        "fn forward(value: bool) -> bool {\n" +
+        "  $entry:\n" +
+        "    result: bool = call native_bool(value: bool)\n" +
+        "    ret result: bool\n" +
+        "}\n"
+    let llvm = emit_ir(parse_module_text("bool_extern_abi", source))
+    if !assert(llvm.contains("declare zeroext i1 @native_bool(i1 zeroext %value)")) { ret 1_u32 }
+    if !assert(llvm.contains("define zeroext i1 @forward(i1 zeroext %value)")) { ret 2_u32 }
+    if !assert(llvm.contains("call zeroext i1 @native_bool(i1 zeroext %value)")) { ret 3_u32 }
+    ret 0_u32
+}

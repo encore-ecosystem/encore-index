@@ -1,0 +1,85 @@
+import core::result::Result
+import core::testing::assert
+import std::io::eprintln
+
+import ehirlib::{Module, FnDirective, Directive, Instruction, Terminator}
+import ehirlib::parse_module_text
+import ehirlib::normalize_control_flow
+import ehirlib::validate_module
+
+fn main() -> u32 {
+    let source = "fn choose(flag: bool) -> u32 {\n  $entry:\n    cbr flag, $left, $right\n  $left:\n    one: u32 = lcpos 1_u32\n    ret one: u32\n  $right:\n    two: u32 = lcpos 2_u32\n    ret two: u32\n}\n\nfn finish(flag: bool) -> () {\n  $entry:\n    cbr flag, $first, $second\n  $first:\n    ret void: ()\n  $second:\n    ret void: ()\n}\n\nfn branch_slot(flag: bool) -> u32 {\n  $entry:\n    slot: u32* = salloc u32\n    cbr flag, $left, $right\n  $left:\n    one: u32 = lcpos 1_u32\n    store one, slot\n    br $join\n  $right:\n    two: u32 = lcpos 2_u32\n    store two, slot\n    br $join\n  $join:\n    value: u32 = load slot\n    ret value: u32\n}\n\nfn loop_slot(limit: u32) -> u32 {\n  $entry:\n    slot: u32* = salloc u32\n    zero: u32 = lcpos 0_u32\n    store zero, slot\n    br $header\n  $header:\n    current: u32 = load slot\n    keep_going: bool = les current, limit\n    cbr keep_going, $body, $done\n  $body:\n    old: u32 = load slot\n    one: u32 = lcpos 1_u32\n    next: u32 = add old, one\n    store next, slot\n    br $header\n  $done:\n    result: u32 = load slot\n    ret result: u32\n}\n\nfn early_slot(flag: bool) -> u32 {\n  $entry:\n    slot: u32* = salloc u32\n    cbr flag, $early, $initialized\n  $early:\n    nine: u32 = lcpos 9_u32\n    ret nine: u32\n  $initialized:\n    seven: u32 = lcpos 7_u32\n    store seven, slot\n    value: u32 = load slot\n    ret value: u32\n}\n"
+    match validate_module(normalize_control_flow(parse_module_text("control_flow_normalization", source))) {
+        Result::Ok(normalized) => { ret inspect_normalized(normalized) }
+        Result::Err(message) => {
+            eprintln(message)
+            ret 1_u32
+        }
+    }
+    ret 1_u32
+}
+
+fn inspect_normalized(normalized: Module) -> u32 {
+    let mut checked_choose = false
+    let mut checked_finish = false
+    let mut checked_branch_slot = false
+    let mut checked_loop_slot = false
+    let mut checked_early_slot = false
+    for directive in normalized.directives {
+        match directive {
+            Directive::Function(function) => {
+                let mut returns = 0_usize
+                let mut phis = 0_usize
+                for block_item in function.blocks {
+                    for instruction in block_item.instructions {
+                        match instruction {
+                            Instruction::Phi(_) => { phis += 1_usize }
+                            _ => {}
+                        }
+                    }
+                    match block_item.terminator {
+                        Terminator::Ret(_) => { returns += 1_usize }
+                        _ => {}
+                    }
+                }
+                if function.name == "choose" {
+                    if !assert(returns == 1_usize && phis == 1_usize) { ret 2_u32 }
+                    checked_choose = true
+                }
+                elif function.name == "finish" {
+                    if !assert(returns == 1_usize && phis == 0_usize) { ret 3_u32 }
+                    checked_finish = true
+                }
+                elif function.name == "branch_slot" {
+                    if !assert(returns == 1_usize && phis == 1_usize && !has_memory_slot(function)) { ret 5_u32 }
+                    checked_branch_slot = true
+                }
+                elif function.name == "loop_slot" {
+                    if !assert(returns == 1_usize && phis == 1_usize && !has_memory_slot(function)) { ret 6_u32 }
+                    checked_loop_slot = true
+                }
+                elif function.name == "early_slot" {
+                    if !assert(returns == 1_usize && phis == 1_usize && !has_memory_slot(function)) { ret 7_u32 }
+                    checked_early_slot = true
+                }
+            }
+            _ => {}
+        }
+    }
+    if !assert(checked_choose && checked_finish && checked_branch_slot && checked_loop_slot && checked_early_slot) { ret 4_u32 }
+    ret 0_u32
+}
+
+fn has_memory_slot(function: FnDirective) -> bool {
+    for block_item in function.blocks {
+        for instruction in block_item.instructions {
+            match instruction {
+                Instruction::StackAlloc(_) => { ret true }
+                Instruction::Store(_) => { ret true }
+                Instruction::Load(_) => { ret true }
+                _ => {}
+            }
+        }
+    }
+    ret false
+}
