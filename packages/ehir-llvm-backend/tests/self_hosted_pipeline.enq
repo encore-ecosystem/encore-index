@@ -1,7 +1,7 @@
 import core::testing::assert
 
 import ehirlib::parse_module_text
-import refrain::codegen::emit_ir
+import refrain::codegen::{emit_ir, emit_ir_for_target}
 
 fn main() -> u32 {
     let source = "struct Named {\n  label: str\n}\n\nenum Maybe[T] {\n  Some(T)\n  None\n}\n\nfn constant() -> u32 {\n  $entry:\n    value: u32 = capprim 7_u32\n    copy: u32 = value\n    ret copy: u32\n}\n\nfn literal() -> str {\n  $entry:\n    value: str = capprim \"hello\"_str\n    ret value: str\n}\n\nfn drop_named(value: Named) -> () {\n  $entry:\n    retain value: Named\n    drop value: Named\n    ret void: ()\n}\n\nfn drop_maybe(value: Maybe[str]) -> () {\n  $entry:\n    retain value: Maybe[str]\n    drop value: Maybe[str]\n    ret void: ()\n}\n\nfn null_u8() -> u8* {\n  $entry:\n    zero: usize = capprim 0_usize\n    ptr: u8* = pcast zero: usize, u8*\n    ret ptr: u8*\n}\n\nfn resize_u8(ptr: u8*, count: usize) -> u8* {\n  $entry:\n    next: u8* = hrealloc ptr: u8*, count: usize\n    ret next: u8*\n}\n"
@@ -23,6 +23,10 @@ fn main() -> u32 {
     if !assert(llvm_ir.contains("call void @encore_str_retain")) { ret 12_u32 }
     if !assert(llvm_ir.contains("define i32 @constant() nounwind memory(none) \"probe-stack\"=\"inline-asm\"")) { ret 13_u32 }
     if !assert(llvm_ir.contains("define void @drop_named(%Named %value) \"probe-stack\"=\"inline-asm\"")) { ret 27_u32 }
+    let windows_ir = emit_ir_for_target(parse_module_text("self_hosted_pipeline_windows", source),
+        "x86_64-pc-windows-msvc", 64_usize)
+    if !assert(!windows_ir.contains("\"probe-stack\"=\"inline-asm\"")) { ret 54_u32 }
+    if !assert(windows_ir.contains("define i32 @constant() nounwind memory(none)")) { ret 55_u32 }
 
     let heap_field_source = "struct Inner {\n  value: u32\n}\n\nstruct Outer {\n  inner: Inner<H>\n}\n\nfn read(value: Outer&) -> Inner<H> {\n  $entry:\n    result: Inner<H> = getfield value > 0\n    ret result: Inner<H>\n}\n"
     let heap_field_ir = emit_ir(parse_module_text("heap_field", heap_field_source))

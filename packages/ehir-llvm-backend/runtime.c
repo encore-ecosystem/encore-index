@@ -5,9 +5,18 @@
 #endif
 
 static size_t encore_target_pointer_width = sizeof(void *) * 8u;
+static size_t encore_windows_target = 0u;
 
 void encore_llvm_set_target_pointer_width(size_t bits) {
     encore_target_pointer_width = bits == 32u ? 32u : 64u;
+}
+
+void encore_llvm_set_windows_target(size_t enabled) {
+    encore_windows_target = enabled != 0u;
+}
+
+size_t encore_llvm_is_windows_target(void) {
+    return encore_windows_target;
 }
 
 size_t encore_llvm_target_pointer_width(void) {

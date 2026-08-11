@@ -145,6 +145,8 @@ import llvm::value::value_type
 
 extern fn encore_llvm_set_target_pointer_width(bits: usize) -> ()
 extern fn encore_llvm_target_pointer_width() -> usize
+extern fn encore_llvm_set_windows_target(enabled: usize) -> ()
+extern fn encore_llvm_is_windows_target() -> usize
 
 pub struct LoweredModule {
     ir: str
@@ -1922,6 +1924,11 @@ fn generic_symbol(name: str, args: Vec[Type]) -> str {
 }
 
 pub fn emit_ir(module: Module) -> str {
+    unsafe { encore_llvm_set_windows_target(0_usize) }
+    ret emit_ir_current_target(module)
+}
+
+fn emit_ir_current_target(module: Module) -> str {
     profile_codegen_memory("emit-start")
     let lowered_module = prepare_module_for_codegen(module)
     profile_codegen_memory("coroutines-validated")
@@ -1947,7 +1954,8 @@ fn prepare_module_for_codegen(module: Module) -> Module {
 
 pub fn emit_ir_for_target(module: Module, triple: str, pointer_width: usize) -> str {
     unsafe { encore_llvm_set_target_pointer_width(pointer_width) }
-    let ir = emit_ir(module)
+    unsafe { encore_llvm_set_windows_target(if is_windows_triple(triple) { 1_usize } else { 0_usize }) }
+    let ir = emit_ir_current_target(module)
     if triple == "" { ret ir }
     ret "target triple = \"" + triple + "\"\n\n" + ir
 }
@@ -1999,6 +2007,7 @@ fn emit_ir_bundle_for_target_selected_impl(bundle: ModuleBundle, triple: str, po
     use_supplied_analysis: bool,)
 -> Vec[EmittedIrModule] {
     unsafe { encore_llvm_set_target_pointer_width(pointer_width) }
+    unsafe { encore_llvm_set_windows_target(if is_windows_triple(triple) { 1_usize } else { 0_usize }) }
     if selected.len() == 0_usize { ret Vec[EmittedIrModule]::new() }
     let source_modules = bundle.modules
     // CGU zero owns all program-wide support definitions. Rebuild it whenever
@@ -2937,12 +2946,21 @@ fn lower_function(function: FnDirective) -> LLVMFunction {
     let blocks = lower_blocks(function_blocks)
     let lowered = llvm_define_fn(fn_name, ret_type, params, blocks)
     if function_is_pure_numeric(function) {
+        if unsafe { encore_llvm_is_windows_target() } != 0_usize {
+            ret llvm_with_attributes(lowered, "nounwind memory(none)")
+        }
         ret llvm_with_attributes(lowered, "nounwind memory(none) \"probe-stack\"=\"inline-asm\"")
     }
     // Large generated Encore functions must ask LLVM to probe their stack
     // frames. Without this attribute, a prologue can jump over Linux's stack
     // guard and fault later while accessing a valid local slot.
+    if unsafe { encore_llvm_is_windows_target() } != 0_usize { ret lowered }
     ret llvm_with_attributes(lowered, "\"probe-stack\"=\"inline-asm\"")
+}
+
+fn is_windows_triple(triple: str) -> bool {
+    ret triple == "x86_64-pc-windows-msvc" || triple == "x86_64-w64-windows-gnu"
+        || triple == "aarch64-w64-windows-gnu"
 }
 
 fn function_is_pure_numeric(function: FnDirective) -> bool {
