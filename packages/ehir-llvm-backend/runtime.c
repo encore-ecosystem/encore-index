@@ -19,6 +19,14 @@ size_t encore_llvm_is_windows_target(void) {
     return encore_windows_target;
 }
 
+size_t encore_llvm_is_windows_host(void) {
+#if defined(_WIN32)
+    return 1u;
+#else
+    return 0u;
+#endif
+}
+
 size_t encore_llvm_target_pointer_width(void) {
     return encore_target_pointer_width;
 }

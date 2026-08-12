@@ -1516,7 +1516,13 @@ int32_t encore_proc_run_args_capture_parts(encore_str program, size_t raw_args, 
 }
 
 #ifdef _WIN32
+#if defined(_MSC_VER)
 __declspec(thread) static int32_t g_proc_output_status = -1;
+#elif defined(_WIN32)
+static _Thread_local int32_t g_proc_output_status = -1;
+#else
+static int32_t g_proc_output_status = -1;
+#endif
 #else
 static _Thread_local int32_t g_proc_output_status = -1;
 #endif

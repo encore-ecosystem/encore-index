@@ -147,6 +147,7 @@ extern fn encore_llvm_set_target_pointer_width(bits: usize) -> ()
 extern fn encore_llvm_target_pointer_width() -> usize
 extern fn encore_llvm_set_windows_target(enabled: usize) -> ()
 extern fn encore_llvm_is_windows_target() -> usize
+extern fn encore_llvm_is_windows_host() -> usize
 
 pub struct LoweredModule {
     ir: str
@@ -2953,7 +2954,7 @@ fn lower_function(function: FnDirective) -> LLVMFunction {
     let blocks = lower_blocks(function_blocks)
     let lowered = llvm_define_fn(fn_name, ret_type, params, blocks)
     if function_is_pure_numeric(function) {
-        if unsafe { encore_llvm_is_windows_target() } != 0_usize {
+        if stack_probe_is_unsupported() {
             ret llvm_with_attributes(lowered, "nounwind memory(none)")
         }
         ret llvm_with_attributes(lowered, "nounwind memory(none) \"probe-stack\"=\"inline-asm\"")
@@ -2961,8 +2962,17 @@ fn lower_function(function: FnDirective) -> LLVMFunction {
     // Large generated Encore functions must ask LLVM to probe their stack
     // frames. Without this attribute, a prologue can jump over Linux's stack
     // guard and fault later while accessing a valid local slot.
-    if unsafe { encore_llvm_is_windows_target() } != 0_usize { ret lowered }
+    if stack_probe_is_unsupported() { ret lowered }
     ret llvm_with_attributes(lowered, "\"probe-stack\"=\"inline-asm\"")
+}
+
+fn stack_probe_is_unsupported() -> bool {
+    // LLVM's `inline-asm` stack probe is an ELF/Mach-O policy. Never emit it
+    // from a Windows-hosted backend, even if a nested or isolated codegen
+    // execution context has not yet installed its requested target triple.
+    // Otherwise COFF linkers interpret `inline-asm` as an external symbol.
+    ret unsafe { encore_llvm_is_windows_target() } != 0_usize ||
+        unsafe { encore_llvm_is_windows_host() } != 0_usize
 }
 
 fn is_windows_triple(triple: str) -> bool {
