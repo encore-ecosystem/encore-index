@@ -2060,7 +2060,7 @@ fn emit_ir_bundle_for_target_selected_impl(bundle: ModuleBundle, triple: str, po
     let mut worker = 0_usize
     while worker < worker_count {
         pending.push(spawn emit_ir_module_batch(prepared, contexts, scheduled_selected, triple,
-            prepare_selected_view, concrete_types, support, worker, worker_count,))
+            pointer_width, prepare_selected_view, concrete_types, support, worker, worker_count,))
         worker = worker + 1_usize
     }
     let mut chunks = Vec[EmittedIrChunk]::new()
@@ -2228,9 +2228,16 @@ fn min_codegen_jobs(requested: usize, count: usize) -> usize {
 }
 
 fn emit_ir_module_batch(prepared: Vec[Module], contexts: Vec[Module], selected: Vec[usize], triple: str,
-    prepare_selected_view: bool, concrete_types: Vec[Type], support: SupportIr, worker_index: usize,
-    worker_count: usize,)
+    pointer_width: usize, prepare_selected_view: bool, concrete_types: Vec[Type], support: SupportIr,
+    worker_index: usize, worker_count: usize,)
 -> Vec[EmittedIrChunk] {
+    // A spawned codegen worker is an independent execution context. Never
+    // assume it inherits the caller's native backend globals: doing so made
+    // Windows x64 CGUs receive the non-Windows inline stack-probe attribute
+    // and link against a bogus `inline-asm` symbol. Install the complete
+    // target context in every worker before lowering its first module.
+    unsafe { encore_llvm_set_target_pointer_width(pointer_width) }
+    unsafe { encore_llvm_set_windows_target(if is_windows_triple(triple) { 1_usize } else { 0_usize }) }
     let mut out = Vec[EmittedIrChunk]::new()
     let mut job_index = worker_index
     while job_index < selected.len() {

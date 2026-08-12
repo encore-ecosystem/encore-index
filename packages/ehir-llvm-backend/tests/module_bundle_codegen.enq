@@ -62,5 +62,14 @@ fn main() -> u32 {
     if !assert(context_text.contains("extern fn alpha() -> u32")) { ret 18_u32 }
     if !assert(!context_text.contains("fn alpha() -> u32 {")) { ret 19_u32 }
     if !assert(context_text.contains("fn identity[T](value: T) -> T {")) { ret 20_u32 }
+    // Parallel workers must install their own target context. In particular,
+    // Windows must never inherit the default non-Windows stack-probe policy
+    // and turn `inline-asm` into an unresolved linker symbol.
+    let windows_modules = emit_ir_bundle_for_target_parallel(bundle,
+        "x86_64-w64-windows-gnu", 64_usize, 2_usize)
+    if !assert(windows_modules.len() == 2_usize) { ret 21_u32 }
+    for module in windows_modules {
+        if !assert(!module.ir.contains("\"probe-stack\"=\"inline-asm\"")) { ret 22_u32 }
+    }
     ret 0_u32
 }
