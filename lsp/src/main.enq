@@ -1050,7 +1050,7 @@ fn initialize_result() -> Json {
 
     let mut server_info = Vec[(str, Json)]::new()
     server_info.push(field("name", Json::String("encore-lsp")))
-    server_info.push(field("version", Json::String("0.1.0")))
+    server_info.push(field("version", Json::String("0.2.1")))
 
     let mut result = Vec[(str, Json)]::new()
     result.push(field("capabilities", Json::Object(capabilities)))
@@ -3766,7 +3766,8 @@ fn semantic_token_kind(doc: Document, token: Token, token_index: usize) -> Optio
     if token.type == TokenType::STRING {
         ret Option[usize]::Some(8_usize)
     }
-    if token.type == TokenType::ONE_LINE_COMMENT || token.type == TokenType::MULTI_LINE_COMMENT {
+    if token.type == TokenType::ONE_LINE_COMMENT || token.type == TokenType::MULTI_LINE_COMMENT ||
+    token.type == TokenType::DOC_COMMENT || token.type == TokenType::MODULE_DOC_COMMENT {
         ret Option[usize]::Some(10_usize)
     }
     if is_operator_token(token.type) {
@@ -4380,6 +4381,8 @@ fn find_token_in_line_at_or_after(line: str, token: Token, start: usize) -> usiz
 fn keyword_completion_items() -> Vec[Json] {
     let mut items = Vec[Json]::new()
     push_keyword_completion(items, "as")
+    push_keyword_completion(items, "async")
+    push_keyword_completion(items, "await")
     push_keyword_completion(items, "break")
     push_keyword_completion(items, "continue")
     push_keyword_completion(items, "do")
@@ -4402,6 +4405,8 @@ fn keyword_completion_items() -> Vec[Json] {
     push_keyword_completion(items, "mut")
     push_keyword_completion(items, "pub")
     push_keyword_completion(items, "ret")
+    push_keyword_completion(items, "spawn")
+    push_keyword_completion(items, "static")
     push_keyword_completion(items, "struct")
     push_keyword_completion(items, "trait")
     push_keyword_completion(items, "true")

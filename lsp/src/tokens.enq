@@ -5,6 +5,15 @@ pub fn is_keyword_token(token_type: TokenType) -> bool {
         TokenType::KW_FN => {
             ret true
         }
+        TokenType::KW_ASYNC => {
+            ret true
+        }
+        TokenType::KW_AWAIT => {
+            ret true
+        }
+        TokenType::KW_SPAWN => {
+            ret true
+        }
         TokenType::KW_STRUCT => {
             ret true
         }
@@ -21,6 +30,9 @@ pub fn is_keyword_token(token_type: TokenType) -> bool {
             ret true
         }
         TokenType::KW_LET => {
+            ret true
+        }
+        TokenType::KW_STATIC => {
             ret true
         }
         TokenType::KW_MUT => {
@@ -65,6 +77,9 @@ pub fn is_keyword_token(token_type: TokenType) -> bool {
         TokenType::KW_AS => {
             ret true
         }
+        TokenType::KW_DYN => {
+            ret true
+        }
         TokenType::KW_EXTERN => {
             ret true
         }
@@ -72,6 +87,9 @@ pub fn is_keyword_token(token_type: TokenType) -> bool {
             ret true
         }
         TokenType::KW_EHIR => {
+            ret true
+        }
+        TokenType::KW_WITH => {
             ret true
         }
         TokenType::BOOLEAN => {
@@ -95,6 +113,9 @@ pub fn is_operator_token(token_type: TokenType) -> bool {
             ret true
         }
         TokenType::ASTERISK => {
+            ret true
+        }
+        TokenType::POWER => {
             ret true
         }
         TokenType::SLASH => {
@@ -160,6 +181,9 @@ pub fn is_operator_token(token_type: TokenType) -> bool {
         TokenType::ASTERISK_EQUAL => {
             ret true
         }
+        TokenType::POWER_EQUAL => {
+            ret true
+        }
         TokenType::SLASH_EQUAL => {
             ret true
         }
@@ -188,6 +212,12 @@ pub fn is_operator_token(token_type: TokenType) -> bool {
             ret true
         }
         TokenType::QUESTION => {
+            ret true
+        }
+        TokenType::HASH => {
+            ret true
+        }
+        TokenType::AT => {
             ret true
         }
         TokenType::ARROW => {

@@ -92,6 +92,7 @@ fn main() -> u32 {
             initialized = response_for(process, 1)
             if "error" in initialized:
                 raise RuntimeError(f"initialize failed: {initialized}")
+            assert initialized["result"]["serverInfo"]["version"] == "0.2.1", initialized
             send_message(process, {"jsonrpc": "2.0", "method": "initialized", "params": {}})
 
             for uri, text in ((net_path.as_uri(), net_source), (main_path.as_uri(), main_source)):
@@ -257,6 +258,22 @@ fn draw_frame(value:u32)->u32{ret value}
             assert '#attr(decorator)' in decorated, decorated
             assert '@RENDER_PROFILE.profile("draw_frame")' in decorated, decorated
             assert "fn draw_frame(value: u32) -> u32 {" in decorated, decorated
+
+            send_message(
+                process,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 7,
+                    "method": "textDocument/completion",
+                    "params": {
+                        "textDocument": {"uri": decorator_path.as_uri()},
+                        "position": {"line": 7, "character": 0},
+                    },
+                },
+            )
+            completion = response_for(process, 7)["result"]
+            labels = {item["label"] for item in completion["items"]}
+            assert {"async", "await", "spawn", "static"} <= labels, labels
 
             send_message(
                 process,

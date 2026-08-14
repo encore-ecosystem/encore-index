@@ -2,163 +2,332 @@ import core::option::Option
 import core::testing::assert
 
 import ehirlib::RepresentationKind
-import ehirlib::parse_parameter_text
-import ehirlib::parse_type_text
-import ehirlib::type_to_string
-import ehirlib::parse_variable_text
-import ehirlib::parse_instruction_text
-import ehirlib::parse_terminator_text
 import ehirlib::instruction_to_string
-import ehirlib::terminator_to_string
-import ehirlib::parse_module_text
-import ehirlib::module_to_string
 import ehirlib::module_bundle_to_string
+import ehirlib::module_to_string
+import ehirlib::parse_instruction_text
 import ehirlib::parse_module_bundle_artifact
 import ehirlib::parse_module_bundle_artifact_parallel
 import ehirlib::parse_module_bundle_text
+import ehirlib::parse_module_text
+import ehirlib::parse_parameter_text
+import ehirlib::parse_terminator_text
+import ehirlib::parse_type_text
+import ehirlib::parse_variable_text
+import ehirlib::terminator_to_string
+import ehirlib::type_to_string
 
 fn main() -> u32 {
     let nested = parse_type_text("Result[Option[u32], Vec[str]]<H>")
-    if !assert(nested.name == "Result") { ret 1_u32 }
-    if !assert(nested.representation == RepresentationKind::NodeHeap) { ret 2_u32 }
-    if !assert(nested.generics.len() == 2_usize) { ret 3_u32 }
+    if !assert(nested.name == "Result") {
+        ret 1_u32
+    }
+    if !assert(nested.representation == RepresentationKind::NodeHeap) {
+        ret 2_u32
+    }
+    if !assert(nested.generics.len() == 2_usize) {
+        ret 3_u32
+    }
     match nested.generics.get(0_usize) {
-        Option::Some(typ) => { if !assert(typ.name == "Option") { ret 4_u32 } }
-        Option::None => { ret 4_u32 }
+        Option::Some(typ) => {
+            if !assert(typ.name == "Option") {
+                ret 4_u32
+            }
+        }
+        Option::None => {
+            ret 4_u32
+        }
     }
     match nested.generics.get(1_usize) {
-        Option::Some(typ) => { if !assert(typ.name == "Vec") { ret 5_u32 } }
-        Option::None => { ret 5_u32 }
+        Option::Some(typ) => {
+            if !assert(typ.name == "Vec") {
+                ret 5_u32
+            }
+        }
+        Option::None => {
+            ret 5_u32
+        }
     }
 
     let raw = parse_type_text("u8*")
-    if !assert(raw.name == "u8") { ret 6_u32 }
-    if !assert(raw.representation == RepresentationKind::Raw) { ret 7_u32 }
+    if !assert(raw.name == "u8") {
+        ret 6_u32
+    }
+    if !assert(raw.representation == RepresentationKind::Raw) {
+        ret 7_u32
+    }
 
     let inline = parse_type_text("Node")
-    if !assert(inline.representation == RepresentationKind::Inline) { ret 36_u32 }
-    if !assert(type_to_string(inline) == "Node") { ret 37_u32 }
+    if !assert(inline.representation == RepresentationKind::Inline) {
+        ret 36_u32
+    }
+    if !assert(type_to_string(inline) == "Node") {
+        ret 37_u32
+    }
 
     let stack_node = parse_type_text("Node<S>")
-    if !assert(stack_node.representation == RepresentationKind::NodeStack) { ret 38_u32 }
-    if !assert(type_to_string(stack_node) == "Node<S>") { ret 39_u32 }
+    if !assert(stack_node.representation == RepresentationKind::NodeStack) {
+        ret 38_u32
+    }
+    if !assert(type_to_string(stack_node) == "Node<S>") {
+        ret 39_u32
+    }
 
     let heap_node = parse_type_text("Node<H>")
-    if !assert(heap_node.representation == RepresentationKind::NodeHeap) { ret 40_u32 }
-    if !assert(type_to_string(heap_node) == "Node<H>") { ret 41_u32 }
+    if !assert(heap_node.representation == RepresentationKind::NodeHeap) {
+        ret 40_u32
+    }
+    if !assert(type_to_string(heap_node) == "Node<H>") {
+        ret 41_u32
+    }
 
     let any_node = parse_type_text("Node&")
-    if !assert(any_node.representation == RepresentationKind::NodeAny) { ret 42_u32 }
-    if !assert(type_to_string(any_node) == "Node&") { ret 43_u32 }
+    if !assert(any_node.representation == RepresentationKind::NodeAny) {
+        ret 42_u32
+    }
+    if !assert(type_to_string(any_node) == "Node&") {
+        ret 43_u32
+    }
 
     let mutable_place = parse_type_text("mut Node")
-    if !assert(mutable_place.representation == RepresentationKind::LocalPlace) { ret 44_u32 }
-    if !assert(type_to_string(mutable_place) == "mut Node") { ret 45_u32 }
+    if !assert(mutable_place.representation == RepresentationKind::LocalPlace) {
+        ret 44_u32
+    }
+    if !assert(type_to_string(mutable_place) == "mut Node") {
+        ret 45_u32
+    }
 
     let parameter = parse_parameter_text("value: Result[u32, str]")
-    if !assert(parameter.name == "value") { ret 8_u32 }
-    if !assert(parameter.typ.name == "Result") { ret 9_u32 }
+    if !assert(parameter.name == "value") {
+        ret 8_u32
+    }
+    if !assert(parameter.typ.name == "Result") {
+        ret 9_u32
+    }
 
     let typed = parse_variable_text("result: Option[u64]")
-    if !assert(typed.name == "result") { ret 10_u32 }
+    if !assert(typed.name == "result") {
+        ret 10_u32
+    }
     match typed.typ {
         Option::Some(typ) => {
-            if !assert(typ.name == "Option") { ret 11_u32 }
+            if !assert(typ.name == "Option") {
+                ret 11_u32
+            }
         }
-        Option::None => { ret 12_u32 }
+        Option::None => {
+            ret 12_u32
+        }
     }
 
     let untyped = parse_variable_text("label_value")
     match untyped.typ {
-        Option::Some(_) => { ret 13_u32 }
-        Option::None => {}
+        Option::Some(_) => {
+            ret 13_u32
+        }
+        Option::None => {
+        }
     }
 
     let literal = parse_instruction_text("answer: u32 = capprim 42_u32")
-    if !assert(instruction_to_string(literal) == "answer: u32 = lcpos 42_u32") { ret 14_u32 }
+    if !assert(instruction_to_string(literal) == "answer: u32 = lcpos 42_u32") {
+        ret 14_u32
+    }
     let binary = parse_instruction_text("sum: u32 = add lhs, rhs")
-    if !assert(instruction_to_string(binary) == "sum: u32 = add lhs, rhs") { ret 15_u32 }
+    if !assert(instruction_to_string(binary) == "sum: u32 = add lhs, rhs") {
+        ret 15_u32
+    }
     let field = parse_instruction_text("item: str = getfield pair > 1")
-    if !assert(instruction_to_string(field) == "item: str = getfield pair, 1") { ret 16_u32 }
+    if !assert(instruction_to_string(field) == "item: str = getfield pair, 1") {
+        ret 16_u32
+    }
     let field_round_trip = parse_instruction_text(instruction_to_string(field))
-    if !assert(instruction_to_string(field_round_trip) == "item: str = getfield pair, 1") { ret 51_u32 }
+    if !assert(instruction_to_string(field_round_trip) == "item: str = getfield pair, 1") {
+        ret 51_u32
+    }
     let branch = parse_terminator_text("cbr ready, $yes, $no")
-    if !assert(terminator_to_string(branch) == "cbr ready, $yes, $no") { ret 17_u32 }
+    if !assert(terminator_to_string(branch) == "cbr ready, $yes, $no") {
+        ret 17_u32
+    }
     let typed_branch = parse_terminator_text("cbr ready: bool, $yes, $no")
-    if !assert(terminator_to_string(typed_branch) == "cbr ready: bool, $yes, $no") { ret 54_u32 }
+    if !assert(terminator_to_string(typed_branch) == "cbr ready: bool, $yes, $no") {
+        ret 54_u32
+    }
+    let matched = parse_terminator_text(
+        "match state: Option[u32], $missing {\n  Some(value: u32) => $present\n  None => $missing\n}",)
+    let matched_text = terminator_to_string(matched)
+    if !assert(matched_text.contains("Some(value: u32) => $present")) {
+        ret 62_u32
+    }
+    if !assert(terminator_to_string(parse_terminator_text(matched_text)) == matched_text) {
+        ret 63_u32
+    }
+    let legacy_match = parse_terminator_text(
+        "match state: Option[u32], $missing {\n  Some(value: u32) -> $present\n}",)
+    if !assert(terminator_to_string(legacy_match).contains("Some(value: u32) => $present")) {
+        ret 64_u32
+    }
+    let switched = parse_terminator_text(
+        "switch tag: u32, $other {\n  0_u32 => $zero\n  1_u32 => $one\n}",)
+    let switched_text = terminator_to_string(switched)
+    if !assert(switched_text.contains("0_u32 => $zero")) {
+        ret 65_u32
+    }
+    if !assert(terminator_to_string(parse_terminator_text(switched_text)) == switched_text) {
+        ret 66_u32
+    }
     let retained = parse_instruction_text("retain result: Option[u64]")
-    if !assert(instruction_to_string(retained) == "retain result: Option[u64]") { ret 18_u32 }
+    if !assert(instruction_to_string(retained) == "retain result: Option[u64]") {
+        ret 18_u32
+    }
     let awaited = parse_instruction_text("value: u32 = await pending: TestFuture")
-    if !assert(instruction_to_string(awaited) == "value: u32 = await pending: TestFuture") { ret 19_u32 }
+    if !assert(instruction_to_string(awaited) == "value: u32 = await pending: TestFuture") {
+        ret 19_u32
+    }
     let merged = parse_instruction_text("value: u32 = phi left: u32 $left, right: u32 $right")
-    if !assert(instruction_to_string(merged) == "value: u32 = phi left: u32 $left, right: u32 $right") { ret 20_u32 }
+    if !assert(instruction_to_string(merged) == "value: u32 = phi left: u32 $left, right: u32 $right") {
+        ret 20_u32
+    }
     let added_edge = parse_instruction_text("addedge owner: Node&, child: Node<H>")
-    if !assert(instruction_to_string(added_edge) == "addedge owner: Node&, child: Node<H>") { ret 46_u32 }
+    if !assert(instruction_to_string(added_edge) == "addedge owner: Node&, child: Node<H>") {
+        ret 46_u32
+    }
     let removed_edge = parse_instruction_text("removeedge owner: Node&, child: Node<H>")
-    if !assert(instruction_to_string(removed_edge) == "removeedge owner: Node&, child: Node<H>") { ret 47_u32 }
+    if !assert(instruction_to_string(removed_edge) == "removeedge owner: Node&, child: Node<H>") {
+        ret 47_u32
+    }
 
     let module_text = "struct Pair[T] {\n  left: T\n  right: T\n}\n\nenum Result[T, E] {\n  Ok(T)\n  Err(E)\n}\n\nextern fn puts(value: str) -> i32\n\nasync fn load_value(pending: TestFuture) -> u32 {\n  $entry:\n    value: u32 = await pending\n    ret value: u32\n}\n\nfn add_one(value: u32) -> u32 {\n  $entry:\n    one: u32 = capprim 1_u32\n    result: u32 = add value, one\n    ret result: u32\n}\n"
     let module = parse_module_text("parser_contract", module_text)
-    if !assert(module.name == "parser_contract") { ret 21_u32 }
-    if !assert(module.directives.len() == 5_usize) { ret 22_u32 }
+    if !assert(module.name == "parser_contract") {
+        ret 21_u32
+    }
+    if !assert(module.directives.len() == 5_usize) {
+        ret 22_u32
+    }
     let rendered = module_to_string(module)
-    if !assert(rendered.len() > 0_usize) { ret 23_u32 }
-    if !assert(rendered.contains("async fn load_value")) { ret 24_u32 }
+    if !assert(rendered.len() > 0_usize) {
+        ret 23_u32
+    }
+    if !assert(rendered.contains("async fn load_value")) {
+        ret 24_u32
+    }
     let imported_text = "import core@lib.enq\n\nfn answer() -> u32 {\n  $entry:\n    value: u32 = lcpos 42_u32\n    ret value: u32\n}\n"
     let imported = parse_module_text("answer@lib.enq", imported_text)
-    if !assert(imported.imports.len() == 1_usize) { ret 25_u32 }
+    if !assert(imported.imports.len() == 1_usize) {
+        ret 25_u32
+    }
     match imported.imports.get(0_usize) {
         Option::Some(imported_module) => {
-            if !assert(imported_module.module_id == "core@lib.enq") { ret 26_u32 }
+            if !assert(imported_module.module_id == "core@lib.enq") {
+                ret 26_u32
+            }
         }
-        Option::None => { ret 26_u32 }
+        Option::None => {
+            ret 26_u32
+        }
     }
     let bundle_text = "module answer@lib.enq {\n" + imported_text + "}\n\nmodule app@main.enq {\nimport answer@lib.enq\n\nfn main() -> u32 {\n  $entry:\n    value: u32 = call answer()\n    ret value: u32\n}\n}\n"
     let bundle = parse_module_bundle_text("app@main.enq", bundle_text)
-    if !assert(bundle.modules.len() == 2_usize) { ret 27_u32 }
+    if !assert(bundle.modules.len() == 2_usize) {
+        ret 27_u32
+    }
     let artifact = parse_module_bundle_artifact("app@main.enq", bundle_text)
-    if !assert(artifact.bundle().modules.len() == 2_usize) { ret 55_u32 }
-    if !assert(artifact.sources().len() == 2_usize) { ret 56_u32 }
+    if !assert(artifact.bundle().modules.len() == 2_usize) {
+        ret 55_u32
+    }
+    if !assert(artifact.sources().len() == 2_usize) {
+        ret 56_u32
+    }
     match artifact.sources().get(1_usize) {
         Option::Some(source) => {
-            if !assert(source.id() == "app@main.enq") { ret 57_u32 }
-            if !assert(source.source().contains("fn main")) { ret 58_u32 }
+            if !assert(source.id() == "app@main.enq") {
+                ret 57_u32
+            }
+            if !assert(source.source().contains("fn main")) {
+                ret 58_u32
+            }
         }
-        Option::None => { ret 59_u32 }
+        Option::None => {
+            ret 59_u32
+        }
     }
     let parallel_artifact = parse_module_bundle_artifact_parallel(
         "app@main.enq", bundle_text, 2_usize,)
-    if !assert(parallel_artifact.bundle().modules.len() == 2_usize) { ret 60_u32 }
-    if !assert(parallel_artifact.sources().len() == 2_usize) { ret 61_u32 }
+    if !assert(parallel_artifact.bundle().modules.len() == 2_usize) {
+        ret 60_u32
+    }
+    if !assert(parallel_artifact.sources().len() == 2_usize) {
+        ret 61_u32
+    }
     let bundle_rendered = module_bundle_to_string(bundle)
     let reparsed = parse_module_bundle_text("app@main.enq", bundle_rendered)
-    if !assert(reparsed.entry_module == "app@main.enq") { ret 28_u32 }
-    if !assert(reparsed.modules.len() == 2_usize) { ret 29_u32 }
+    if !assert(reparsed.entry_module == "app@main.enq") {
+        ret 28_u32
+    }
+    if !assert(reparsed.modules.len() == 2_usize) {
+        ret 29_u32
+    }
     let documented_text = "//! Networking primitives.\n//!\n//! Shared API.\n\n/// Opens a connection.\nfn connect() -> u32 {\n  $entry:\n    value: u32 = lcpos 0_u32\n    ret value: u32\n}\n"
     let documented = parse_module_text("net@lib.enq", documented_text)
     match documented.documentation {
         Option::Some(text) => {
-            if !assert(text == "Networking primitives.\n\nShared API.") { ret 30_u32 }
+            if !assert(text == "Networking primitives.\n\nShared API.") {
+                ret 30_u32
+            }
         }
-        Option::None => { ret 31_u32 }
+        Option::None => {
+            ret 31_u32
+        }
     }
     match documented.symbol_documentation.get(0_usize) {
         Option::Some(doc) => {
-            if !assert(doc.target == "connect") { ret 32_u32 }
-            if !assert(doc.text == "Opens a connection.") { ret 33_u32 }
+            if !assert(doc.target == "connect") {
+                ret 32_u32
+            }
+            if !assert(doc.text == "Opens a connection.") {
+                ret 33_u32
+            }
         }
-        Option::None => { ret 34_u32 }
+        Option::None => {
+            ret 34_u32
+        }
     }
     let documented_round_trip = parse_module_text("net@lib.enq", module_to_string(documented))
-    if !assert(documented_round_trip.symbol_documentation.len() == 1_usize) { ret 35_u32 }
+    if !assert(documented_round_trip.symbol_documentation.len() == 1_usize) {
+        ret 35_u32
+    }
     let extern_impl_text = "struct Counter {\n  value: u32\n}\n\nimpl Counter {\n  extern fn read(self: Counter) -> u32\n}\n"
     let extern_impl = parse_module_text("extern_impl", extern_impl_text)
-    if !assert(extern_impl.directives.len() == 2_usize) { ret 48_u32 }
+    if !assert(extern_impl.directives.len() == 2_usize) {
+        ret 48_u32
+    }
     let extern_impl_rendered = module_to_string(extern_impl)
-    if !assert(extern_impl_rendered.contains("impl Counter {")) { ret 52_u32 }
-    if !assert(!extern_impl_rendered.contains("impl  for Counter")) { ret 53_u32 }
-    if !assert(extern_impl_rendered.contains("extern fn read(self: Counter) -> u32")) { ret 49_u32 }
+    if !assert(extern_impl_rendered.contains("impl Counter {")) {
+        ret 52_u32
+    }
+    if !assert(!extern_impl_rendered.contains("impl  for Counter")) {
+        ret 53_u32
+    }
+    if !assert(extern_impl_rendered.contains("extern fn read(self: Counter) -> u32")) {
+        ret 49_u32
+    }
     let extern_impl_round_trip = parse_module_text("extern_impl", extern_impl_rendered)
-    if !assert(extern_impl_round_trip.directives.len() == 2_usize) { ret 50_u32 }
+    if !assert(extern_impl_round_trip.directives.len() == 2_usize) {
+        ret 50_u32
+    }
+    let control_flow_text = "enum Choice {\n  First(u32)\n  Second(u32)\n}\n\nfn choose(value: Choice) -> u32 {\n  $entry:\n    match value: Choice, $fallback {\n      First(payload: u32) => $first\n      Second(payload: u32) => $second\n    }\n  $first:\n    ret payload: u32\n  $second:\n    ret payload: u32\n  $fallback:\n    zero: u32 = lcpos 0_u32\n    ret zero: u32\n}\n\nfn select(tag: u32) -> u32 {\n  $entry:\n    switch tag: u32, $fallback {\n      0_u32 => $zero\n    }\n  $zero:\n    value: u32 = lcpos 10_u32\n    ret value: u32\n  $fallback:\n    value: u32 = lcpos 20_u32\n    ret value: u32\n}\n"
+    let control_flow = parse_module_text("control_flow", control_flow_text)
+    let control_flow_rendered = module_to_string(control_flow)
+    if !assert(control_flow_rendered.contains("First(payload: u32) => $first")) {
+        ret 67_u32
+    }
+    if !assert(control_flow_rendered.contains("0_u32 => $zero")) {
+        ret 68_u32
+    }
+    let control_flow_round_trip = parse_module_text("control_flow", control_flow_rendered)
+    if !assert(module_to_string(control_flow_round_trip) == control_flow_rendered) {
+        ret 69_u32
+    }
     ret 0_u32
 }
