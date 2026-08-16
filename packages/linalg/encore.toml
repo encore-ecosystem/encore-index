@@ -1,7 +1,9 @@
 [project]
 name = "linalg"
-version = "0.1.0"
+version = "0.1.1"
+repository = "https://github.com/encore-ecosystem/encore-index"
+encore = ">=0.2.1, <0.3.0"
 description = "Vectors, matrices and transforms for Encore"
 readme = "README.md"
 licence = "MIT"
-dependencies = ["path@../std"]
+dependencies = ["index@std@^1.0.1"]
