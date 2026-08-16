@@ -1,1 +1,21 @@
-{"name":"linalg","versions":[{"version":"0.1.0","archive":"https://github.com/encore-ecosystem/encore-index/releases/download/packages-v0.1.4/linalg-0.1.0.tar.gz","checksum":"4e5aaaddd6976eaa9995f48e289749f739e569bf2b16c11cc3d07236374279f7","yanked":false}]}
+{
+  "name": "linalg",
+  "repository": "https://github.com/encore-ecosystem/encore-index",
+  "versions": [
+    {
+      "version": "0.1.0",
+      "archive": "https://github.com/encore-ecosystem/encore-index/releases/download/packages-v0.1.4/linalg-0.1.0.tar.gz",
+      "checksum": "4e5aaaddd6976eaa9995f48e289749f739e569bf2b16c11cc3d07236374279f7",
+      "yanked": false
+    },
+    {
+      "version": "0.1.1",
+      "archive": "https://github.com/encore-ecosystem/encore-index/releases/download/linalg-v0.1.1/linalg-0.1.1.tar.gz",
+      "checksum": "6da0e67aaf161889e05a72804dce04bbf155d1016231fe4062f4ab95a1ea66e8",
+      "yanked": false,
+      "encore": ">=0.2.1, <0.3.0",
+      "commit": "e56bad579f69f80d95f1986201caf9ca40253478",
+      "subdir": "packages/linalg"
+    }
+  ]
+}
