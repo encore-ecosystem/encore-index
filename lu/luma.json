@@ -1,11 +1,21 @@
 {
   "name": "luma",
+  "repository": "https://github.com/encore-ecosystem/Luma",
   "versions": [
     {
       "version": "0.1.1",
       "archive": "https://github.com/encore-ecosystem/Luma/releases/download/v0.1.1/luma-0.1.1.tar.gz",
       "checksum": "6963dcbeed7371083f27c2c43aa651c9e0996b063652cddab5fc5bfe4a15feb4",
       "yanked": false
+    },
+    {
+      "version": "0.2.0",
+      "archive": "https://github.com/encore-ecosystem/Luma/releases/download/luma-v0.2.0/luma-0.2.0.tar.gz",
+      "checksum": "a65f089861588607c1d73adc977d49d4b4822bc2408d46ccaa04815e7a1b9dd6",
+      "yanked": false,
+      "encore": ">=0.2.1, <0.3.0",
+      "commit": "88c9128c6f6bbb4774cfbcf88b26bb07e07b9c99",
+      "subdir": ""
     }
   ]
 }
