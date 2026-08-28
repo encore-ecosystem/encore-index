@@ -101,6 +101,11 @@ extern fn encore_str_slice(value: str, start: usize, slice_len: usize) -> str
 extern fn encore_str_char_len(value: str) -> usize
 extern fn encore_str_char_at(value: str, index: usize) -> str
 extern fn encore_str_slice_chars(value: str, start: usize, char_len: usize) -> str
+extern fn encore_str_find_from(value: str, needle: str, start: usize) -> usize
+extern fn encore_str_eq_ignore_ascii_case(lhs: str, rhs: str) -> bool
+extern fn encore_str_range_eq(value: str, start: usize, range_len: usize, other: str) -> bool
+extern fn encore_str_range_eq_ignore_ascii_case(value: str, start: usize, range_len: usize, other: str) -> bool
+extern fn encore_str_find_byte_from(value: str, needle: u8, start: usize) -> usize
 
 impl Add[str] for str {
     fn op(self: str, other: str) -> str {
@@ -111,6 +116,31 @@ impl Add[str] for str {
 }
 
 impl for str {
+    /// Finds the first byte substring at or after `start`, returning `len()` when absent.
+    pub fn find_from(self: str, needle: str, start: usize) -> usize {
+        unsafe { ret encore_str_find_from(self, needle, start) }
+    }
+
+    /// Compares ASCII text without allocating lowercase copies.
+    pub fn eq_ignore_ascii_case(self: str, other: str) -> bool {
+        unsafe { ret encore_str_eq_ignore_ascii_case(self, other) }
+    }
+
+    /// Compares a byte range with another string without creating a slice.
+    pub fn range_eq(self: str, start: usize, range_len: usize, other: str) -> bool {
+        unsafe { ret encore_str_range_eq(self, start, range_len, other) }
+    }
+
+    /// Compares a byte range as ASCII without creating a slice.
+    pub fn range_eq_ignore_ascii_case(self: str, start: usize, range_len: usize, other: str) -> bool {
+        unsafe { ret encore_str_range_eq_ignore_ascii_case(self, start, range_len, other) }
+    }
+
+    /// Finds one byte at or after `start`, returning `len()` when absent.
+    pub fn find_byte_from(self: str, needle: u8, start: usize) -> usize {
+        unsafe { ret encore_str_find_byte_from(self, needle, start) }
+    }
+
     /// Returns the len of this value.
     pub fn len(self: str) -> usize {
         // Raw string length in bytes.

@@ -48,7 +48,7 @@ pub fn normalize_function_control_flow(function: FnDirective) -> FnDirective {
     // promotion workspace is borrowed and replacement vectors own their graph
     // explicitly, so the pass no longer creates overlapping transient owners
     // while iterating to a fixed point.
-    let normalized = normalize_returns(function)
+    let mut normalized = normalize_returns(function)
     // The source-level mem2reg pass rewrites one candidate at a time and is
     // intentionally conservative. Its cost is quadratic on generated
     // compiler/editor mega-functions (hundreds of seconds for one function),
@@ -163,24 +163,33 @@ struct PromotionSlot {
 /// headers, so the canonical result no longer relies on backend mem2reg.
 fn promote_local_stack_slots(function: FnDirective) -> FnDirective {
     if function.is_extern { ret function }
-    let mut out = function
-    let slots = promotion_slots(out)
-    let instruction_count = function_instruction_count(out)
+    let slots = promotion_slots(function)
+    let instruction_count = function_instruction_count(function)
     // The current precise phi placement is slot-at-a-time. Preserve valid raw
     // stack storage when that algorithm would become quadratic on generated
     // state machines (notably retained editor event loops). LLVM accepts the
     // same explicit salloc/load/store semantics; a future batch mem2reg pass
     // can remove this guard without changing the EHIR memory model.
     if slots.len() > 0_usize && instruction_count > 0_usize {
-        if slots.len() > 25000_usize / instruction_count { ret out }
+        if slots.len() > 25000_usize / instruction_count { ret function }
     }
-    for slot in slots {
-        match promote_one_slot(out, slot) {
-            Some(promoted) => { out = promoted }
-            None => {}
+    ret promote_local_stack_slot_at(function, slots, 0_usize)
+}
+
+fn promote_local_stack_slot_at(function: FnDirective, slots: Vec[PromotionSlot],
+    index: usize,) -> FnDirective {
+    if index >= slots.len() { ret function }
+    match slots.get(index) {
+        Some(slot) => {
+            match promote_one_slot(function, slot) {
+                Some(promoted) => {
+                    ret promote_local_stack_slot_at(promoted, slots, index + 1_usize)
+                }
+                None => { ret function }
+            }
         }
+        None => { ret function }
     }
-    ret out
 }
 
 fn promotion_slots(function: FnDirective) -> Vec[PromotionSlot] {
