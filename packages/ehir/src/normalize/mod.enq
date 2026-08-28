@@ -161,7 +161,7 @@ struct PromotionSlot {
 /// `load` and `store`. Raw buffers, element pointers and addresses passed to
 /// calls remain memory. Join blocks receive explicit phi nodes, including loop
 /// headers, so the canonical result no longer relies on backend mem2reg.
-fn promote_local_stack_slots(function: mut FnDirective) -> FnDirective {
+fn promote_local_stack_slots(function: FnDirective) -> FnDirective {
     if function.is_extern { ret function }
     let slots = promotion_slots(function)
     let instruction_count = function_instruction_count(function)
@@ -173,13 +173,23 @@ fn promote_local_stack_slots(function: mut FnDirective) -> FnDirective {
     if slots.len() > 0_usize && instruction_count > 0_usize {
         if slots.len() > 25000_usize / instruction_count { ret function }
     }
-    for slot in slots {
-        match promote_one_slot(function, slot) {
-            Some(promoted) => { function = promoted }
-            None => {}
+    ret promote_local_stack_slot_at(function, slots, 0_usize)
+}
+
+fn promote_local_stack_slot_at(function: FnDirective, slots: Vec[PromotionSlot],
+    index: usize,) -> FnDirective {
+    if index >= slots.len() { ret function }
+    match slots.get(index) {
+        Some(slot) => {
+            match promote_one_slot(function, slot) {
+                Some(promoted) => {
+                    ret promote_local_stack_slot_at(promoted, slots, index + 1_usize)
+                }
+                None => { ret function }
+            }
         }
+        None => { ret function }
     }
-    ret function
 }
 
 fn promotion_slots(function: FnDirective) -> Vec[PromotionSlot] {

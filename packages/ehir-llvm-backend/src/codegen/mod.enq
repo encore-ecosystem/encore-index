@@ -706,8 +706,20 @@ fn thread_context_declarations(directives: frozen Vec[Directive]) -> Vec[str] {
     let seen = unsafe { encore_strset_new() }
     for directive in directives {
         match directive {
-            Directive::Function(function) => { for block_item in function.blocks { for instruction in block_item.instructions { append_thread_context_declaration(out, seen, instruction) } } }
-            Directive::Impl(item) => { for method in item.methods { for block_item in method.blocks { for instruction in block_item.instructions { append_thread_context_declaration(out, seen, instruction) } } } }
+            Directive::Function(function) => {
+                if function.generics.len() == 0_usize {
+                    for block_item in function.blocks { for instruction in block_item.instructions { append_thread_context_declaration(out, seen, instruction) } }
+                }
+            }
+            Directive::Impl(item) => {
+                if item.generics.len() == 0_usize {
+                    for method in item.methods {
+                        if method.generics.len() == 0_usize {
+                            for block_item in method.blocks { for instruction in block_item.instructions { append_thread_context_declaration(out, seen, instruction) } }
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -793,8 +805,20 @@ fn thread_trampolines(directives: frozen Vec[Directive]) -> Vec[LLVMFunction] {
     let seen = unsafe { encore_strset_new() }
     for directive in directives {
         match directive {
-            Directive::Function(function) => { for block_item in function.blocks { for instruction in block_item.instructions { append_thread_trampoline(out, seen, instruction) } } }
-            Directive::Impl(item) => { for method in item.methods { for block_item in method.blocks { for instruction in block_item.instructions { append_thread_trampoline(out, seen, instruction) } } } }
+            Directive::Function(function) => {
+                if function.generics.len() == 0_usize {
+                    for block_item in function.blocks { for instruction in block_item.instructions { append_thread_trampoline(out, seen, instruction) } }
+                }
+            }
+            Directive::Impl(item) => {
+                if item.generics.len() == 0_usize {
+                    for method in item.methods {
+                        if method.generics.len() == 0_usize {
+                            for block_item in method.blocks { for instruction in block_item.instructions { append_thread_trampoline(out, seen, instruction) } }
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
