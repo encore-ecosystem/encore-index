@@ -640,7 +640,6 @@ fn append_escaped_string(builder: usize, value: str) -> () {
     }
     ret ()
 }
-
 fn text_builder_new() -> usize {
     ret unsafe { encore_text_builder_new() }
 }

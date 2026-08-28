@@ -502,45 +502,47 @@ fn lower_body_block(build: mut CoroutineBuild, source: Block, future_name: str) 
 
 fn normalize_instruction(build: mut CoroutineBuild, instruction: Instruction) -> Vec[Instruction] {
     let mut out = Vec[Instruction]::new()
-    let mut lowered = instruction
-    match instruction {
+    let lowered = match instruction {
         Instruction::Phi(_) => { ret out }
-        Instruction::Alias(item) => { lowered = alias(item.out, read_value(build, out, item.src, "alias")) }
-        Instruction::Lcsos(item) => { lowered = lcsos(item.out, item.typ, read_values(build, out, item.args, "struct")) }
+        Instruction::Alias(item) => { alias(item.out, read_value(build, out, item.src, "alias")) }
+        Instruction::Lcsos(item) => { lcsos(item.out, item.typ, read_values(build, out, item.args, "struct")) }
         Instruction::Lceos(item) => {
             let payload = match item.value.payload {
                 Some(value) => { Option[Variable]::Some(read_value(build, out, value, "enum")) }
                 None => { Option[Variable]::None }
             }
-            lowered = lceos(item.out, enum_value(item.value.name, item.value.generics, item.value.variant, payload))
+            lceos(item.out, enum_value(item.value.name, item.value.generics, item.value.variant, payload))
         }
-        Instruction::Call(item) => { lowered = call(item.out, item.name, item.generics, read_values(build, out, item.args, "call"), item.is_unsafe) }
-        Instruction::Store(item) => { lowered = store(read_value(build, out, item.src, "store_src"), read_value(build, out, item.dst, "store_dst")) }
-        Instruction::Load(item) => { lowered = load(item.out, read_value(build, out, item.src, "load")) }
-        Instruction::GetField(item) => { lowered = getfield(item.out, read_value(build, out, item.src, "field"), item.field) }
-        Instruction::SetField(item) => { lowered = setfield(read_value(build, out, item.src, "set_owner"), item.field, read_value(build, out, item.value, "set_value")) }
-        Instruction::GetFieldPtr(item) => { lowered = getfieldptr(item.out, read_value(build, out, item.src, "field_ptr"), item.field) }
-        Instruction::SGetField(item) => { lowered = sgetfield(item.out, read_value(build, out, item.src, "sfield"), item.field) }
-        Instruction::SGetFieldPtr(item) => { lowered = sgetfieldptr(item.out, read_value(build, out, item.src, "sfield_ptr"), item.field) }
-        Instruction::GetPtr(item) => { lowered = getptr(item.out, read_value(build, out, item.src, "getptr")) }
-        Instruction::Gep(item) => { lowered = gep(item.out, read_value(build, out, item.src, "gep_src"), read_value(build, out, item.offset, "gep_offset")) }
-        Instruction::PtrCast(item) => { lowered = pcast(item.out, read_value(build, out, item.src, "pcast"), item.target_type) }
-        Instruction::HeapRealloc(item) => { lowered = hrealloc(item.out, read_value(build, out, item.src, "realloc_src"), read_value(build, out, item.count, "realloc_count")) }
-        Instruction::HeapFree(item) => { lowered = hfree(read_value(build, out, item.src, "free")) }
-        Instruction::Binary(item) => { lowered = binary(item.out, read_value(build, out, item.lhs, "binary_lhs"), read_value(build, out, item.rhs, "binary_rhs"), item.op) }
-        Instruction::Cfree(item) => { lowered = cfree(read_value(build, out, item.value, "cfree")) }
+        Instruction::Call(item) => { call(item.out, item.name, item.generics, read_values(build, out, item.args, "call"), item.is_unsafe) }
+        Instruction::Store(item) => { store(read_value(build, out, item.src, "store_src"), read_value(build, out, item.dst, "store_dst")) }
+        Instruction::Load(item) => { load(item.out, read_value(build, out, item.src, "load")) }
+        Instruction::GetField(item) => { getfield(item.out, read_value(build, out, item.src, "field"), item.field) }
+        Instruction::SetField(item) => { setfield(read_value(build, out, item.src, "set_owner"), item.field, read_value(build, out, item.value, "set_value")) }
+        Instruction::GetFieldPtr(item) => { getfieldptr(item.out, read_value(build, out, item.src, "field_ptr"), item.field) }
+        Instruction::SGetField(item) => { sgetfield(item.out, read_value(build, out, item.src, "sfield"), item.field) }
+        Instruction::SGetFieldPtr(item) => { sgetfieldptr(item.out, read_value(build, out, item.src, "sfield_ptr"), item.field) }
+        Instruction::GetPtr(item) => { getptr(item.out, read_value(build, out, item.src, "getptr")) }
+        Instruction::Gep(item) => { gep(item.out, read_value(build, out, item.src, "gep_src"), read_value(build, out, item.offset, "gep_offset")) }
+        Instruction::PtrCast(item) => { pcast(item.out, read_value(build, out, item.src, "pcast"), item.target_type) }
+        Instruction::HeapRealloc(item) => { hrealloc(item.out, read_value(build, out, item.src, "realloc_src"), read_value(build, out, item.count, "realloc_count")) }
+        Instruction::HeapFree(item) => { hfree(read_value(build, out, item.src, "free")) }
+        Instruction::Binary(item) => { binary(item.out, read_value(build, out, item.lhs, "binary_lhs"), read_value(build, out, item.rhs, "binary_rhs"), item.op) }
+        Instruction::Cfree(item) => { cfree(read_value(build, out, item.value, "cfree")) }
         Instruction::AddEdge(item) => {
-            lowered = add_edge(read_value(build, out, item.owner, "edge_owner"), read_value(build, out, item.value, "edge_value"))
+            add_edge(read_value(build, out, item.owner, "edge_owner"), read_value(build, out, item.value, "edge_value"))
         }
         Instruction::RemoveEdge(item) => {
-            lowered = remove_edge(read_value(build, out, item.owner, "edge_owner"), read_value(build, out, item.value, "edge_value"))
+            remove_edge(read_value(build, out, item.owner, "edge_owner"), read_value(build, out, item.value, "edge_value"))
         }
         Instruction::Drop(item) => {
-            if is_awaited_value(build, item.value.name) { ret out }
-            lowered = drop_value(read_value(build, out, item.value, "drop"))
+            if is_awaited_value(build, item.value.name) {
+                ret out
+            } else {
+                drop_value(read_value(build, out, item.value, "drop"))
+            }
         }
-        Instruction::Retain(item) => { lowered = retain_value(read_value(build, out, item.value, "retain")) }
-        _ => {}
+        Instruction::Retain(item) => { retain_value(read_value(build, out, item.value, "retain")) }
+        _ => { instruction }
     }
     out.push(lowered)
     match coroutine_instruction_output(lowered) {

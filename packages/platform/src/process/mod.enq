@@ -101,18 +101,28 @@ pub fn run(command: str) -> i32 {
 }
 
 /// Performs the `run_args` operation.
-pub fn run_args(program: str, args: Vec[str]) -> i32 {
-    let len = args.len()
+pub fn run_args(program: str, args: frozen Vec[str]) -> i32 {
+    let mut copied = Vec[str]::new()
+    for arg in args { copied.push("" + arg) }
+    let len = copied.len()
     let data = if len == 0_usize {
         0_usize
     } else {
         unsafe {
-            args.get_handle(0_usize)
+            copied.get_handle(0_usize)
         }
     }
     unsafe {
         ret encore_proc_run_args_parts(program, data, len)
     }
+}
+
+/// Runs a process while consuming an unaliased argument vector, avoiding the
+/// defensive copy required by the shared frozen overload.
+pub fn run_args_owned(program: str, args: Vec[str]) -> i32 {
+    let len = args.len()
+    let data = if len == 0_usize { 0_usize } else { unsafe { args.get_handle(0_usize) } }
+    unsafe { ret encore_proc_run_args_parts(program, data, len) }
 }
 
 /// Performs the `run_args_capture` operation.

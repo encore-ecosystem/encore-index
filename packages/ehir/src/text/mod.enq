@@ -87,10 +87,9 @@ fn join_strings(items: Vec[str], separator: str) -> str {
     ret out
 }
 
-fn push_text(items: Vec[str], value: str) -> Vec[str] {
-    let mut out = items
-    out.push(value)
-    ret out
+fn push_text(items: mut Vec[str], value: str) -> Vec[str] {
+    items.push(value)
+    ret items
 }
 
 fn collect_type_strings(items: Vec[Type]) -> Vec[str] {

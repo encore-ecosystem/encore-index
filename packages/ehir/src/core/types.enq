@@ -47,7 +47,7 @@ pub fn local_place_type(inner: Type) -> Type {
     ret Type{inner.name, inner.generics, RepresentationKind::LocalPlace}
 }
 
-fn join_mangled_generics(generics: Vec[Type]) -> str {
+fn join_mangled_generics(generics: frozen Vec[Type]) -> str {
     let mut out = ""
     let mut index = 0_usize
 
@@ -69,37 +69,20 @@ fn join_mangled_generics(generics: Vec[Type]) -> str {
     ret out
 }
 
-pub fn mangle_type_name(typ: Type) -> str {
+pub fn mangle_plain_type_name(name: str, generics: frozen Vec[Type]) -> str {
+    if generics.len() == 0_usize { ret name }
+    ret name + "_" + join_mangled_generics(generics)
+}
+
+pub fn mangle_type_name(typ: frozen Type) -> str {
+    let mut out = mangle_plain_type_name("" + typ.name, typ.generics)
     match typ.representation {
-        RepresentationKind::NodeHeap => {
-            let inner = plain_type(typ.name, typ.generics)
-            ret mangle_type_name(inner) + "_H"
-        }
-        RepresentationKind::NodeStack => {
-            let inner = plain_type(typ.name, typ.generics)
-            ret mangle_type_name(inner) + "_S"
-        }
-        RepresentationKind::NodeAny => {
-            let inner = plain_type(typ.name, typ.generics)
-            ret mangle_type_name(inner) + "_A"
-        }
-        RepresentationKind::Raw => {
-            let inner = plain_type(typ.name, typ.generics)
-            ret mangle_type_name(inner) + "_ptr"
-        }
-        RepresentationKind::LocalPlace => {
-            let inner = plain_type(typ.name, typ.generics)
-            ret mangle_type_name(inner) + "_local"
-        }
+        RepresentationKind::NodeHeap => { out = out + "_H" }
+        RepresentationKind::NodeStack => { out = out + "_S" }
+        RepresentationKind::NodeAny => { out = out + "_A" }
+        RepresentationKind::Raw => { out = out + "_ptr" }
+        RepresentationKind::LocalPlace => { out = out + "_local" }
         RepresentationKind::Inline => {}
     }
-
-    if typ.generics.len() == 0_usize {
-        ret typ.name
-    }
-
-    let mut out = typ.name
-    out = out + "_"
-    out = out + join_mangled_generics(typ.generics)
     ret out
 }

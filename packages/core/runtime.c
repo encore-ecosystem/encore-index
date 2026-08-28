@@ -224,6 +224,17 @@ size_t encore_str_size(encore_str value) {
     return value.object->len;
 }
 
+encore_str encore_str_from_buffer(const char *buffer, size_t len) {
+    if (buffer == NULL || len == 0) return encore_empty_str();
+    encore_str_object *object = malloc(sizeof(encore_str_object) + len + 1);
+    if (object == NULL) return encore_empty_str();
+    atomic_init(&object->ref_count, 1);
+    object->len = len;
+    memcpy(object->data, buffer, len);
+    object->data[len] = '\0';
+    return (encore_str){.object = object};
+}
+
 typedef struct {
     uint64_t hash;
     size_t len;
@@ -473,6 +484,23 @@ void encore_text_builder_append(void *raw_builder, encore_str value) {
     }
     if (len > 0) memcpy(builder->object->data + builder->len, encore_str_data(value), len);
     builder->len += len;
+}
+
+void encore_text_builder_append_usize(void *raw_builder, size_t value) {
+    encore_text_builder *builder = raw_builder;
+    if (builder == NULL || encore_text_builder_suppressed) return;
+    char digits[3 * sizeof(size_t) + 1];
+    int written = snprintf(digits, sizeof(digits), "%zu", value);
+    if (written <= 0) return;
+    size_t len = (size_t)written;
+    if (!encore_text_builder_reserve(builder, len)) {
+        builder->failed = true;
+        return;
+    }
+    memcpy(builder->object->data + builder->len, digits, len);
+    builder->len += len;
+    builder->object->len = builder->len;
+    builder->object->data[builder->len] = '\0';
 }
 
 void encore_text_builder_append_builder(void *raw_builder, void *raw_other) {
@@ -813,6 +841,65 @@ bool encore_str_eq(encore_str lhs, encore_str rhs) {
         return false;
     }
     return memcmp(lhs_data, rhs_data, lhs_len) == 0;
+}
+
+bool encore_str_eq_ignore_ascii_case(encore_str lhs, encore_str rhs) {
+    size_t lhs_len = encore_str_size(lhs);
+    size_t rhs_len = encore_str_size(rhs);
+    if (lhs_len != rhs_len) return false;
+    const unsigned char *lhs_data = (const unsigned char *)encore_str_data(lhs);
+    const unsigned char *rhs_data = (const unsigned char *)encore_str_data(rhs);
+    for (size_t index = 0; index < lhs_len; ++index) {
+        unsigned char left = lhs_data[index];
+        unsigned char right = rhs_data[index];
+        if (left >= 'A' && left <= 'Z') left = (unsigned char)(left + ('a' - 'A'));
+        if (right >= 'A' && right <= 'Z') right = (unsigned char)(right + ('a' - 'A'));
+        if (left != right) return false;
+    }
+    return true;
+}
+
+bool encore_str_range_eq(encore_str value, size_t start, size_t range_len,
+                         encore_str other) {
+    size_t value_len = encore_str_size(value);
+    size_t other_len = encore_str_size(other);
+    if (range_len != other_len || start > value_len || range_len > value_len - start) return false;
+    return range_len == 0 || memcmp(encore_str_data(value) + start,
+                                    encore_str_data(other), range_len) == 0;
+}
+
+bool encore_str_range_eq_ignore_ascii_case(encore_str value, size_t start,
+                                           size_t range_len, encore_str other) {
+    size_t value_len = encore_str_size(value);
+    size_t other_len = encore_str_size(other);
+    if (range_len != other_len || start > value_len || range_len > value_len - start) return false;
+    const unsigned char *left = (const unsigned char *)encore_str_data(value) + start;
+    const unsigned char *right = (const unsigned char *)encore_str_data(other);
+    for (size_t index = 0; index < range_len; ++index) {
+        unsigned char lhs = left[index];
+        unsigned char rhs = right[index];
+        if (lhs >= 'A' && lhs <= 'Z') lhs = (unsigned char)(lhs + ('a' - 'A'));
+        if (rhs >= 'A' && rhs <= 'Z') rhs = (unsigned char)(rhs + ('a' - 'A'));
+        if (lhs != rhs) return false;
+    }
+    return true;
+}
+
+size_t encore_str_find_from(encore_str value, encore_str needle, size_t start) {
+    size_t value_len = encore_str_size(value);
+    size_t needle_len = encore_str_size(needle);
+    if (start > value_len) return value_len;
+    if (needle_len == 0) return start;
+    if (needle_len > value_len - start) return value_len;
+    const char *data = encore_str_data(value);
+    const char *wanted = encore_str_data(needle);
+    size_t limit = value_len - needle_len;
+    for (size_t index = start; index <= limit; ++index) {
+        if (data[index] == wanted[0] && memcmp(data + index, wanted, needle_len) == 0) {
+            return index;
+        }
+    }
+    return value_len;
 }
 
 size_t encore_str_len(encore_str value) {

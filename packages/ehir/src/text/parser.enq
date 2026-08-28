@@ -1178,7 +1178,7 @@ pub fn parse_module_bundle_artifact_parallel(entry_module: str, source: str,
         index += 1_usize
     }
     ret ParsedModuleBundle {
-        make_module_bundle(scanned.entry_module, modules), scanned.module_sources
+        make_module_bundle("" + scanned.entry_module, modules), scanned.module_sources
     }
 }
 
@@ -1236,15 +1236,16 @@ fn parse_module_source_record(source: EhirModuleSource) -> Module {
     ret parse_module_text(source.module_id, join_line_range(lines, 1_usize, lines.len() - 1_usize))
 }
 
-fn parse_module_source_batch(sources: Vec[EhirModuleSource], worker_index: usize,
-    worker_count: usize,) -> Vec[ParsedModuleChunk] {
+fn parse_module_source_batch(sources: frozen Vec[EhirModuleSource], worker_index: usize,
+    worker_count: usize,) -> sending Vec[ParsedModuleChunk] {
     let mut out = Vec[ParsedModuleChunk]::new()
     let mut index = worker_index
     while index < sources.len() {
         match sources.get(index) {
             Some(source) => {
+                let copied = EhirModuleSource{"" + source.module_id, "" + source.text}
                 out.push(ParsedModuleChunk {
-                        index, parse_module_source_record(source)
+                        index, parse_module_source_record(copied)
                     }
                     ,
                 )
