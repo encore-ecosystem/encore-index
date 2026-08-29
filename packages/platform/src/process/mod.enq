@@ -115,6 +115,13 @@ pub fn run_args(program: str, args: Vec[str]) -> i32 {
     }
 }
 
+/// Runs a process while consuming an unaliased argument vector.
+pub fn run_args_owned(program: str, args: Vec[str]) -> i32 {
+    let len = args.len()
+    let data = if len == 0_usize { 0_usize } else { unsafe { args.get_handle(0_usize) } }
+    unsafe { ret encore_proc_run_args_parts(program, data, len) }
+}
+
 /// Performs the `run_args_capture` operation.
 pub fn run_args_capture(program: str, args: Vec[str], output_path: str) -> i32 {
     let len = args.len()

@@ -19,6 +19,13 @@ pub struct Path {
     parts: Vec[str]
 }
 
+/// Creates an independently owned copy of a shared immutable path.
+pub fn clone_path(path: frozen Path) -> Path {
+    let mut parts = Vec[str]::new()
+    for part in path.parts { parts.push("" + part) }
+    ret Path{"" + path.root, parts}
+}
+
 impl for Path {
     /// Parses `raw` using the platform path separator.
     pub fn new(raw: str) -> Self {
