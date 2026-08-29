@@ -2371,22 +2371,65 @@ static int32_t encore_proc_run_args_impl(encore_str program, size_t raw_args, si
 
     int32_t result = -1;
 #ifdef _WIN32
-    int saved_stdout = -1;
-    int saved_stderr = -1;
-    int output_fd = -1;
-    if (output_path != NULL) {
-        output_fd = _open(output_path, _O_CREAT | _O_TRUNC | _O_WRONLY | _O_BINARY, _S_IREAD | _S_IWRITE);
-        if (output_fd < 0) goto cleanup;
-        saved_stdout = _dup(1);
-        saved_stderr = _dup(2);
-        if (saved_stdout < 0 || saved_stderr < 0 || _dup2(output_fd, 1) != 0 || _dup2(output_fd, 2) != 0) goto cleanup;
+    if (output_path == NULL) {
+        intptr_t status = _spawnvp(_P_WAIT, program_c, (const char *const *)argv);
+        if (status >= 0 && status <= INT32_MAX) result = (int32_t)status;
+    } else {
+        /* _dup2 changes process-wide descriptors and races when several Encore
+           workers capture children concurrently. Give CreateProcess private
+           child handles instead, leaving the parent's stdout/stderr untouched. */
+        size_t capacity = 1;
+        for (size_t index = 0; index < args_len + 1; index += 1) capacity += strlen(argv[index]) * 2 + 4;
+        char *command = malloc(capacity);
+        if (command != NULL) {
+            size_t used = 0;
+            for (size_t index = 0; index < args_len + 1; index += 1) {
+                if (index != 0) command[used++] = ' ';
+                command[used++] = '"';
+                size_t slashes = 0;
+                for (const char *cursor = argv[index]; ; cursor += 1) {
+                    if (*cursor == '\\') { slashes += 1; continue; }
+                    if (*cursor == '"' || *cursor == '\0') {
+                        size_t count = slashes * 2 + (*cursor == '"' ? 1 : 0);
+                        while (count-- > 0) command[used++] = '\\';
+                        slashes = 0;
+                        if (*cursor == '\0') break;
+                    } else {
+                        while (slashes-- > 0) command[used++] = '\\';
+                        slashes = 0;
+                    }
+                    command[used++] = *cursor;
+                }
+                command[used++] = '"';
+            }
+            command[used] = '\0';
+            SECURITY_ATTRIBUTES security = {sizeof(security), NULL, TRUE};
+            HANDLE output = CreateFileA(output_path, GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE, &security, CREATE_ALWAYS,
+                FILE_ATTRIBUTE_NORMAL, NULL);
+            if (output != INVALID_HANDLE_VALUE) {
+                STARTUPINFOA startup;
+                PROCESS_INFORMATION process;
+                memset(&startup, 0, sizeof(startup)); startup.cb = sizeof(startup);
+                memset(&process, 0, sizeof(process));
+                startup.dwFlags = STARTF_USESTDHANDLES;
+                startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+                startup.hStdOutput = output;
+                startup.hStdError = output;
+                BOOL started = CreateProcessA(NULL, command, NULL, NULL, TRUE,
+                    CREATE_NO_WINDOW, NULL, NULL, &startup, &process);
+                if (started) {
+                    WaitForSingleObject(process.hProcess, INFINITE);
+                    DWORD status = 0;
+                    if (GetExitCodeProcess(process.hProcess, &status) && status <= INT32_MAX) result = (int32_t)status;
+                    CloseHandle(process.hThread);
+                    CloseHandle(process.hProcess);
+                }
+                CloseHandle(output);
+            }
+            free(command);
+        }
     }
-    intptr_t status = _spawnvp(_P_WAIT, program_c, (const char *const *)argv);
-    if (status >= 0 && status <= INT32_MAX) result = (int32_t)status;
-cleanup:
-    if (saved_stdout >= 0) { fflush(stdout); _dup2(saved_stdout, 1); _close(saved_stdout); }
-    if (saved_stderr >= 0) { fflush(stderr); _dup2(saved_stderr, 2); _close(saved_stderr); }
-    if (output_fd >= 0) _close(output_fd);
 #else
     posix_spawn_file_actions_t actions;
     bool actions_initialized = posix_spawn_file_actions_init(&actions) == 0;
