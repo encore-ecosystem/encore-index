@@ -1,9 +1,9 @@
 import core::fmt::Debug
-import std::io::{print, read_line, stdin_fd}
 import core::option::Option
 import core::result::Result
 import core::testing::assert
 import core::vec::Vec
+import std::io::{print, read_line, stdin_fd}
 
 pub struct Prompt {
     label: str
@@ -23,11 +23,15 @@ pub struct RetryPolicy {
 
 impl for Prompt {
     pub fn new(label: str) -> Self {
-        ret Self{label, ""}
+        ret Self {
+            label, ""
+        }
     }
 
     pub fn with_default(label: str, default_value: str) -> Self {
-        ret Self{label, default_value}
+        ret Self {
+            label, default_value
+        }
     }
 
     pub fn render(self) -> str {
@@ -60,11 +64,15 @@ impl for Prompt {
 
 impl for SelectPrompt {
     pub fn new(label: str, choices: Vec[str]) -> Self {
-        ret Self{label, choices, 0_usize}
+        ret Self {
+            label, choices, 0_usize
+        }
     }
 
     pub fn with_default(label: str, choices: Vec[str], default_index: usize) -> Self {
-        ret Self{label, choices, default_index}
+        ret Self {
+            label, choices, default_index
+        }
     }
 
     pub fn render(self) -> str {
@@ -110,7 +118,9 @@ impl for SelectPrompt {
 
 impl for RetryPolicy {
     pub fn new(max_attempts: usize, error_message: str) -> Self {
-        ret Self{max_attempts, error_message}
+        ret Self {
+            max_attempts, error_message
+        }
     }
 
     pub fn three(error_message: str) -> Self {
@@ -119,7 +129,11 @@ impl for RetryPolicy {
 }
 
 pub fn confirm(prompt: str, default_yes: bool) -> bool {
-    let suffix = if default_yes { " [Y/n]: " } else { " [y/N]: " }
+    let suffix = if default_yes {
+        " [Y/n]: "
+    } else {
+        " [y/N]: "
+    }
     print(prompt + suffix)
     match read_line(stdin_fd()) {
         Option[str]::Some(raw) => {
@@ -269,8 +283,7 @@ pub fn parse_usize_or(raw: str, fallback: usize) -> usize {
         if ch == "0" || ch == "1" || ch == "2" || ch == "3" || ch == "4" || ch == "5" || ch == "6" || ch == "7" || ch == "8" || ch == "9" {
             out = out * 10_usize + digit_value(ch)
             index = index + 1_usize
-        }
-        else {
+        } else {
             ret fallback
         }
     }
@@ -290,8 +303,7 @@ pub fn parse_usize_result(raw: str) -> Result[usize, str] {
         if ch == "0" || ch == "1" || ch == "2" || ch == "3" || ch == "4" || ch == "5" || ch == "6" || ch == "7" || ch == "8" || ch == "9" {
             out = out * 10_usize + digit_value(ch)
             index = index + 1_usize
-        }
-        else {
+        } else {
             ret Result[usize, str]::Err("value must be a positive integer")
         }
     }
@@ -360,10 +372,15 @@ pub fn ask_non_empty_with_message(prompt: Prompt, fallback: str, max_attempts: u
     while attempts < max_attempts {
         let value = prompt.ask()
         match parse_non_empty_result(value) {
-            Result[str, str]::Ok(parsed) => { ret parsed }
+            Result[str, str]::Ok(parsed) => {
+                ret parsed
+            }
             Result[str, str]::Err(message) => {
-                if error_message != "" { print(error_message + "\n") }
-                else { print(message + "\n") }
+                if error_message != "" {
+                    print(error_message + "\n")
+                } else {
+                    print(message + "\n")
+                }
             }
         }
         attempts = attempts + 1_usize
@@ -376,10 +393,15 @@ pub fn ask_identifier_with_message(prompt: Prompt, fallback: str, max_attempts: 
     while attempts < max_attempts {
         let value = prompt.ask()
         match parse_identifier_result(value) {
-            Result[str, str]::Ok(parsed) => { ret parsed }
+            Result[str, str]::Ok(parsed) => {
+                ret parsed
+            }
             Result[str, str]::Err(message) => {
-                if error_message != "" { print(error_message + "\n") }
-                else { print(message + "\n") }
+                if error_message != "" {
+                    print(error_message + "\n")
+                } else {
+                    print(message + "\n")
+                }
             }
         }
         attempts = attempts + 1_usize
@@ -392,11 +414,18 @@ pub fn ask_usize_with_message(prompt: Prompt, fallback: usize, max_attempts: usi
     while attempts < max_attempts {
         let value = prompt.ask()
         match parse_usize_result(value) {
-            Result[usize, str]::Ok(parsed) => { ret parsed }
+            Result[usize, str]::Ok(parsed) => {
+                ret parsed
+            }
             Result[usize, str]::Err(message) => {
-                if trim_line(value) == Debug::fmt(fallback) { ret fallback }
-                if error_message != "" { print(error_message + "\n") }
-                else { print(message + "\n") }
+                if trim_line(value) == Debug::fmt(fallback) {
+                    ret fallback
+                }
+                if error_message != "" {
+                    print(error_message + "\n")
+                } else {
+                    print(message + "\n")
+                }
             }
         }
         attempts = attempts + 1_usize
@@ -409,7 +438,9 @@ pub fn ask_non_empty_result(prompt: Prompt, max_attempts: usize) -> Result[str, 
     let mut last_error = "value must not be empty"
     while attempts < max_attempts {
         match parse_non_empty_result(prompt.ask()) {
-            Result[str, str]::Ok(value) => { ret Result[str, str]::Ok(value) }
+            Result[str, str]::Ok(value) => {
+                ret Result[str, str]::Ok(value)
+            }
             Result[str, str]::Err(message) => {
                 last_error = message
                 attempts = attempts + 1_usize
@@ -424,7 +455,9 @@ pub fn ask_identifier_result(prompt: Prompt, max_attempts: usize) -> Result[str,
     let mut last_error = "value must be a valid identifier"
     while attempts < max_attempts {
         match parse_identifier_result(prompt.ask()) {
-            Result[str, str]::Ok(value) => { ret Result[str, str]::Ok(value) }
+            Result[str, str]::Ok(value) => {
+                ret Result[str, str]::Ok(value)
+            }
             Result[str, str]::Err(message) => {
                 last_error = message
                 attempts = attempts + 1_usize
@@ -439,7 +472,9 @@ pub fn ask_usize_result(prompt: Prompt, max_attempts: usize) -> Result[usize, st
     let mut last_error = "value must be a positive integer"
     while attempts < max_attempts {
         match parse_usize_result(prompt.ask()) {
-            Result[usize, str]::Ok(value) => { ret Result[usize, str]::Ok(value) }
+            Result[usize, str]::Ok(value) => {
+                ret Result[usize, str]::Ok(value)
+            }
             Result[usize, str]::Err(message) => {
                 last_error = message
                 attempts = attempts + 1_usize
@@ -454,7 +489,9 @@ pub fn ask_select_result(prompt: SelectPrompt, max_attempts: usize) -> Result[st
     let mut last_error = "choice is not in the available options"
     while attempts < max_attempts {
         match parse_choice_result(prompt.ask(), prompt.choices, prompt.default_index) {
-            Result[str, str]::Ok(value) => { ret Result[str, str]::Ok(value) }
+            Result[str, str]::Ok(value) => {
+                ret Result[str, str]::Ok(value)
+            }
             Result[str, str]::Err(message) => {
                 last_error = message
                 attempts = attempts + 1_usize
@@ -465,15 +502,33 @@ pub fn ask_select_result(prompt: SelectPrompt, max_attempts: usize) -> Result[st
 }
 
 fn digit_value(ch: str) -> usize {
-    if ch == "0" { ret 0_usize }
-    if ch == "1" { ret 1_usize }
-    if ch == "2" { ret 2_usize }
-    if ch == "3" { ret 3_usize }
-    if ch == "4" { ret 4_usize }
-    if ch == "5" { ret 5_usize }
-    if ch == "6" { ret 6_usize }
-    if ch == "7" { ret 7_usize }
-    if ch == "8" { ret 8_usize }
+    if ch == "0" {
+        ret 0_usize
+    }
+    if ch == "1" {
+        ret 1_usize
+    }
+    if ch == "2" {
+        ret 2_usize
+    }
+    if ch == "3" {
+        ret 3_usize
+    }
+    if ch == "4" {
+        ret 4_usize
+    }
+    if ch == "5" {
+        ret 5_usize
+    }
+    if ch == "6" {
+        ret 6_usize
+    }
+    if ch == "7" {
+        ret 7_usize
+    }
+    if ch == "8" {
+        ret 8_usize
+    }
     ret 9_usize
 }
 
@@ -487,7 +542,7 @@ fn is_identifier_continue(ch: str) -> bool {
 
 fn is_alpha(ch: str) -> bool {
     let b = ch.byte_at(0_usize)
-    ret (b >= 97_u8 && b <= 122_u8) || (b >= 65_u8 && b <= 90_u8)
+    ret(b >= 97_u8 && b <= 122_u8) ||(b >= 65_u8 && b <= 90_u8)
 }
 
 fn prompt_is_digit(ch: str) -> bool {
@@ -510,8 +565,7 @@ fn trim_line(value: str) -> str {
             Option[str]::Some(ch) => {
                 if ch == "\n" || ch == "\r" || ch == " " || ch == "\t" {
                     end = end - 1_usize
-                }
-                else {
+                } else {
                     break
                 }
             }
@@ -530,8 +584,7 @@ fn trim_line(value: str) -> str {
             Option[str]::Some(ch) => {
                 if ch == " " || ch == "\t" {
                     start = start + 1_usize
-                }
-                else {
+                } else {
                     break
                 }
             }
@@ -548,12 +601,12 @@ fn trim_line(value: str) -> str {
 fn prompt_parses_defaults_and_confirmation() -> bool {
     let prompt = Prompt::with_default("Name", "encore")
     ret assert(prompt.render() == "Name [encore]: ")
-        && assert(prompt.parse("\n") == "encore")
-        && assert(prompt.parse(" compiler \n") == "compiler")
-        && assert(parse_confirm("\n", true))
-        && assert(!parse_confirm("\n", false))
-        && assert(parse_confirm("yes\n", false))
-        && assert(!parse_confirm("no\n", true))
+    && assert(prompt.parse("\n") == "encore")
+    && assert(prompt.parse(" compiler \n") == "compiler")
+    && assert(parse_confirm("\n", true))
+    && assert(!parse_confirm("\n", false))
+    && assert(parse_confirm("yes\n", false))
+    && assert(!parse_confirm("no\n", true))
 }
 
 #attr(test)
@@ -564,35 +617,35 @@ fn select_prompt_parses_indexes_and_labels() -> bool {
     choices.push("extreme")
     let prompt = SelectPrompt::with_default("Profile", choices, 1_usize)
     ret assert(str_contains(prompt.render(), "1=debug"))
-        && assert(prompt.parse("3\n") == "extreme")
-        && assert(prompt.parse("debug\n") == "debug")
-        && assert(prompt.parse("\n") == "release")
-        && assert(parse_choice_result("2\n", vec3("debug", "release", "extreme"), 0_usize).unwrap_or("x") == "release")
+    && assert(prompt.parse("3\n") == "extreme")
+    && assert(prompt.parse("debug\n") == "debug")
+    && assert(prompt.parse("\n") == "release")
+    && assert(parse_choice_result("2\n", vec3("debug", "release", "extreme"), 0_usize).unwrap_or("x") == "release")
 }
 
 #attr(test)
 fn prompt_validators_handle_fallbacks() -> bool {
     ret assert(parse_non_empty(" build \n", "fallback") == "build")
-        && assert(parse_non_empty("\n", "fallback") == "fallback")
-        && assert(parse_non_empty_result(" build ").unwrap_or("x") == "build")
-        && assert(parse_identifier("bootstrap_2\n", "fallback") == "bootstrap_2")
-        && assert(parse_identifier("2bad\n", "fallback") == "fallback")
-        && assert(parse_identifier_result("bootstrap_2").unwrap_or("x") == "bootstrap_2")
-        && assert(parse_usize_or("42\n", 7_usize) == 42_usize)
-        && assert(parse_usize_or("oops\n", 7_usize) == 7_usize)
-        && assert(parse_usize_result("42").unwrap_or(0_usize) == 42_usize)
-        && assert(resolve_non_empty_attempts(vec2("","build"), "fallback") == "build")
-        && assert(resolve_identifier_attempts(vec2("2bad","good_name"), "fallback") == "good_name")
-        && assert(resolve_usize_attempts(vec2("oops","42"), 7_usize) == 42_usize)
-        && assert(resolve_non_empty_attempts(vec3("", "", "ok"), "fallback") == "ok")
+    && assert(parse_non_empty("\n", "fallback") == "fallback")
+    && assert(parse_non_empty_result(" build ").unwrap_or("x") == "build")
+    && assert(parse_identifier("bootstrap_2\n", "fallback") == "bootstrap_2")
+    && assert(parse_identifier("2bad\n", "fallback") == "fallback")
+    && assert(parse_identifier_result("bootstrap_2").unwrap_or("x") == "bootstrap_2")
+    && assert(parse_usize_or("42\n", 7_usize) == 42_usize)
+    && assert(parse_usize_or("oops\n", 7_usize) == 7_usize)
+    && assert(parse_usize_result("42").unwrap_or(0_usize) == 42_usize)
+    && assert(resolve_non_empty_attempts(vec2("", "build"), "fallback") == "build")
+    && assert(resolve_identifier_attempts(vec2("2bad", "good_name"), "fallback") == "good_name")
+    && assert(resolve_usize_attempts(vec2("oops", "42"), 7_usize) == 42_usize)
+    && assert(resolve_non_empty_attempts(vec3("", "", "ok"), "fallback") == "ok")
 }
 
 #attr(test)
 fn retry_policy_exposes_attempts_and_messages() -> bool {
     let policy = RetryPolicy::three("retry")
     ret assert(policy.max_attempts == 3_usize)
-        && assert(policy.error_message == "retry")
-        && assert(resolve_prompt_result(vec2("","ok")).unwrap_or("x") == "ok")
+    && assert(policy.error_message == "retry")
+    && assert(resolve_prompt_result(vec2("", "ok")).unwrap_or("x") == "ok")
 }
 
 pub fn resolve_non_empty_attempts(values: Vec[str], fallback: str) -> str {
@@ -640,8 +693,7 @@ pub fn resolve_usize_attempts(values: Vec[str], fallback: usize) -> usize {
             Option[str]::Some(value) => {
                 if trim_line(value) == "" {
                     index = index + 1_usize
-                }
-                else {
+                } else {
                     let parsed = parse_usize_or(value, fallback)
                     if parsed != fallback || trim_line(value) == Debug::fmt(fallback) {
                         ret parsed
@@ -678,7 +730,9 @@ pub fn resolve_prompt_result(values: Vec[str]) -> Result[str, str] {
         match values.get(index) {
             Option[str]::Some(value) => {
                 match parse_non_empty_result(value) {
-                    Result[str, str]::Ok(parsed) => { ret Result[str, str]::Ok(parsed) }
+                    Result[str, str]::Ok(parsed) => {
+                        ret Result[str, str]::Ok(parsed)
+                    }
                     Result[str, str]::Err(message) => {
                         index = index + 1_usize
                     }

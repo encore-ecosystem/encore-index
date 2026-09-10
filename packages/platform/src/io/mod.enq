@@ -1,12 +1,12 @@
 //! Provides console and stream input/output helpers.
 
 import core::fmt::Debug
+import core::ops:: *
 import core::option::Option
-import core::ops::*
-
 
 extern fn encore_io_read(fd: i32, max_bytes: usize) -> str
 extern fn encore_io_write(fd: i32, value: str) -> i32
+extern fn encore_io_wait_readable(fd: i32, timeout_ms: usize) -> bool
 
 /// Performs the `stdin_fd` operation.
 pub fn stdin_fd() -> i32 {
@@ -33,6 +33,13 @@ pub fn io_read(fd: i32, max_bytes: usize) -> str {
 /// Reads stdin from the underlying resource.
 pub fn read_stdin(max_bytes: usize) -> str {
     ret io_read(stdin_fd(), max_bytes)
+}
+
+/// Waits until a descriptor can be read, an EOF is pending, or the timeout expires.
+pub fn wait_readable(fd: i32, timeout_ms: usize) -> bool {
+    unsafe {
+        ret encore_io_wait_readable(fd, timeout_ms)
+    }
 }
 
 /// Reads exact from the underlying resource.
@@ -94,11 +101,11 @@ pub fn eprintln(value: str) -> i32 {
 }
 
 /// Performs the `print_debug` operation.
-pub fn print_debug[T:Debug](value: T) -> i32 {
+pub fn print_debug[T: Debug](value: T) -> i32 {
     ret print(Debug::fmt(value))
 }
 
 /// Performs the `println_debug` operation.
-pub fn println_debug[T:Debug](value: T) -> i32 {
+pub fn println_debug[T: Debug](value: T) -> i32 {
     ret println(Debug::fmt(value))
 }

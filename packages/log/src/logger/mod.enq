@@ -1,6 +1,6 @@
+import core::testing::assert
 import core::vec::Vec
 import std::os::{read_file, write_file}
-import core::testing::assert
 
 import refrain::console_sink::ConsoleSink
 import refrain::file_sink::FileSink
@@ -17,7 +17,9 @@ pub struct Logger {
 
 impl for Logger {
     pub fn new(target: str) -> Self {
-        ret Self{target, LogLevel::Trace, Vec[dyn LogSink]::new()}
+        ret Self {
+            target, LogLevel::Trace, Vec[dyn LogSink]::new()
+        }
     }
 
     pub fn console(target: str) -> Self {
@@ -33,83 +35,85 @@ impl for Logger {
     }
 
     pub fn with_min_level(self: Self, minimum: LogLevel) -> Self {
-        ret Self{self.target, minimum, self.sinks}
+        ret Self {
+            self.target, minimum, self.sinks
+        }
     }
 
-    pub fn set_target(self: mut Self, target: str) -> () {
+    pub fn set_target(self: mut Self, target: str) ->() {
         self.target = target
-        ret ()
+        ret()
     }
 
-    pub fn add_sink(self: mut Self, sink: dyn LogSink) -> () {
+    pub fn add_sink(self: mut Self, sink: dyn LogSink) ->() {
         self.sinks.push(sink)
-        ret ()
+        ret()
     }
 
-    pub fn add_console_sink(self: mut Self) -> () {
+    pub fn add_console_sink(self: mut Self) ->() {
         self.add_sink(ConsoleSink::stdout() as dyn LogSink)
-        ret ()
+        ret()
     }
 
-    pub fn add_stderr_sink(self: mut Self) -> () {
+    pub fn add_stderr_sink(self: mut Self) ->() {
         self.add_sink(ConsoleSink::stderr() as dyn LogSink)
-        ret ()
+        ret()
     }
 
-    pub fn add_file_sink(self: mut Self, path: str) -> () {
+    pub fn add_file_sink(self: mut Self, path: str) ->() {
         self.add_sink(FileSink::new(path) as dyn LogSink)
-        ret ()
+        ret()
     }
 
-    pub fn add_writer_sink(self: mut Self, writer: dyn Writable) -> () {
+    pub fn add_writer_sink(self: mut Self, writer: dyn Writable) ->() {
         self.add_sink(WriterSink::new(writer) as dyn LogSink)
-        ret ()
+        ret()
     }
 
-    pub fn log(self: Self, level: LogLevel, message: str) -> () {
+    pub fn log(self: Self, level: LogLevel, message: str) ->() {
         if !level_enabled(level, self.minimum) {
-            ret ()
+            ret()
         }
 
         for sink in self.sinks {
             sink.write(level, self.target, message)
         }
-        ret ()
+        ret()
     }
 
-    pub fn log_record(self: Self, record: LogRecord) -> () {
+    pub fn log_record(self: Self, record: LogRecord) ->() {
         self.log(record.level, record.message)
-        ret ()
+        ret()
     }
 
-    pub fn trace(self: Self, message: str) -> () {
+    pub fn trace(self: Self, message: str) ->() {
         self.log(LogLevel::Trace, message)
-        ret ()
+        ret()
     }
 
-    pub fn debug(self: Self, message: str) -> () {
+    pub fn debug(self: Self, message: str) ->() {
         self.log(LogLevel::Debug, message)
-        ret ()
+        ret()
     }
 
-    pub fn info(self: Self, message: str) -> () {
+    pub fn info(self: Self, message: str) ->() {
         self.log(LogLevel::Info, message)
-        ret ()
+        ret()
     }
 
-    pub fn warn(self: Self, message: str) -> () {
+    pub fn warn(self: Self, message: str) ->() {
         self.log(LogLevel::Warn, message)
-        ret ()
+        ret()
     }
 
-    pub fn error(self: Self, message: str) -> () {
+    pub fn error(self: Self, message: str) ->() {
         self.log(LogLevel::Error, message)
-        ret ()
+        ret()
     }
 
-    pub fn fatal(self: Self, message: str) -> () {
+    pub fn fatal(self: Self, message: str) ->() {
         self.log(LogLevel::Fatal, message)
-        ret ()
+        ret()
     }
 }
 

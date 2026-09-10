@@ -1,7 +1,7 @@
 //! Provides the `os` module.
 
+import core::ops:: *
 import core::option::Option
-import core::ops::*
 import core::vec::Vec
 
 extern fn encore_os_argc() -> usize
@@ -15,6 +15,7 @@ extern fn encore_os_executable_path() -> str
 
 extern fn encore_fs_read_file(path: str) -> str
 extern fn encore_fs_write_file(path: str, contents: str) -> i32
+extern fn encore_fs_write_file_atomic(path: str, contents: str) -> i32
 extern fn encore_fs_status(path: str) -> i32
 extern fn encore_fs_is_directory(path: str) -> bool
 extern fn encore_fs_remove_file(path: str) -> i32
@@ -80,23 +81,35 @@ pub fn home_dir() -> str {
 
 /// Performs the `core_dir` operation.
 pub fn core_dir() -> str {
-    unsafe { ret encore_os_core_dir() }
+    unsafe {
+        ret encore_os_core_dir()
+    }
 }
 
 /// Performs the `arch_name` operation.
 pub fn arch_name() -> str {
-    unsafe { ret encore_os_arch() }
+    unsafe {
+        ret encore_os_arch()
+    }
 }
 
 /// Performs the `env` operation.
 pub fn env(name: str) -> Option[str] {
-    let value = unsafe { encore_os_getenv(name) }
-    if value == "" { ret Option[str]::None }
+    let value = unsafe {
+        encore_os_getenv(name)
+    }
+    if value == "" {
+        ret Option[str]::None
+    }
     ret Option[str]::Some(value)
 }
 
 /// Returns the absolute path of the running executable when the OS exposes it.
-pub fn executable_path() -> str { unsafe { ret encore_os_executable_path() } }
+pub fn executable_path() -> str {
+    unsafe {
+        ret encore_os_executable_path()
+    }
+}
 
 #cfg(windows)
 /// Performs the `os_name` operation.
@@ -148,6 +161,13 @@ pub fn write_file(path: str, contents: str) -> i32 {
     }
 }
 
+/// Writes a complete file and atomically replaces the destination.
+pub fn write_file_atomic(path: str, contents: str) -> i32 {
+    unsafe {
+        ret encore_fs_write_file_atomic(path, contents)
+    }
+}
+
 /// Performs the `file_exists` operation.
 pub fn file_exists(path: str) -> bool {
     unsafe {
@@ -157,7 +177,9 @@ pub fn file_exists(path: str) -> bool {
 
 /// Returns whether directory.
 pub fn is_directory(path: str) -> bool {
-    unsafe { ret encore_fs_is_directory(path) }
+    unsafe {
+        ret encore_fs_is_directory(path)
+    }
 }
 
 /// Removes file.
@@ -169,12 +191,16 @@ pub fn remove_file(path: str) -> i32 {
 
 /// Performs the `copy_file` operation.
 pub fn copy_file(source: str, destination: str) -> i32 {
-    unsafe { ret encore_fs_copy_file(source, destination) }
+    unsafe {
+        ret encore_fs_copy_file(source, destination)
+    }
 }
 
 /// Updates executable.
 pub fn set_executable(path: str) -> i32 {
-    unsafe { ret encore_fs_set_executable(path) }
+    unsafe {
+        ret encore_fs_set_executable(path)
+    }
 }
 
 /// Performs the `mkdir` operation.
@@ -186,7 +212,9 @@ pub fn mkdir(path: str) -> i32 {
 
 /// Performs the `mkdir_all` operation.
 pub fn mkdir_all(path: str) -> i32 {
-    unsafe { ret encore_fs_mkdir_all(path) }
+    unsafe {
+        ret encore_fs_mkdir_all(path)
+    }
 }
 
 /// Reads dir from the underlying resource.
@@ -198,22 +226,34 @@ pub fn read_dir(path: str) -> Vec[str] {
 }
 
 /// Recursively removes one directory tree without following directory links.
-pub fn remove_dir_all(path: str) -> i32 { unsafe { ret encore_fs_remove_dir_all(path) } }
+pub fn remove_dir_all(path: str) -> i32 {
+    unsafe {
+        ret encore_fs_remove_dir_all(path)
+    }
+}
 
 /// Computes the lowercase SHA-256 digest of one file, or an empty string when
 /// the file cannot be read.
-pub fn file_sha256(path: str) -> str { unsafe { ret encore_fs_sha256(path) } }
+pub fn file_sha256(path: str) -> str {
+    unsafe {
+        ret encore_fs_sha256(path)
+    }
+}
 
 /// Atomically activates a staged Encore installation. On Windows this starts
 /// a detached helper and returns 1; on Unix it completes synchronously and
 /// returns 0. Negative values report a failed transaction.
 pub fn commit_self_update(staged_root: str, install_root: str, new_executable: str, workspace: str) -> i32 {
-    unsafe { ret encore_self_update_commit(staged_root, install_root, new_executable, workspace) }
+    unsafe {
+        ret encore_self_update_commit(staged_root, install_root, new_executable, workspace)
+    }
 }
 
 /// Internal entrypoint used only by the detached Windows update helper.
 pub fn apply_self_update(parent_pid: usize, staged_root: str, install_root: str, workspace: str, helper_path: str) -> i32 {
-    unsafe { ret encore_self_update_apply(parent_pid, staged_root, install_root, workspace, helper_path) }
+    unsafe {
+        ret encore_self_update_apply(parent_pid, staged_root, install_root, workspace, helper_path)
+    }
 }
 
 fn split_lines(value: str) -> Vec[str] {

@@ -25,17 +25,25 @@ pub struct Traceback {
 
 impl for TraceFrame {
     pub fn new(module: str, function_name: str, line: usize, column: usize, source: str) -> Self {
-        ret Self{module, function_name, line, column, "", source, ""}
+        ret Self {
+            module, function_name, line, column, "", source, ""
+        }
     }
 
     pub fn with_context(module: str, function_name: str, line: usize, column: usize, before_source: str, source: str, after_source: str) -> Self {
-        ret Self{module, function_name, line, column, before_source, source, after_source}
+        ret Self {
+            module, function_name, line, column, before_source, source, after_source
+        }
     }
 
     pub fn render(self, is_current: bool) -> str {
-        let prefix = if is_current { error_text("->") } else { muted("  ") }
+        let prefix = if is_current {
+            error_text("->")
+        } else {
+            muted("  ")
+        }
         let mut out = prefix + " " + self.module + ":" + usize_to_str(self.line) + ":" + usize_to_str(self.column)
-            + " in " + accent(self.function_name)
+        + " in " + accent(self.function_name)
         if self.before_source != "" {
             out += "\n" + muted("   " + self.before_source)
         }
@@ -50,36 +58,38 @@ impl for TraceFrame {
 
 impl for Traceback {
     pub fn new(title: str, message: str) -> Self {
-        ret Self{title, message, Vec[TraceFrame]::new(), Vec[str]::new(), Vec[str]::new()}
+        ret Self {
+            title, message, Vec[TraceFrame]::new(), Vec[str]::new(), Vec[str]::new()
+        }
     }
 
     pub fn compiler_error(message: str) -> Self {
         ret Self::new("CompileError", message)
     }
 
-    pub fn add_frame(self: mut Self, module: str, function_name: str, line: usize, column: usize, source: str) -> () {
+    pub fn add_frame(self: mut Self, module: str, function_name: str, line: usize, column: usize, source: str) ->() {
         self.frames.push(TraceFrame::new(module, function_name, line, column, source))
-        ret ()
+        ret()
     }
 
-    pub fn push_frame(self: mut Self, frame: TraceFrame) -> () {
+    pub fn push_frame(self: mut Self, frame: TraceFrame) ->() {
         self.frames.push(frame)
-        ret ()
+        ret()
     }
 
-    pub fn add_context_frame(self: mut Self, module: str, function_name: str, line: usize, column: usize, before_source: str, source: str, after_source: str) -> () {
+    pub fn add_context_frame(self: mut Self, module: str, function_name: str, line: usize, column: usize, before_source: str, source: str, after_source: str) ->() {
         self.frames.push(TraceFrame::with_context(module, function_name, line, column, before_source, source, after_source))
-        ret ()
+        ret()
     }
 
-    pub fn add_note(self: mut Self, note: str) -> () {
+    pub fn add_note(self: mut Self, note: str) ->() {
         self.notes.push(note)
-        ret ()
+        ret()
     }
 
-    pub fn add_hint(self: mut Self, hint: str) -> () {
+    pub fn add_hint(self: mut Self, hint: str) ->() {
         self.hints.push(hint)
-        ret ()
+        ret()
     }
 
     pub fn render(self) -> str {
@@ -172,15 +182,15 @@ fn traceback_renders_frames() -> bool {
     let rendered = traceback.render()
     let single = compiler_traceback("missing import", "frontend/imports.enq", "resolve_import", 8_usize, 3_usize, "use std::fs", "import foo::bar", "ret module").render()
     ret assert(str_contains(rendered, "CompileError"))
-        && assert(str_contains(rendered, "unknown symbol"))
-        && assert(str_contains(rendered, "parse_expr"))
-        && assert(str_contains(rendered, "foo(bar)"))
-        && assert(str_contains(rendered, "let x = 1"))
-        && assert(str_contains(rendered, "ret x"))
-        && assert(str_contains(rendered, "^"))
-        && assert(str_contains(rendered, "note:"))
-        && assert(str_contains(rendered, "help:"))
-        && assert(str_contains(single, "missing import"))
+    && assert(str_contains(rendered, "unknown symbol"))
+    && assert(str_contains(rendered, "parse_expr"))
+    && assert(str_contains(rendered, "foo(bar)"))
+    && assert(str_contains(rendered, "let x = 1"))
+    && assert(str_contains(rendered, "ret x"))
+    && assert(str_contains(rendered, "^"))
+    && assert(str_contains(rendered, "note:"))
+    && assert(str_contains(rendered, "help:"))
+    && assert(str_contains(single, "missing import"))
 }
 
 fn str_contains(value: str, needle: str) -> bool {

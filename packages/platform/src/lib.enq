@@ -5,5 +5,5 @@ pub import refrain::net
 pub import refrain::os
 pub import refrain::process
 pub import refrain::thread
-pub import refrain::tls
 pub import refrain::time
+pub import refrain::tls

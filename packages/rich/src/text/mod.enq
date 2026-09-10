@@ -6,7 +6,9 @@ pub struct Text {
 
 impl for Text {
     pub fn new(value: str) -> Self {
-        ret Self{value}
+        ret Self {
+            value
+        }
     }
 
     pub fn plain(self: Self) -> str {

@@ -9,29 +9,29 @@ fn concat_lines(left: Vec[str], right: Vec[str]) -> Vec[str] {
     ret out
 }
 
-import std::os::write_file
+import refrain::core::LLVMBasicBlock
+import refrain::core::LLVMFunction
+import refrain::core::LLVMInstruction
+import refrain::core::LLVMModule
+import refrain::core::LLVMParam
+import refrain::core::LLVMTerminator
+import refrain::core::llvm_basic_block
+import refrain::core::llvm_br_term
+import refrain::core::llvm_param
+import refrain::core::llvm_store_instruction
 import refrain::types::LLVMType
+import refrain::types::i32_type
 import refrain::types::type_text
 import refrain::types::void_type
-import refrain::types::i32_type
 import refrain::value::LLVMValue
+import refrain::value::const_text
 import refrain::value::value_text
 import refrain::value::value_type
-import refrain::value::const_text
-import refrain::core::LLVMModule
-import refrain::core::LLVMFunction
-import refrain::core::LLVMParam
-import refrain::core::LLVMBasicBlock
-import refrain::core::LLVMInstruction
-import refrain::core::LLVMTerminator
-import refrain::core::llvm_store_instruction
-import refrain::core::llvm_br_term
-import refrain::core::llvm_basic_block
-import refrain::core::llvm_param
+import std::os::write_file
 
 extern fn encore_str_join_lines_parts(data: usize, len: usize) -> str
 extern fn encore_text_builder_new() -> usize
-extern fn encore_text_builder_append(builder: usize, value: str) -> ()
+extern fn encore_text_builder_append(builder: usize, value: str) ->()
 extern fn encore_text_builder_finish(builder: usize) -> str
 
 pub fn emit_module_lines(module: LLVMModule) -> Vec[str] {
@@ -42,18 +42,26 @@ pub fn emit_module_lines(module: LLVMModule) -> Vec[str] {
 }
 
 pub fn emit_module_text(module: LLVMModule) -> str {
-    let builder = unsafe { encore_text_builder_new() }
+    let builder = unsafe {
+        encore_text_builder_new()
+    }
     append_builder_line(builder, "; ModuleID = '" + module.name + "'")
-    for declaration in module.type_declarations { append_builder_line(builder, declaration) }
+    for declaration in module.type_declarations {
+        append_builder_line(builder, declaration)
+    }
     append_builder_line(builder, "")
     let function_count = module.functions.len()
     let mut function_index = 0_usize
     for function in module.functions {
         append_function_to_builder(builder, function)
-        if function_index + 1_usize < function_count { append_builder_line(builder, "") }
+        if function_index + 1_usize < function_count {
+            append_builder_line(builder, "")
+        }
         function_index = function_index + 1_usize
     }
-    ret unsafe { encore_text_builder_finish(builder) }
+    ret unsafe {
+        encore_text_builder_finish(builder)
+    }
 }
 
 pub fn emit_module_to_file(module: LLVMModule, path: str) -> i32 {
@@ -69,10 +77,10 @@ fn emit_functions(functions: Vec[LLVMFunction]) -> Vec[str] {
     ret acc
 }
 
-pub fn append_function_to_builder(builder: usize, function: LLVMFunction) -> () {
+pub fn append_function_to_builder(builder: usize, function: LLVMFunction) ->() {
     if function.is_extern {
         append_builder_line(builder, render_function_signature(function, true))
-        ret ()
+        ret()
     }
 
     append_builder_line(builder, render_function_signature(function, false) + " {")
@@ -84,15 +92,15 @@ pub fn append_function_to_builder(builder: usize, function: LLVMFunction) -> () 
         append_builder_line(builder, render_terminator_line(block_item.terminator))
     }
     append_builder_line(builder, "}")
-    ret ()
+    ret()
 }
 
-pub fn append_builder_line(builder: usize, value: str) -> () {
+pub fn append_builder_line(builder: usize, value: str) ->() {
     unsafe {
         encore_text_builder_append(builder, value)
         encore_text_builder_append(builder, "\n")
     }
-    ret ()
+    ret()
 }
 
 fn emit_function_lines(func: LLVMFunction) -> Vec[str] {
@@ -107,7 +115,9 @@ fn emit_function_lines(func: LLVMFunction) -> Vec[str] {
 
 fn emit_blocks_lines(blocks: Vec[LLVMBasicBlock]) -> Vec[str] {
     let mut acc = Vec[str]::new()
-    for current in blocks { acc.extend(emit_block_lines(current)) }
+    for current in blocks {
+        acc.extend(emit_block_lines(current))
+    }
     ret acc
 }
 
@@ -119,7 +129,9 @@ fn emit_block_lines(block: LLVMBasicBlock) -> Vec[str] {
 
 fn emit_instruction_lines(instructions: Vec[LLVMInstruction]) -> Vec[str] {
     let mut acc = Vec[str]::new()
-    for current in instructions { acc.push(render_instruction_line(current)) }
+    for current in instructions {
+        acc.push(render_instruction_line(current))
+    }
     ret acc
 }
 
@@ -128,12 +140,20 @@ fn single_line(line: str) -> Vec[str] {
 }
 
 fn render_function_signature(func: LLVMFunction, as_declare: bool) -> str {
-    let prefix = signature_prefix(as_declare) + if as_declare || func.linkage == "" { "" } else { func.linkage + " " }
+    let prefix = signature_prefix(as_declare) + if as_declare || func.linkage == "" {
+        ""
+    } else {
+        func.linkage + " "
+    }
     let typed_prefix = prefix + abi_return_type_text(func.ret_type)
     let with_name = typed_prefix + " @" + func.name
     let with_open = with_name + "("
     let with_params = with_open + render_params(func.params)
-    let suffix = if func.attributes == "" { "" } else { " " + func.attributes }
+    let suffix = if func.attributes == "" {
+        ""
+    } else {
+        " " + func.attributes
+    }
     ret with_params + ")" + suffix
 }
 
@@ -148,7 +168,9 @@ fn render_params(params: Vec[LLVMParam]) -> str {
     let mut out = ""
     let mut first = true
     for param in params {
-        if !first { out = out + ", " }
+        if !first {
+            out = out + ", "
+        }
         out = out + render_param(param)
         first = false
     }
@@ -164,13 +186,17 @@ fn render_param(param: LLVMParam) -> str {
 // ABI passes bool in a full register. zeroext makes that boundary explicit.
 fn abi_return_type_text(typ: LLVMType) -> str {
     let rendered = type_text(typ)
-    if rendered == "i1" { ret "zeroext i1" }
+    if rendered == "i1" {
+        ret "zeroext i1"
+    }
     ret rendered
 }
 
 fn abi_argument_type_text(typ: LLVMType) -> str {
     let rendered = type_text(typ)
-    if rendered == "i1" { ret "i1 zeroext" }
+    if rendered == "i1" {
+        ret "i1 zeroext"
+    }
     ret rendered
 }
 
@@ -248,7 +274,9 @@ fn render_instruction_line(instr: LLVMInstruction) -> str {
             let mut out = "  " + value_text(phi_data.out) + " = phi " + type_text(value_type(phi_data.out)) + " "
             let mut first = true
             for incoming in phi_data.incoming {
-                if !first { out = out + ", " }
+                if !first {
+                    out = out + ", "
+                }
                 out = out + "[ " + value_text(incoming.value) + ", %" + incoming.label + " ]"
                 first = false
             }
@@ -283,7 +311,7 @@ fn render_call_instruction(
     out: Option[LLVMValue],
     ret_type: LLVMType,
     callee: str,
-    args: Vec[LLVMValue]
+    args: Vec[LLVMValue],
 ) -> str {
     let with_ret = "call " + abi_return_type_text(ret_type)
     let with_name = with_ret + " @" + callee
@@ -306,7 +334,9 @@ fn render_call_arguments(values: Vec[LLVMValue]) -> str {
     let mut out = ""
     let mut first = true
     for value in values {
-        if !first { out = out + ", " }
+        if !first {
+            out = out + ", "
+        }
         out = out + abi_argument_type_text(value.typ) + " " + value_text(value)
         first = false
     }
@@ -317,7 +347,9 @@ fn render_typed_values(values: Vec[LLVMValue]) -> str {
     let mut out = ""
     let mut first = true
     for value in values {
-        if !first { out = out + ", " }
+        if !first {
+            out = out + ", "
+        }
         out = out + render_typed_value(value)
         first = false
     }
@@ -331,7 +363,9 @@ fn render_typed_value(value: LLVMValue) -> str {
 
 fn render_terminator_line(term: LLVMTerminator) -> str {
     match term {
-        Unreachable => { ret "  unreachable" }
+        Unreachable => {
+            ret "  unreachable"
+        }
         Ret(ret_data) => {
             ret render_ret_terminator(ret_data.value, ret_data.ret_type)
         }
@@ -361,8 +395,16 @@ fn render_ret_terminator(value: Option[LLVMValue], ret_type: LLVMType) -> str {
 
 fn join_lines(lines: Vec[str]) -> str {
     let len = lines.len()
-    let data = if len == 0_usize { 0_usize } else { unsafe { lines.get_handle(0_usize) } }
-    ret unsafe { encore_str_join_lines_parts(data, len) }
+    let data = if len == 0_usize {
+        0_usize
+    } else {
+        unsafe {
+            lines.get_handle(0_usize)
+        }
+    }
+    ret unsafe {
+        encore_str_join_lines_parts(data, len)
+    }
 }
 
 fn concat_with_sep(acc: str, piece: str, is_first: bool, sep: str) -> str {
@@ -373,7 +415,9 @@ fn concat_with_sep(acc: str, piece: str, is_first: bool, sep: str) -> str {
 }
 
 fn default_function() -> LLVMFunction {
-    ret LLVMFunction{"", void_type(), Vec[LLVMParam]::new(), Vec[LLVMBasicBlock]::new(), true, "", ""}
+    ret LLVMFunction {
+        "", void_type(), Vec[LLVMParam]::new(), Vec[LLVMBasicBlock]::new(), true, "", ""
+    }
 }
 
 fn default_param() -> LLVMParam {

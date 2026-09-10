@@ -2,7 +2,6 @@ import core::option::Option
 
 import refrain::core::types::Type
 
-
 pub struct Parameter {
     name: str
     typ: Type
@@ -14,13 +13,19 @@ pub struct Variable {
 }
 
 pub fn param(name: str, typ: Type) -> Parameter {
-    ret Parameter{name, typ}
+    ret Parameter {
+        name, typ
+    }
 }
 
 pub fn var(name: str, typ: Type) -> Variable {
-    ret Variable{name, Option[Type]::Some(typ)}
+    ret Variable {
+        name, Option[Type]::Some(typ)
+    }
 }
 
 pub fn untyped_var(name: str) -> Variable {
-    ret Variable{name, Option[Type]::None}
+    ret Variable {
+        name, Option[Type]::None
+    }
 }

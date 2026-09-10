@@ -7,16 +7,16 @@ struct Node {
 }
 
 fn make_cycle() -> () {
-    let left = Node<H>{Vec[Node<H>]::new()}
-    let right = Node<H>{Vec[Node<H>]::new()}
+    let mut left = Node<H>{Vec[Node<H>]::new()}
+    let mut right = Node<H>{Vec[Node<H>]::new()}
     left.children.push(right)
     right.children.push(left)
     ret ()
 }
 
 fn release_cycle_around(survivor: Node<H>) -> () {
-    let left = Node<H>{Vec[Node<H>]::new()}
-    let right = Node<H>{Vec[Node<H>]::new()}
+    let mut left = Node<H>{Vec[Node<H>]::new()}
+    let mut right = Node<H>{Vec[Node<H>]::new()}
     left.children.push(right)
     right.children.push(left)
     left.children.push(survivor)

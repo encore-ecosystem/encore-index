@@ -5,11 +5,9 @@ import core::vec::Vec
 
 extern fn encore_str_from_codepoint(value: usize) -> str
 extern fn encore_text_builder_new() -> usize
-extern fn encore_text_builder_append(builder: usize, value: str) -> ()
+extern fn encore_text_builder_append(builder: usize, value: str) ->()
 extern fn encore_text_builder_finish(builder: usize) -> str
-extern fn encore_text_builder_discard(builder: usize) -> ()
-extern fn encore_str_find_byte_from(value: str, needle: u8, start: usize) -> usize
-extern fn encore_str_find_control_from(value: str, start: usize) -> usize
+extern fn encore_text_builder_discard(builder: usize) ->()
 
 pub enum Json {
     Null
@@ -32,7 +30,9 @@ struct JsonParser {
 
 impl for ParseError {
     pub fn new(message: str, position: usize) -> Self {
-        ret Self { message, position }
+        ret Self {
+            message, position
+        }
     }
 
     pub fn message(self: Self) -> str {
@@ -130,12 +130,14 @@ pub fn object(fields: Vec[(str, Json)]) -> Json {
     ret Json::Object(fields)
 }
 
-pub fn field(key: str, value: Json) -> (str, Json) {
-    ret (key, value)
+pub fn field(key: str, value: Json) ->(str, Json) {
+    ret(key, value)
 }
 
 pub fn parse(source: str) -> Result[Json, ParseError] {
-    let parser = JsonParser { source, 0_usize }
+    let parser = JsonParser {
+        source, 0_usize
+    }
     match parse_value(skip_ws(parser)) {
         Result[(Json, JsonParser), ParseError]::Ok(pair) => {
             let rest = skip_ws(pair.1)
@@ -156,7 +158,7 @@ pub fn stringify(value: Json) -> str {
     ret text_builder_finish(builder)
 }
 
-fn stringify_into(builder: usize, value: Json) -> () {
+fn stringify_into(builder: usize, value: Json) ->() {
     match value {
         Json::Null => {
             text_builder_append(builder, "null")
@@ -164,8 +166,7 @@ fn stringify_into(builder: usize, value: Json) -> () {
         Json::Bool(flag) => {
             if flag {
                 text_builder_append(builder, "true")
-            }
-            else {
+            } else {
                 text_builder_append(builder, "false")
             }
         }
@@ -188,7 +189,8 @@ fn stringify_into(builder: usize, value: Json) -> () {
                         }
                         stringify_into(builder, item)
                     }
-                    Option[Json]::None => {}
+                    Option[Json]::None => {
+                    }
                 }
                 index += 1_usize
             }
@@ -208,14 +210,15 @@ fn stringify_into(builder: usize, value: Json) -> () {
                         text_builder_append(builder, "\":")
                         stringify_into(builder, item.1)
                     }
-                    Option[(str, Json)]::None => {}
+                    Option[(str, Json)]::None => {
+                    }
                 }
                 index += 1_usize
             }
             text_builder_append(builder, "}")
         }
     }
-    ret ()
+    ret()
 }
 
 fn object_get(fields: Vec[(str, Json)], key: str) -> Option[Json] {
@@ -227,7 +230,8 @@ fn object_get(fields: Vec[(str, Json)], key: str) -> Option[Json] {
                     ret Option[Json]::Some(item.1)
                 }
             }
-            Option[(str, Json)]::None => {}
+            Option[(str, Json)]::None => {
+            }
         }
         index += 1_usize
     }
@@ -360,29 +364,34 @@ fn parse_string(parser: JsonParser) -> Result[(str, JsonParser), ParseError] {
     let mut index = parser.index + 1_usize
     let mut segment_start = index
     let end = source.byte_len()
-    let closing_quote = unsafe { encore_str_find_byte_from(source, 34_u8, index) }
-    let first_escape = unsafe { encore_str_find_byte_from(source, 92_u8, index) }
-    let first_control = unsafe { encore_str_find_control_from(source, index) }
-    if closing_quote < first_escape && closing_quote < first_control {
-        let value = source.slice_bytes(index, closing_quote - index)
+    let first_special = find_string_special(source, index)
+    if first_special < end && source.byte_at(first_special) == 34_u8 {
+        let value = source.slice_bytes(index, first_special - index)
         text_builder_discard(builder)
-        ret ok_str_parser(value, JsonParser {source, closing_quote + 1_usize})
+        ret ok_str_parser(value, JsonParser {
+                source, first_special + 1_usize
+            }
+            ,
+        )
     }
     while index < end {
-        let next_quote = unsafe { encore_str_find_byte_from(source, 34_u8, index) }
-        let next_escape = unsafe { encore_str_find_byte_from(source, 92_u8, index) }
-        let next_control = unsafe { encore_str_find_control_from(source, index) }
-        let next_special = min_usize(next_quote, min_usize(next_escape, next_control))
+        let next_special = find_string_special(source, index)
         if next_special > index {
             index = next_special
-            continue
+        }
+        if index >= end {
+            break
         }
         let b = source.byte_at(index)
         if b == 34_u8 {
             if index > segment_start {
                 text_builder_append(builder, source.slice_bytes(segment_start, index - segment_start))
             }
-            ret ok_str_parser(text_builder_finish(builder), JsonParser {source, index + 1_usize})
+            ret ok_str_parser(text_builder_finish(builder), JsonParser {
+                    source, index + 1_usize
+                }
+                ,
+            )
         }
         if b == 92_u8 {
             if index > segment_start {
@@ -442,7 +451,9 @@ fn parse_string(parser: JsonParser) -> Result[(str, JsonParser), ParseError] {
                 continue
             }
             if esc == 117_u8 {
-                let escape_parser = JsonParser {source, index}
+                let escape_parser = JsonParser {
+                    source, index
+                }
                 match parse_unicode_escape(escape_parser) {
                     Result[(str, JsonParser), ParseError]::Ok(pair) => {
                         text_builder_append(builder, pair.0)
@@ -471,6 +482,18 @@ fn parse_string(parser: JsonParser) -> Result[(str, JsonParser), ParseError] {
     ret Result[(str, JsonParser), ParseError]::Err(ParseError::new("unterminated string", index))
 }
 
+fn find_string_special(source: str, start: usize) -> usize {
+    let mut index = start
+    while index < source.byte_len() {
+        let byte = source.byte_at(index)
+        if byte == 34_u8 || byte == 92_u8 ||(byte as usize) < 32_usize {
+            ret index
+        }
+        index += 1_usize
+    }
+    ret source.byte_len()
+}
+
 fn parse_unicode_escape(parser: JsonParser) -> Result[(str, JsonParser), ParseError] {
     if parser.index + 6_usize > parser.source.byte_len() {
         ret Result[(str, JsonParser), ParseError]::Err(ParseError::new("incomplete unicode escape", parser.index))
@@ -484,7 +507,7 @@ fn parse_unicode_escape(parser: JsonParser) -> Result[(str, JsonParser), ParseEr
         if !is_hex_digit(b) {
             ret Result[(str, JsonParser), ParseError]::Err(ParseError::new("invalid unicode escape", parser.index))
         }
-        code = (code * 16_usize) + hex_value(b)
+        code =(code * 16_usize) + hex_value(b)
         i += 1_usize
     }
 
@@ -507,13 +530,15 @@ fn parse_unicode_escape(parser: JsonParser) -> Result[(str, JsonParser), ParseEr
         if low < 56320_usize || low > 57343_usize {
             ret Result[(str, JsonParser), ParseError]::Err(ParseError::new("invalid low surrogate", next.index))
         }
-        code = 65536_usize + ((code - 55296_usize) * 1024_usize) + (low - 56320_usize)
+        code = 65536_usize +((code - 55296_usize) * 1024_usize) +(low - 56320_usize)
         next = advance(next, 6_usize)
-    }
-    elif code >= 56320_usize && code <= 57343_usize {
+    } elif code >= 56320_usize && code <= 57343_usize {
         ret Result[(str, JsonParser), ParseError]::Err(ParseError::new("unexpected low surrogate", parser.index))
     }
-    ret ok_str_parser(unsafe { encore_str_from_codepoint(code) }, next)
+    ret ok_str_parser(unsafe {
+            encore_str_from_codepoint(code)
+        }
+        , next,)
 }
 
 fn parse_number(parser: JsonParser) -> Result[(Json, JsonParser), ParseError] {
@@ -529,16 +554,14 @@ fn parse_number(parser: JsonParser) -> Result[(Json, JsonParser), ParseError] {
 
     if peek_byte(current) == 48_u8 {
         current = advance(current, 1_usize)
-    }
-    elif is_digit(peek_byte(current)) {
+    } elif is_digit(peek_byte(current)) {
         while current.index < current.source.byte_len() {
             if !is_digit(peek_byte(current)) {
                 break
             }
             current = advance(current, 1_usize)
         }
-    }
-    else {
+    } else {
         ret Result[(Json, JsonParser), ParseError]::Err(ParseError::new("invalid number", start))
     }
 
@@ -565,8 +588,7 @@ fn parse_number(parser: JsonParser) -> Result[(Json, JsonParser), ParseError] {
                 ret Result[(Json, JsonParser), ParseError]::Err(err)
             }
         }
-    }
-    elif exp == 101_u8 {
+    } elif exp == 101_u8 {
         match parse_exponent(current) {
             Result[JsonParser, ParseError]::Ok(next) => {
                 current = next
@@ -586,8 +608,7 @@ fn parse_exponent(parser: JsonParser) -> Result[JsonParser, ParseError] {
     let sign = peek_byte(current)
     if sign == 43_u8 {
         current = advance(current, 1_usize)
-    }
-    elif sign == 45_u8 {
+    } elif sign == 45_u8 {
         current = advance(current, 1_usize)
     }
     if !is_digit(peek_byte(current)) {
@@ -603,29 +624,38 @@ fn parse_exponent(parser: JsonParser) -> Result[JsonParser, ParseError] {
 }
 
 fn ok_json_parser(value: Json, parser: JsonParser) -> Result[(Json, JsonParser), ParseError] {
-    let pair: (Json, JsonParser) = (value, parser)
+    let pair:(Json, JsonParser) =(value, parser)
     ret Result[(Json, JsonParser), ParseError]::Ok(pair)
 }
 
 fn ok_str_parser(value: str, parser: JsonParser) -> Result[(str, JsonParser), ParseError] {
-    let pair: (str, JsonParser) = (value, parser)
+    let pair:(str, JsonParser) =(value, parser)
     ret Result[(str, JsonParser), ParseError]::Ok(pair)
 }
 
-fn append_escaped_string(builder: usize, value: str) -> () {
+fn append_escaped_string(builder: usize, value: str) ->() {
     let mut segment_start = 0_usize
     let mut index = 0_usize
     while index < value.len() {
         let b = value.byte_at(index)
         let mut escaped = ""
-        if b == 34_u8 { escaped = "\\\"" }
-        elif b == 92_u8 { escaped = "\\\\" }
-        elif b == 8_u8 { escaped = "\\b" }
-        elif b == 12_u8 { escaped = "\\f" }
-        elif b == 10_u8 { escaped = "\\n" }
-        elif b == 13_u8 { escaped = "\\r" }
-        elif b == 9_u8 { escaped = "\\t" }
-        elif b < 32_u8 { escaped = "\\u00" + byte_to_hex2(b) }
+        if b == 34_u8 {
+            escaped = "\\\""
+        } elif b == 92_u8 {
+            escaped = "\\\\"
+        } elif b == 8_u8 {
+            escaped = "\\b"
+        } elif b == 12_u8 {
+            escaped = "\\f"
+        } elif b == 10_u8 {
+            escaped = "\\n"
+        } elif b == 13_u8 {
+            escaped = "\\r"
+        } elif b == 9_u8 {
+            escaped = "\\t"
+        } elif b < 32_u8 {
+            escaped = "\\u00" + byte_to_hex2(b)
+        }
         if escaped != "" {
             if index > segment_start {
                 text_builder_append(builder, value.slice_bytes(segment_start, index - segment_start))
@@ -638,29 +668,32 @@ fn append_escaped_string(builder: usize, value: str) -> () {
     if index > segment_start {
         text_builder_append(builder, value.slice_bytes(segment_start, index - segment_start))
     }
-    ret ()
+    ret()
 }
 fn text_builder_new() -> usize {
-    ret unsafe { encore_text_builder_new() }
+    ret unsafe {
+        encore_text_builder_new()
+    }
 }
 
-fn min_usize(lhs: usize, rhs: usize) -> usize {
-    if lhs < rhs { ret lhs }
-    ret rhs
-}
-
-fn text_builder_append(builder: usize, value: str) -> () {
-    unsafe { encore_text_builder_append(builder, value) }
-    ret ()
+fn text_builder_append(builder: usize, value: str) ->() {
+    unsafe {
+        encore_text_builder_append(builder, value)
+    }
+    ret()
 }
 
 fn text_builder_finish(builder: usize) -> str {
-    ret unsafe { encore_text_builder_finish(builder) }
+    ret unsafe {
+        encore_text_builder_finish(builder)
+    }
 }
 
-fn text_builder_discard(builder: usize) -> () {
-    unsafe { encore_text_builder_discard(builder) }
-    ret ()
+fn text_builder_discard(builder: usize) ->() {
+    unsafe {
+        encore_text_builder_discard(builder)
+    }
+    ret()
 }
 
 fn skip_ws(parser: JsonParser) -> JsonParser {
@@ -672,11 +705,15 @@ fn skip_ws(parser: JsonParser) -> JsonParser {
         }
         index += 1_usize
     }
-    ret JsonParser { parser.source, index }
+    ret JsonParser {
+        parser.source, index
+    }
 }
 
 fn advance(parser: JsonParser, count: usize) -> JsonParser {
-    ret JsonParser { parser.source, parser.index + count }
+    ret JsonParser {
+        parser.source, parser.index + count
+    }
 }
 
 fn peek_byte(parser: JsonParser) -> u8 {
@@ -727,15 +764,15 @@ fn is_hex_digit(value: u8) -> bool {
 fn hex_value(value: u8) -> usize {
     if value >= 48_u8 {
         if value <= 57_u8 {
-            ret (value as usize) - 48_usize
+            ret(value as usize) - 48_usize
         }
     }
     if value >= 65_u8 {
         if value <= 70_u8 {
-            ret ((value as usize) - 65_usize) + 10_usize
+            ret((value as usize) - 65_usize) + 10_usize
         }
     }
-    ret ((value as usize) - 97_usize) + 10_usize
+    ret((value as usize) - 97_usize) + 10_usize
 }
 
 fn is_ws(value: u8) -> bool {
@@ -756,125 +793,355 @@ fn byte_to_hex2(value: u8) -> str {
 }
 
 fn hex_digit(value: usize) -> str {
-    if value == 0_usize { ret "0" }
-    if value == 1_usize { ret "1" }
-    if value == 2_usize { ret "2" }
-    if value == 3_usize { ret "3" }
-    if value == 4_usize { ret "4" }
-    if value == 5_usize { ret "5" }
-    if value == 6_usize { ret "6" }
-    if value == 7_usize { ret "7" }
-    if value == 8_usize { ret "8" }
-    if value == 9_usize { ret "9" }
-    if value == 10_usize { ret "A" }
-    if value == 11_usize { ret "B" }
-    if value == 12_usize { ret "C" }
-    if value == 13_usize { ret "D" }
-    if value == 14_usize { ret "E" }
+    if value == 0_usize {
+        ret "0"
+    }
+    if value == 1_usize {
+        ret "1"
+    }
+    if value == 2_usize {
+        ret "2"
+    }
+    if value == 3_usize {
+        ret "3"
+    }
+    if value == 4_usize {
+        ret "4"
+    }
+    if value == 5_usize {
+        ret "5"
+    }
+    if value == 6_usize {
+        ret "6"
+    }
+    if value == 7_usize {
+        ret "7"
+    }
+    if value == 8_usize {
+        ret "8"
+    }
+    if value == 9_usize {
+        ret "9"
+    }
+    if value == 10_usize {
+        ret "A"
+    }
+    if value == 11_usize {
+        ret "B"
+    }
+    if value == 12_usize {
+        ret "C"
+    }
+    if value == 13_usize {
+        ret "D"
+    }
+    if value == 14_usize {
+        ret "E"
+    }
     ret "F"
 }
 
 fn ascii_code_to_str(value: usize) -> str {
-    if value == 8_usize { ret "\b" }
-    if value == 9_usize { ret "\t" }
-    if value == 10_usize { ret "\n" }
-    if value == 12_usize { ret "\f" }
-    if value == 13_usize { ret "\r" }
-    if value == 32_usize { ret " " }
-    if value == 33_usize { ret "!" }
-    if value == 34_usize { ret "\"" }
-    if value == 35_usize { ret "#" }
-    if value == 36_usize { ret "$" }
-    if value == 37_usize { ret "%" }
-    if value == 38_usize { ret "&" }
-    if value == 39_usize { ret "'" }
-    if value == 40_usize { ret "(" }
-    if value == 41_usize { ret ")" }
-    if value == 42_usize { ret "*" }
-    if value == 43_usize { ret "+" }
-    if value == 44_usize { ret "," }
-    if value == 45_usize { ret "-" }
-    if value == 46_usize { ret "." }
-    if value == 47_usize { ret "/" }
-    if value == 48_usize { ret "0" }
-    if value == 49_usize { ret "1" }
-    if value == 50_usize { ret "2" }
-    if value == 51_usize { ret "3" }
-    if value == 52_usize { ret "4" }
-    if value == 53_usize { ret "5" }
-    if value == 54_usize { ret "6" }
-    if value == 55_usize { ret "7" }
-    if value == 56_usize { ret "8" }
-    if value == 57_usize { ret "9" }
-    if value == 58_usize { ret ":" }
-    if value == 59_usize { ret ";" }
-    if value == 60_usize { ret "<" }
-    if value == 61_usize { ret "=" }
-    if value == 62_usize { ret ">" }
-    if value == 63_usize { ret "?" }
-    if value == 64_usize { ret "@" }
-    if value == 65_usize { ret "A" }
-    if value == 66_usize { ret "B" }
-    if value == 67_usize { ret "C" }
-    if value == 68_usize { ret "D" }
-    if value == 69_usize { ret "E" }
-    if value == 70_usize { ret "F" }
-    if value == 71_usize { ret "G" }
-    if value == 72_usize { ret "H" }
-    if value == 73_usize { ret "I" }
-    if value == 74_usize { ret "J" }
-    if value == 75_usize { ret "K" }
-    if value == 76_usize { ret "L" }
-    if value == 77_usize { ret "M" }
-    if value == 78_usize { ret "N" }
-    if value == 79_usize { ret "O" }
-    if value == 80_usize { ret "P" }
-    if value == 81_usize { ret "Q" }
-    if value == 82_usize { ret "R" }
-    if value == 83_usize { ret "S" }
-    if value == 84_usize { ret "T" }
-    if value == 85_usize { ret "U" }
-    if value == 86_usize { ret "V" }
-    if value == 87_usize { ret "W" }
-    if value == 88_usize { ret "X" }
-    if value == 89_usize { ret "Y" }
-    if value == 90_usize { ret "Z" }
-    if value == 91_usize { ret "[" }
-    if value == 92_usize { ret "\\" }
-    if value == 93_usize { ret "]" }
-    if value == 94_usize { ret "^" }
-    if value == 95_usize { ret "_" }
-    if value == 96_usize { ret "`" }
-    if value == 97_usize { ret "a" }
-    if value == 98_usize { ret "b" }
-    if value == 99_usize { ret "c" }
-    if value == 100_usize { ret "d" }
-    if value == 101_usize { ret "e" }
-    if value == 102_usize { ret "f" }
-    if value == 103_usize { ret "g" }
-    if value == 104_usize { ret "h" }
-    if value == 105_usize { ret "i" }
-    if value == 106_usize { ret "j" }
-    if value == 107_usize { ret "k" }
-    if value == 108_usize { ret "l" }
-    if value == 109_usize { ret "m" }
-    if value == 110_usize { ret "n" }
-    if value == 111_usize { ret "o" }
-    if value == 112_usize { ret "p" }
-    if value == 113_usize { ret "q" }
-    if value == 114_usize { ret "r" }
-    if value == 115_usize { ret "s" }
-    if value == 116_usize { ret "t" }
-    if value == 117_usize { ret "u" }
-    if value == 118_usize { ret "v" }
-    if value == 119_usize { ret "w" }
-    if value == 120_usize { ret "x" }
-    if value == 121_usize { ret "y" }
-    if value == 122_usize { ret "z" }
-    if value == 123_usize { ret "{" }
-    if value == 124_usize { ret "|" }
-    if value == 125_usize { ret "}" }
-    if value == 126_usize { ret "~" }
+    if value == 8_usize {
+        ret "\b"
+    }
+    if value == 9_usize {
+        ret "\t"
+    }
+    if value == 10_usize {
+        ret "\n"
+    }
+    if value == 12_usize {
+        ret "\f"
+    }
+    if value == 13_usize {
+        ret "\r"
+    }
+    if value == 32_usize {
+        ret " "
+    }
+    if value == 33_usize {
+        ret "!"
+    }
+    if value == 34_usize {
+        ret "\""
+    }
+    if value == 35_usize {
+        ret "#"
+    }
+    if value == 36_usize {
+        ret "$"
+    }
+    if value == 37_usize {
+        ret "%"
+    }
+    if value == 38_usize {
+        ret "&"
+    }
+    if value == 39_usize {
+        ret "'"
+    }
+    if value == 40_usize {
+        ret "("
+    }
+    if value == 41_usize {
+        ret ")"
+    }
+    if value == 42_usize {
+        ret "*"
+    }
+    if value == 43_usize {
+        ret "+"
+    }
+    if value == 44_usize {
+        ret ","
+    }
+    if value == 45_usize {
+        ret "-"
+    }
+    if value == 46_usize {
+        ret "."
+    }
+    if value == 47_usize {
+        ret "/"
+    }
+    if value == 48_usize {
+        ret "0"
+    }
+    if value == 49_usize {
+        ret "1"
+    }
+    if value == 50_usize {
+        ret "2"
+    }
+    if value == 51_usize {
+        ret "3"
+    }
+    if value == 52_usize {
+        ret "4"
+    }
+    if value == 53_usize {
+        ret "5"
+    }
+    if value == 54_usize {
+        ret "6"
+    }
+    if value == 55_usize {
+        ret "7"
+    }
+    if value == 56_usize {
+        ret "8"
+    }
+    if value == 57_usize {
+        ret "9"
+    }
+    if value == 58_usize {
+        ret ":"
+    }
+    if value == 59_usize {
+        ret ";"
+    }
+    if value == 60_usize {
+        ret "<"
+    }
+    if value == 61_usize {
+        ret "="
+    }
+    if value == 62_usize {
+        ret ">"
+    }
+    if value == 63_usize {
+        ret "?"
+    }
+    if value == 64_usize {
+        ret "@"
+    }
+    if value == 65_usize {
+        ret "A"
+    }
+    if value == 66_usize {
+        ret "B"
+    }
+    if value == 67_usize {
+        ret "C"
+    }
+    if value == 68_usize {
+        ret "D"
+    }
+    if value == 69_usize {
+        ret "E"
+    }
+    if value == 70_usize {
+        ret "F"
+    }
+    if value == 71_usize {
+        ret "G"
+    }
+    if value == 72_usize {
+        ret "H"
+    }
+    if value == 73_usize {
+        ret "I"
+    }
+    if value == 74_usize {
+        ret "J"
+    }
+    if value == 75_usize {
+        ret "K"
+    }
+    if value == 76_usize {
+        ret "L"
+    }
+    if value == 77_usize {
+        ret "M"
+    }
+    if value == 78_usize {
+        ret "N"
+    }
+    if value == 79_usize {
+        ret "O"
+    }
+    if value == 80_usize {
+        ret "P"
+    }
+    if value == 81_usize {
+        ret "Q"
+    }
+    if value == 82_usize {
+        ret "R"
+    }
+    if value == 83_usize {
+        ret "S"
+    }
+    if value == 84_usize {
+        ret "T"
+    }
+    if value == 85_usize {
+        ret "U"
+    }
+    if value == 86_usize {
+        ret "V"
+    }
+    if value == 87_usize {
+        ret "W"
+    }
+    if value == 88_usize {
+        ret "X"
+    }
+    if value == 89_usize {
+        ret "Y"
+    }
+    if value == 90_usize {
+        ret "Z"
+    }
+    if value == 91_usize {
+        ret "["
+    }
+    if value == 92_usize {
+        ret "\\"
+    }
+    if value == 93_usize {
+        ret "]"
+    }
+    if value == 94_usize {
+        ret "^"
+    }
+    if value == 95_usize {
+        ret "_"
+    }
+    if value == 96_usize {
+        ret "`"
+    }
+    if value == 97_usize {
+        ret "a"
+    }
+    if value == 98_usize {
+        ret "b"
+    }
+    if value == 99_usize {
+        ret "c"
+    }
+    if value == 100_usize {
+        ret "d"
+    }
+    if value == 101_usize {
+        ret "e"
+    }
+    if value == 102_usize {
+        ret "f"
+    }
+    if value == 103_usize {
+        ret "g"
+    }
+    if value == 104_usize {
+        ret "h"
+    }
+    if value == 105_usize {
+        ret "i"
+    }
+    if value == 106_usize {
+        ret "j"
+    }
+    if value == 107_usize {
+        ret "k"
+    }
+    if value == 108_usize {
+        ret "l"
+    }
+    if value == 109_usize {
+        ret "m"
+    }
+    if value == 110_usize {
+        ret "n"
+    }
+    if value == 111_usize {
+        ret "o"
+    }
+    if value == 112_usize {
+        ret "p"
+    }
+    if value == 113_usize {
+        ret "q"
+    }
+    if value == 114_usize {
+        ret "r"
+    }
+    if value == 115_usize {
+        ret "s"
+    }
+    if value == 116_usize {
+        ret "t"
+    }
+    if value == 117_usize {
+        ret "u"
+    }
+    if value == 118_usize {
+        ret "v"
+    }
+    if value == 119_usize {
+        ret "w"
+    }
+    if value == 120_usize {
+        ret "x"
+    }
+    if value == 121_usize {
+        ret "y"
+    }
+    if value == 122_usize {
+        ret "z"
+    }
+    if value == 123_usize {
+        ret "{"
+    }
+    if value == 124_usize {
+        ret "|"
+    }
+    if value == 125_usize {
+        ret "}"
+    }
+    if value == 126_usize {
+        ret "~"
+    }
     ret "?"
 }
 

@@ -9,14 +9,14 @@ import core::option::Option
 /// references are registered as outgoing graph edges by Vec mutations; its
 /// compiler-generated finalizer drops initialized elements before the node.
 struct VecStorage[T] {
-    ptr: T*
+    ptr: T *
     len: usize
     cap: usize
 }
 
 /// Owns a reference to growable graph-managed storage.
 pub struct Vec[T] {
-    storage: VecStorage[T]<H>
+    storage: VecStorage[T] < H >
 }
 
 /// Traverses a vector without modifying its elements.
@@ -26,21 +26,21 @@ pub struct VecIter[T] {
 }
 
 #attr(safe)
-fn __vec_null_ptr[T]() -> T* {
+fn __vec_null_ptr[T]() -> T * {
     unsafe {
         unsafe ehir {
             zero: usize = lcpos 0_usize
-            ptr: T* = pcast zero: usize, T*
+            ptr: T * = pcast zero: usize, T *
         }
         ret ptr
     }
 }
 
 #attr(safe)
-fn __vec_realloc[T](ptr: T*, count: usize) -> T* {
+fn __vec_realloc[T](ptr: T *, count: usize) -> T * {
     unsafe {
         unsafe ehir {
-            next_ptr: T* = hrealloc ptr: T*, count: usize
+            next_ptr: T * = hrealloc ptr: T *, count: usize
         }
         ret next_ptr
     }
@@ -48,11 +48,11 @@ fn __vec_realloc[T](ptr: T*, count: usize) -> T* {
 
 #attr(safe)
 #attr(borrowed_return)
-fn __vec_load[T](ptr: T*, index: usize) -> T {
+fn __vec_load[T](ptr: T *, index: usize) -> T {
     unsafe {
         unsafe ehir {
-            elem_ptr: T* = gep ptr: T*, index: usize
-            value: T = load elem_ptr: T*
+            elem_ptr: T * = gep ptr: T *, index: usize
+            value: T = load elem_ptr: T *
         }
         ret value
     }
@@ -60,29 +60,29 @@ fn __vec_load[T](ptr: T*, index: usize) -> T {
 
 #attr(safe)
 #attr(borrowed_return)
-fn __vec_load_frozen[T](ptr: frozen T*, index: usize) -> T {
+fn __vec_load_frozen[T](ptr: frozen T *, index: usize) -> T {
     unsafe {
         unsafe ehir {
-            elem_ptr: T* = gep ptr: T*, index: usize
-            value: T = load elem_ptr: T*
+            elem_ptr: T * = gep ptr: T *, index: usize
+            value: T = load elem_ptr: T *
         }
         ret value
     }
 }
 
 #attr(safe)
-fn __vec_get_handle[T](ptr: T*, index: usize) -> usize {
+fn __vec_get_handle[T](ptr: T *, index: usize) -> usize {
     unsafe {
         unsafe ehir {
-            elem_ptr: T* = gep ptr: T*, index: usize
-            handle: usize = pcast elem_ptr: T*, usize
+            elem_ptr: T * = gep ptr: T *, index: usize
+            handle: usize = pcast elem_ptr: T *, usize
         }
         ret handle
     }
 }
 
 #attr(safe)
-fn __vec_load_retained[T](ptr: T*, index: usize) -> T {
+fn __vec_load_retained[T](ptr: T *, index: usize) -> T {
     unsafe {
         let value = __vec_load[T](ptr, index)
         ret value
@@ -90,35 +90,35 @@ fn __vec_load_retained[T](ptr: T*, index: usize) -> T {
 }
 
 #attr(safe)
-fn __vec_store[T](ptr: T*, index: usize, value: T) -> bool {
+fn __vec_store[T](ptr: T *, index: usize, value: T) -> bool {
     unsafe {
         unsafe ehir {
-            elem_ptr: T* = gep ptr: T*, index: usize
-            store value: T, elem_ptr: T*
+            elem_ptr: T * = gep ptr: T *, index: usize
+            store value: T, elem_ptr: T *
         }
         ret true
     }
 }
 
 #attr(safe)
-fn __vec_replace[T](ptr: T*, index: usize, value: T) -> bool {
+fn __vec_replace[T](ptr: T *, index: usize, value: T) -> bool {
     unsafe {
         unsafe ehir {
-            elem_ptr: T* = gep ptr: T*, index: usize
-            old: T = load elem_ptr: T*
+            elem_ptr: T * = gep ptr: T *, index: usize
+            old: T = load elem_ptr: T *
             drop old: T
-            store value: T, elem_ptr: T*
+            store value: T, elem_ptr: T *
         }
         ret true
     }
 }
 
 #attr(safe)
-fn __vec_drop_at[T](ptr: T*, index: usize) -> bool {
+fn __vec_drop_at[T](ptr: T *, index: usize) -> bool {
     unsafe {
         unsafe ehir {
-            elem_ptr: T* = gep ptr: T*, index: usize
-            old: T = load elem_ptr: T*
+            elem_ptr: T * = gep ptr: T *, index: usize
+            old: T = load elem_ptr: T *
             drop old: T
         }
         ret true
@@ -126,10 +126,10 @@ fn __vec_drop_at[T](ptr: T*, index: usize) -> bool {
 }
 
 #attr(safe)
-fn __vec_free_ptr[T](ptr: T*) -> bool {
+fn __vec_free_ptr[T](ptr: T *) -> bool {
     unsafe {
         unsafe ehir {
-            hfree ptr: T*
+            hfree ptr: T *
         }
         ret true
     }
@@ -143,9 +143,9 @@ fn __vec_next_cap(current: usize) -> usize {
     ret current * 2_usize
 }
 
-fn __vec_reserve_exact[T](vec: mut Vec[T], new_cap: usize) -> () {
+fn __vec_reserve_exact[T](vec: mut Vec[T], new_cap: usize) ->() {
     if new_cap <= vec.storage.cap {
-        ret ()
+        ret()
     }
 
     unsafe {
@@ -156,18 +156,18 @@ fn __vec_reserve_exact[T](vec: mut Vec[T], new_cap: usize) -> () {
             setfield storage > 2, new_cap
         }
     }
-    ret ()
+    ret()
 }
 
 #attr(safe)
-fn __vec_set_len[T](vec: mut Vec[T], new_len: usize) -> () {
+fn __vec_set_len[T](vec: mut Vec[T], new_len: usize) ->() {
     let storage = vec.storage
     unsafe {
         unsafe ehir {
             setfield storage > 1, new_len
         }
     }
-    ret ()
+    ret()
 }
 
 impl[T] for Vec[T] {
@@ -181,9 +181,17 @@ impl[T] for Vec[T] {
         unsafe {
             if cap > 0_usize {
                 let ptr = __vec_realloc[T](__vec_null_ptr[T](), cap)
-                ret Vec[T]{VecStorage[T]<H>{ptr, 0_usize, cap}}
+                ret Vec[T] {
+                    VecStorage[T] < H > {
+                        ptr, 0_usize, cap
+                    }
+                }
             }
-            ret Vec[T]{VecStorage[T]<H>{__vec_null_ptr[T](), 0_usize, 0_usize}}
+            ret Vec[T] {
+                VecStorage[T] < H > {
+                    __vec_null_ptr[T](), 0_usize, 0_usize
+                }
+            }
         }
     }
 
@@ -213,7 +221,7 @@ impl[T] for Vec[T] {
     /// operation can reallocate its storage. Native callees must not retain
     /// it after the synchronous call returns. Dereferencing the pointer still
     /// requires an `unsafe` boundary.
-    pub fn as_ptr(self: Vec[T]) -> T* {
+    pub fn as_ptr(self: Vec[T]) -> T * {
         ret self.storage.ptr
     }
 
@@ -225,25 +233,27 @@ impl[T] for Vec[T] {
 
     /// Ensures capacity for at least `additional` more elements.
     #attr(borrowed_self)
-    pub fn reserve(self: mut Vec[T], additional: usize) -> () {
+    pub fn reserve(self: mut Vec[T], additional: usize) ->() {
         let required = self.len() + additional
         if required <= self.capacity() {
-            ret ()
+            ret()
         }
 
         let mut next_cap = self.capacity()
-        if next_cap == 0_usize { next_cap = __vec_next_cap(0_usize) }
+        if next_cap == 0_usize {
+            next_cap = __vec_next_cap(0_usize)
+        }
         while next_cap < required {
             next_cap = __vec_next_cap(next_cap)
         }
 
         __vec_reserve_exact[T](self, next_cap)
-        ret ()
+        ret()
     }
 
     /// Appends `value` to the end of the vector.
     #attr(borrowed_self)
-    pub fn push(self: mut Vec[T], value: T) -> () {
+    pub fn push(self: mut Vec[T], value: T) ->() {
         self.reserve(1_usize)
         let storage = self.storage
         unsafe {
@@ -253,14 +263,14 @@ impl[T] for Vec[T] {
             __vec_store[T](self.storage.ptr, self.storage.len, value)
         }
         __vec_set_len[T](self, self.storage.len + 1_usize)
-        ret ()
+        ret()
     }
 
     /// Replaces the element at `index`; out-of-bounds indices are ignored.
     #attr(borrowed_self)
-    pub fn set(self: mut Vec[T], index: usize, value: T) -> () {
+    pub fn set(self: mut Vec[T], index: usize, value: T) ->() {
         if index >= self.storage.len {
-            ret ()
+            ret()
         }
         self.reserve(0_usize)
 
@@ -273,7 +283,7 @@ impl[T] for Vec[T] {
             }
             __vec_replace[T](self.storage.ptr, index, value)
         }
-        ret ()
+        ret()
     }
 
     #attr(borrowed_self)
@@ -293,7 +303,9 @@ impl[T] for Vec[T] {
     #attr(borrowed_return)
     /// Returns an element without retaining it. The caller must prove the index and vector lifetime.
     pub fn get_unchecked_borrowed(self: Vec[T], index: usize) -> T {
-        unsafe { ret __vec_load[T](self.storage.ptr, index) }
+        unsafe {
+            ret __vec_load[T](self.storage.ptr, index)
+        }
     }
 
     #attr(borrowed_self)
@@ -326,7 +338,7 @@ impl[T] for Vec[T] {
 
     /// Drops every element while retaining the allocation.
     #attr(borrowed_self)
-    pub fn clear(self: mut Vec[T]) -> () {
+    pub fn clear(self: mut Vec[T]) ->() {
         self.reserve(0_usize)
         let storage = self.storage
         let mut index = 0_usize
@@ -341,7 +353,7 @@ impl[T] for Vec[T] {
             index = index + 1_usize
         }
         __vec_set_len[T](self, 0_usize)
-        ret ()
+        ret()
     }
 
     /// Removes and returns the last element when present.
@@ -373,15 +385,17 @@ impl[T] for Vec[T] {
 
     /// Appends every element from `other` in iteration order.
     #attr(borrowed_self)
-    pub fn extend(self: mut Vec[T], other: Vec[T]) -> () {
+    pub fn extend(self: mut Vec[T], other: Vec[T]) ->() {
         self.reserve(other.storage.len)
         let mut index = 0_usize
         while index < other.storage.len {
-            let value = unsafe { __vec_load_retained[T](other.storage.ptr, index) }
+            let value = unsafe {
+                __vec_load_retained[T](other.storage.ptr, index)
+            }
             self.push(value)
             index = index + 1_usize
         }
-        ret ()
+        ret()
     }
 
     /// Clears all elements and reports successful cleanup.
@@ -393,7 +407,9 @@ impl[T] for Vec[T] {
 
     /// Creates an iterator positioned before the first element.
     pub fn iter(self: Vec[T]) -> VecIter[T] {
-        ret VecIter[T]{self, 0_usize}
+        ret VecIter[T] {
+            self, 0_usize
+        }
     }
 
     /// Converts this vector into its iterator representation.
@@ -411,13 +427,16 @@ impl[T] IntoIterator[T, VecIter[T]] for Vec[T] {
 
 impl[T] Iterator[T] for VecIter[T] {
     /// Advances the iterator and returns the next element.
-    pub fn next(self: VecIter[T]) -> (VecIter[T], Option[T]) {
+    pub fn next(self: VecIter[T]) ->(VecIter[T], Option[T]) {
         if self.index >= self.vec.storage.len {
-            ret (self, Option[T]::None)
+            ret(self, Option[T]::None)
         }
         unsafe {
             let value = __vec_load_retained[T](self.vec.storage.ptr, self.index)
-            ret (VecIter[T]{self.vec, self.index + 1_usize}, Option[T]::Some(value))
+            ret(VecIter[T] {
+                    self.vec, self.index + 1_usize
+                }
+                , Option[T]::Some(value),)
         }
     }
 }
@@ -429,13 +448,16 @@ impl[T] for VecIter[T] {
     }
 
     /// Advances the iterator and returns the next element.
-    pub fn next(self: VecIter[T]) -> (VecIter[T], Option[T]) {
+    pub fn next(self: VecIter[T]) ->(VecIter[T], Option[T]) {
         if self.index >= self.vec.storage.len {
-            ret (self, Option[T]::None)
+            ret(self, Option[T]::None)
         }
         unsafe {
             let value = __vec_load_retained[T](self.vec.storage.ptr, self.index)
-            ret (VecIter[T]{self.vec, self.index + 1_usize}, Option[T]::Some(value))
+            ret(VecIter[T] {
+                    self.vec, self.index + 1_usize
+                }
+                , Option[T]::Some(value),)
         }
     }
 
@@ -453,13 +475,16 @@ impl[T] IntoIterator[T, VecIter[T]] for VecIter[T] {
 }
 
 /// Advances `iter`, returning its new state and optional element.
-pub fn iter_next[T](iter: VecIter[T]) -> (VecIter[T], Option[T]) {
+pub fn iter_next[T](iter: VecIter[T]) ->(VecIter[T], Option[T]) {
     if iter.index >= iter.vec.storage.len {
-        ret (iter, Option[T]::None)
+        ret(iter, Option[T]::None)
     }
     unsafe {
         let value = __vec_load_retained[T](iter.vec.storage.ptr, iter.index)
-        ret (VecIter[T]{iter.vec, iter.index + 1_usize}, Option[T]::Some(value))
+        ret(VecIter[T] {
+                iter.vec, iter.index + 1_usize
+            }
+            , Option[T]::Some(value),)
     }
 }
 
@@ -475,7 +500,7 @@ pub fn iter_next_item[T](iter: VecIter[T]) -> Option[T] {
     ret step.1
 }
 
-impl[T:Debug] Debug for Vec[T] {
+impl[T: Debug] Debug for Vec[T] {
     /// Formats the value as text.
     pub fn fmt(self: Vec[T]) -> str {
         let mut out: str = "["
@@ -510,7 +535,7 @@ fn vec_contract() -> bool {
     vec.push(8_u32)
     vec.reserve(2_usize)
     ret initial_len == 0_usize
-        && vec.len() == 3_usize
-        && !vec.is_empty()
-        && vec.capacity() >= 3_usize
+    && vec.len() == 3_usize
+    && !vec.is_empty()
+    && vec.capacity() >= 3_usize
 }

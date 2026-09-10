@@ -1,3 +1,3 @@
 //! Provides synchronous network primitives.
 
-pub import platform::net::*
+pub import platform::net:: *

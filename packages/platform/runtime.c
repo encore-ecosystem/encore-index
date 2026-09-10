@@ -109,6 +109,7 @@ typedef struct {
     void *payload;
     bool started;
     bool joined;
+    atomic_bool completed;
     atomic_size_t references;
 #ifdef _WIN32
     CRITICAL_SECTION join_lock;
@@ -124,6 +125,7 @@ static void *encore_thread_main(void *raw) {
 #endif
     encore_thread_task *task = (encore_thread_task *)raw;
     task->entry(task->payload);
+    atomic_store_explicit(&task->completed, true, memory_order_release);
 #ifdef _WIN32
     return 0;
 #else
@@ -140,6 +142,7 @@ size_t encore_thread_spawn(encore_thread_entry entry, void *payload, encore_thre
     task->payload = payload;
     task->started = false;
     task->joined = false;
+    atomic_init(&task->completed, false);
     atomic_init(&task->references, 1);
 #ifdef _WIN32
     InitializeCriticalSection(&task->join_lock);
@@ -152,8 +155,17 @@ size_t encore_thread_spawn(encore_thread_entry entry, void *payload, encore_thre
 #else
     if (pthread_create(&task->thread, NULL, encore_thread_main, task) == 0) task->started = true;
 #endif
-    if (!task->started) { task->entry(task->payload); task->joined = true; }
+    if (!task->started) {
+        task->entry(task->payload);
+        atomic_store_explicit(&task->completed, true, memory_order_release);
+        task->joined = true;
+    }
     return (size_t)(uintptr_t)task;
+}
+
+bool encore_thread_is_finished(size_t token) {
+    encore_thread_task *task = (encore_thread_task *)(uintptr_t)token;
+    return task == NULL || atomic_load_explicit(&task->completed, memory_order_acquire);
 }
 
 void *encore_thread_join(size_t token) {
@@ -448,6 +460,43 @@ encore_str encore_io_read(int32_t fd, size_t max_bytes) {
         return encore_empty_str();
     }
     return encore_from_owned_buffer(buffer, (size_t)bytes_read);
+#endif
+}
+
+bool encore_io_wait_readable(int32_t fd, size_t timeout_ms) {
+    if (fd < 0) return false;
+#ifdef _WIN32
+    intptr_t raw_handle = _get_osfhandle(fd);
+    if (raw_handle == -1) return false;
+    HANDLE handle = (HANDLE)raw_handle;
+    DWORD type = GetFileType(handle);
+    DWORD timeout = timeout_ms > (size_t)MAXDWORD ? MAXDWORD : (DWORD)timeout_ms;
+    if (type == FILE_TYPE_CHAR) {
+        DWORD result = WaitForSingleObject(handle, timeout);
+        return result == WAIT_OBJECT_0;
+    }
+    if (type != FILE_TYPE_PIPE) return true;
+    ULONGLONG deadline = GetTickCount64() + timeout;
+    for (;;) {
+        DWORD available = 0;
+        if (!PeekNamedPipe(handle, NULL, 0, NULL, &available, NULL)) {
+            DWORD error = GetLastError();
+            return error == ERROR_BROKEN_PIPE || error == ERROR_PIPE_NOT_CONNECTED;
+        }
+        if (available > 0) return true;
+        ULONGLONG now = GetTickCount64();
+        if (timeout == 0 || now >= deadline) return false;
+        DWORD remaining = (DWORD)(deadline - now);
+        Sleep(remaining > 10 ? 10 : remaining);
+    }
+#else
+    struct pollfd pending = {fd, POLLIN, 0};
+    int timeout = timeout_ms > (size_t)INT_MAX ? INT_MAX : (int)timeout_ms;
+    int result;
+    do {
+        result = poll(&pending, 1, timeout);
+    } while (result < 0 && errno == EINTR);
+    return result > 0 && (pending.revents & (POLLIN | POLLHUP | POLLERR)) != 0;
 #endif
 }
 
@@ -2014,6 +2063,60 @@ int32_t encore_fs_write_file(encore_str path, encore_str contents) {
     size_t written = fwrite(contents_data, 1, contents_len, file);
     fclose(file);
     return written == contents_len ? 0 : -1;
+}
+
+int32_t encore_fs_write_file_atomic(encore_str path, encore_str contents) {
+    char *path_c = encore_to_cstr(path);
+    if (path_c == NULL) return -1;
+    size_t path_len = strlen(path_c);
+    if (path_len > SIZE_MAX - 32) { free(path_c); return -1; }
+    char *temporary_c = malloc(path_len + 32);
+    if (temporary_c == NULL) { free(path_c); return -1; }
+    memcpy(temporary_c, path_c, path_len);
+#ifdef _WIN32
+    int temporary_fd = -1;
+    unsigned long process_id = GetCurrentProcessId();
+    for (unsigned int attempt = 0; attempt < 100 && temporary_fd < 0; ++attempt) {
+        snprintf(temporary_c + path_len, 32, ".tmp.%lu.%u", process_id, attempt);
+        temporary_fd = _open(temporary_c, _O_CREAT | _O_EXCL | _O_WRONLY | _O_BINARY,
+                             _S_IREAD | _S_IWRITE);
+    }
+    FILE *file = temporary_fd < 0 ? NULL : _fdopen(temporary_fd, "wb");
+#else
+    memcpy(temporary_c + path_len, ".tmp.XXXXXX", 12);
+    int temporary_fd = mkstemp(temporary_c);
+    FILE *file = temporary_fd < 0 ? NULL : fdopen(temporary_fd, "wb");
+#endif
+    if (file == NULL) {
+        if (temporary_fd >= 0) {
+#ifdef _WIN32
+            _close(temporary_fd);
+#else
+            close(temporary_fd);
+#endif
+            remove(temporary_c);
+        }
+        free(temporary_c);
+        free(path_c);
+        return -1;
+    }
+    size_t contents_len = encore_str_size(contents);
+    char *contents_data = encore_str_data(contents);
+    size_t written = fwrite(contents_data, 1, contents_len, file);
+    int close_status = fclose(file);
+    int32_t status = written == contents_len && close_status == 0 ? 0 : -1;
+    if (status == 0) {
+#ifdef _WIN32
+        if (!MoveFileExA(temporary_c, path_c,
+                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) status = -1;
+#else
+        if (rename(temporary_c, path_c) != 0) status = -1;
+#endif
+    }
+    if (status != 0) remove(temporary_c);
+    free(temporary_c);
+    free(path_c);
+    return status;
 }
 
 typedef struct {

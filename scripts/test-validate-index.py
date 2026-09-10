@@ -50,6 +50,46 @@ def metadata(payload: bytes) -> dict:
 
 
 class ArchiveValidationTests(unittest.TestCase):
+    def test_download_without_base_checks_every_archive(self) -> None:
+        first = {**metadata(archive()), "yanked": False}
+        second = {**first, "version": "1.2.4", "yanked": True}
+        document = {
+            "name": "sample",
+            "repository": "https://github.com/example/sample",
+            "versions": [first, second],
+        }
+        with patch.object(VALIDATOR, "load", return_value=document):
+            with patch.object(VALIDATOR, "verify_archive") as verify:
+                VALIDATOR.validate(Path("sa/sample.json"), None, True, None, "legacy", False)
+                self.assertEqual(verify.call_count, 2)
+                self.assertEqual([call.args[2] for call in verify.call_args_list], [first, second])
+
+    def test_download_without_base_propagates_archive_failure(self) -> None:
+        document = {
+            "name": "sample",
+            "repository": "https://github.com/example/sample",
+            "versions": [{**metadata(archive()), "yanked": False}],
+        }
+        with patch.object(VALIDATOR, "load", return_value=document):
+            with patch.object(VALIDATOR, "verify_archive", side_effect=ValueError("bad archive")):
+                with self.assertRaisesRegex(ValueError, "bad archive"):
+                    VALIDATOR.validate(Path("sa/sample.json"), None, True, None, "legacy", False)
+
+    def test_epoch_reset_preserves_repository_ownership(self) -> None:
+        version = metadata(archive())
+        version.update({
+            "yanked": False, "epoch": "neumann", "nametag": "neumann",
+            "release": "1.2.3-neumann",
+        })
+        old = {"name": "sample", "repository": "https://github.com/example/sample",
+               "versions": []}
+        current = {**old, "repository": "https://github.com/other/sample",
+                   "versions": [version]}
+        with patch.object(VALIDATOR, "load", return_value=current):
+            with patch.object(VALIDATOR, "base_document", return_value=old):
+                with self.assertRaisesRegex(ValueError, "repository ownership is immutable"):
+                    VALIDATOR.validate(Path("sa/sample.json"), "HEAD", False, None, "neumann", True)
+
     def test_valid_archive_is_extracted(self) -> None:
         payload = archive("src/lib.enq")
         version = metadata(payload)
@@ -66,6 +106,53 @@ class ArchiveValidationTests(unittest.TestCase):
             self.assertTrue(
                 Path(directory, "sample-1.2.3", ".encore-index-bootstrap").is_file()
             )
+
+    def test_named_release_is_accepted_during_epoch_reset(self) -> None:
+        payload = archive()
+        version = metadata(payload)
+        version.update({
+            "archive": (
+                "https://github.com/example/sample/releases/download/"
+                "sample-v1.2.3-neumann/sample-1.2.3.tar.gz"
+            ),
+            "commit": "a" * 40,
+            "subdir": "",
+            "yanked": False,
+            "epoch": "neumann",
+            "nametag": "neumann",
+            "release": "1.2.3-neumann",
+        })
+        document = {
+            "name": "sample",
+            "repository": "https://github.com/example/sample",
+            "versions": [version],
+        }
+        with patch.object(VALIDATOR, "load", return_value=document):
+            with patch.object(VALIDATOR, "base_document", return_value=None):
+                with patch.object(VALIDATOR, "verify_archive") as verify:
+                    VALIDATOR.validate(Path("sa/sample.json"), "HEAD", True, None, "neumann", True)
+                    verify.assert_called_once()
+
+    def test_named_release_tag_must_match_metadata(self) -> None:
+        payload = archive()
+        version = metadata(payload)
+        version.update({
+            "commit": "a" * 40,
+            "subdir": "",
+            "yanked": False,
+            "epoch": "neumann",
+            "nametag": "neumann",
+            "release": "1.2.3-neumann",
+        })
+        document = {
+            "name": "sample",
+            "repository": "https://github.com/example/sample",
+            "versions": [version],
+        }
+        with patch.object(VALIDATOR, "load", return_value=document):
+            with patch.object(VALIDATOR, "base_document", return_value=None):
+                with self.assertRaisesRegex(ValueError, "archive does not belong"):
+                    VALIDATOR.validate(Path("sa/sample.json"), "HEAD", False, None, "neumann", True)
 
     def test_parent_path_is_rejected(self) -> None:
         payload = archive("../escape")

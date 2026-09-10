@@ -20,27 +20,29 @@ pub struct CompilerReport {
 
 impl for CompilerReport {
     pub fn new(title: str) -> Self {
-        ret Self{title, Vec[(str, str)]::new(), Vec[StageProgress]::new(), Vec[Traceback]::new(), Vec[str]::new()}
+        ret Self {
+            title, Vec[(str, str)]::new(), Vec[StageProgress]::new(), Vec[Traceback]::new(), Vec[str]::new()
+        }
     }
 
-    pub fn add_summary(self: mut Self, name: str, value: str) -> () {
+    pub fn add_summary(self: mut Self, name: str, value: str) ->() {
         self.summary_fields.push((name, value))
-        ret ()
+        ret()
     }
 
-    pub fn add_stage(self: mut Self, stage: StageProgress) -> () {
+    pub fn add_stage(self: mut Self, stage: StageProgress) ->() {
         self.stages.push(stage)
-        ret ()
+        ret()
     }
 
-    pub fn add_traceback(self: mut Self, traceback: Traceback) -> () {
+    pub fn add_traceback(self: mut Self, traceback: Traceback) ->() {
         self.diagnostics.push(traceback)
-        ret ()
+        ret()
     }
 
-    pub fn add_note(self: mut Self, note: str) -> () {
+    pub fn add_note(self: mut Self, note: str) ->() {
         self.notes.push(note)
-        ret ()
+        ret()
     }
 
     pub fn render(self, theme: Theme) -> str {
@@ -195,12 +197,12 @@ fn compiler_report_renders_sections() -> bool {
     let rendered_fn = compiler_report("Standalone", Vec[(str, str)]::singleton(("mode", "debug")), stages, diagnostics, Vec[str]::singleton("note"), Theme::compiler())
 
     ret assert(str_contains(rendered, "Bootstrap Report"))
-        && assert(str_contains(rendered, "target: bootstrap"))
-        && assert(str_contains(rendered, "Parse"))
-        && assert(str_contains(rendered, "unknown symbol"))
-        && assert(str_contains(rendered, "cache disabled"))
-        && assert(str_contains(rendered_fn, "Standalone"))
-        && assert(str_contains(rendered_fn, "missing import"))
+    && assert(str_contains(rendered, "target: bootstrap"))
+    && assert(str_contains(rendered, "Parse"))
+    && assert(str_contains(rendered, "unknown symbol"))
+    && assert(str_contains(rendered, "cache disabled"))
+    && assert(str_contains(rendered_fn, "Standalone"))
+    && assert(str_contains(rendered_fn, "missing import"))
 }
 
 fn str_contains(value: str, needle: str) -> bool {

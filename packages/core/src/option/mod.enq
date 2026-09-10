@@ -2,7 +2,6 @@
 
 import core::fmt::Debug
 
-
 /// Represents either a present value or the absence of a value.
 pub enum Option[T] {
     Some(T)
@@ -62,8 +61,6 @@ impl[T] for Option[T] {
     }
 }
 
-
-
 /// Removes one level of nesting from an optional option.
 pub fn flatten[T](opt: Option[Option[T]]) -> Option[T] {
     ret match opt {
@@ -72,7 +69,7 @@ pub fn flatten[T](opt: Option[Option[T]]) -> Option[T] {
     }
 }
 
-impl[T:Debug] Debug for Option[T] {
+impl[T: Debug] Debug for Option[T] {
     /// Formats the value as text.
     pub fn fmt(self: Option[T]) -> str {
         ret match self {
@@ -87,10 +84,10 @@ fn option_contract() -> bool {
     let some = Option[u32]::Some(7_u32)
     let none = Option[u32]::None
     ret some.is_some()
-        && !some.is_none()
-        && none.is_none()
-        && !none.is_some()
-        && some.unwrap_or(1_u32) == 7_u32
-        && none.unwrap_or(1_u32) == 1_u32
-        && flatten(Option[Option[u32]]::Some(some)).unwrap_or(0_u32) == 7_u32
+    && !some.is_none()
+    && none.is_none()
+    && !none.is_some()
+    && some.unwrap_or(1_u32) == 7_u32
+    && none.unwrap_or(1_u32) == 1_u32
+    && flatten(Option[Option[u32]]::Some(some)).unwrap_or(0_u32) == 7_u32
 }

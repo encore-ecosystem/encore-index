@@ -8,8 +8,20 @@ pub struct JoinHandle[T] {
 }
 
 extern fn encore_thread_available_parallelism() -> usize
+extern fn encore_thread_is_finished(token: usize) -> bool
+
+impl[T] for JoinHandle[T] {
+    /// Returns whether the native worker has completed without consuming the handle.
+    pub fn is_finished(self: Self) -> bool {
+        unsafe {
+            ret encore_thread_is_finished(self.token)
+        }
+    }
+}
 
 /// Performs the `available_parallelism` operation.
 pub fn available_parallelism() -> usize {
-    unsafe { ret encore_thread_available_parallelism() }
+    unsafe {
+        ret encore_thread_available_parallelism()
+    }
 }

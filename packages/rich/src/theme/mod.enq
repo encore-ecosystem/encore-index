@@ -8,7 +8,9 @@ pub struct Theme {
 
 impl for Theme {
     pub fn new(name: str) -> Self {
-        ret Self{name}
+        ret Self {
+            name
+        }
     }
 
     pub fn default() -> Self {
@@ -92,12 +94,12 @@ fn theme_renders_named_variants() -> bool {
     let default_theme = Theme::default()
     let compiler_theme = Theme::compiler()
     ret assert(str_contains(default_theme.info("hello"), "hello"))
-        && assert(str_contains(compiler_theme.ok("linked"), "linked"))
-        && assert(str_contains(compiler_theme.warn("unused"), "unused"))
-        && assert(str_contains(compiler_theme.error("broken"), "broken"))
-        && assert(str_contains(compiler_theme.panel_title("Summary"), "Summary"))
-        && assert(str_contains(compiler_theme.layout_title("Dashboard"), "Dashboard"))
-        && assert(str_contains(compiler_theme.section_label("Frontend"), "Frontend"))
+    && assert(str_contains(compiler_theme.ok("linked"), "linked"))
+    && assert(str_contains(compiler_theme.warn("unused"), "unused"))
+    && assert(str_contains(compiler_theme.error("broken"), "broken"))
+    && assert(str_contains(compiler_theme.panel_title("Summary"), "Summary"))
+    && assert(str_contains(compiler_theme.layout_title("Dashboard"), "Dashboard"))
+    && assert(str_contains(compiler_theme.section_label("Frontend"), "Frontend"))
 }
 
 fn str_contains(value: str, needle: str) -> bool {

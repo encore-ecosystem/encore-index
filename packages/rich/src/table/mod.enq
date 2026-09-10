@@ -11,19 +11,27 @@ pub struct Table {
 
 impl for Table {
     pub fn new() -> Self {
-        ret Self{"", Vec[str]::new(), Vec[str]::new()}
+        ret Self {
+            "", Vec[str]::new(), Vec[str]::new()
+        }
     }
 
     pub fn with_headers(headers: Vec[str]) -> Self {
-        ret Self{"", headers, Vec[str]::new()}
+        ret Self {
+            "", headers, Vec[str]::new()
+        }
     }
 
     pub fn with_title_headers(title: str, headers: Vec[str]) -> Self {
-        ret Self{title, headers, Vec[str]::new()}
+        ret Self {
+            title, headers, Vec[str]::new()
+        }
     }
 
     pub fn themed(theme: Theme, title: str, headers: Vec[str]) -> Self {
-        ret Self{theme.table_title(title), headers, Vec[str]::new()}
+        ret Self {
+            theme.table_title(title), headers, Vec[str]::new()
+        }
     }
 
     pub fn from_pairs(title: str, left_header: str, right_header: str, rows: Vec[(str, str)]) -> Self {
@@ -35,21 +43,21 @@ impl for Table {
         ret table
     }
 
-    pub fn set_title(self: mut Self, title: str) -> () {
+    pub fn set_title(self: mut Self, title: str) ->() {
         self.title = title
-        ret ()
+        ret()
     }
 
     pub fn title(self: Self) -> str {
         ret self.title
     }
 
-    pub fn add_row(self: mut Self, row: Vec[str]) -> () {
+    pub fn add_row(self: mut Self, row: Vec[str]) ->() {
         self.rows.push(join_cells(row))
-        ret ()
+        ret()
     }
 
-    pub fn add_rows(self: mut Self, rows: Vec[Vec[str]]) -> () {
+    pub fn add_rows(self: mut Self, rows: Vec[Vec[str]]) ->() {
         let mut index = 0_usize
         loop {
             match rows.get(index) {
@@ -62,18 +70,18 @@ impl for Table {
                 }
             }
         }
-        ret ()
+        ret()
     }
 
-    pub fn add_kv_row(self: mut Self, left: str, right: str) -> () {
+    pub fn add_kv_row(self: mut Self, left: str, right: str) ->() {
         let mut row = Vec[str]::new()
         row.push(left)
         row.push(right)
         self.add_row(row)
-        ret ()
+        ret()
     }
 
-    pub fn add_kv_rows(self: mut Self, rows: Vec[(str, str)]) -> () {
+    pub fn add_kv_rows(self: mut Self, rows: Vec[(str, str)]) ->() {
         let mut index = 0_usize
         loop {
             match rows.get(index) {
@@ -86,7 +94,7 @@ impl for Table {
                 }
             }
         }
-        ret ()
+        ret()
     }
 
     pub fn render(self: Self) -> str {
@@ -184,11 +192,11 @@ fn table_renders_headers_and_rows() -> bool {
     let pairs = Table::from_pairs("Pairs", "name", "value", Vec[(str, str)]::singleton(("jobs", "4")))
     let rendered = table.render()
     ret assert(str_contains(rendered, "Build"))
-        && assert(str_contains(rendered, "module"))
-        && assert(str_contains(rendered, "frontend"))
-        && assert(str_contains(rendered, "backend"))
-        && assert(str_contains(themed.themed_render(Theme::compiler()), "Compiler"))
-        && assert(str_contains(pairs.render(), "jobs"))
+    && assert(str_contains(rendered, "module"))
+    && assert(str_contains(rendered, "frontend"))
+    && assert(str_contains(rendered, "backend"))
+    && assert(str_contains(themed.themed_render(Theme::compiler()), "Compiler"))
+    && assert(str_contains(pairs.render(), "jobs"))
 }
 
 fn str_contains(value: str, needle: str) -> bool {

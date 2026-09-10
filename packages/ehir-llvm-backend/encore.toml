@@ -1,8 +1,8 @@
 [project]
 name = "ehir_llvm_backend"
-version = "0.0.1"
+version = "0.0.0"
 repository = "https://github.com/encore-ecosystem/encore-index"
-encore = ">=0.1.4, <0.3.0"
+encore = ">=0.0.0"
 description = "eHIR -> LLVM lowering backend"
 readme = "README.md"
 licence = "MIT"

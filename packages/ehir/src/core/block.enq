@@ -3,7 +3,6 @@ import std::vec::Vec
 import refrain::core::instructions::Instruction
 import refrain::core::instructions::Terminator
 
-
 pub struct Block {
     name: str
     instructions: Vec[Instruction]
@@ -11,5 +10,7 @@ pub struct Block {
 }
 
 pub fn block(name: str, instructions: Vec[Instruction], terminator: Terminator) -> Block {
-    ret Block{name, instructions, terminator}
+    ret Block {
+        name, instructions, terminator
+    }
 }

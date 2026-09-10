@@ -141,6 +141,6 @@ fn debug_accepts(value: str) -> bool {
 #attr(test)
 fn debug_contract() -> bool {
     ret debug_accepts(Debug::fmt(true))
-        && debug_accepts(Debug::fmt(5_u32))
-        && debug_accepts(Debug::fmt("encore"))
+    && debug_accepts(Debug::fmt(5_u32))
+    && debug_accepts(Debug::fmt("encore"))
 }

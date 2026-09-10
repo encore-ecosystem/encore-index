@@ -46,30 +46,21 @@ jobs:
             echo "No new package versions to build"
             exit 0
           fi
-          selected=
-          while IFS= read -r tag; do
-            [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
-            assets=$(gh release view "$tag" --json isDraft,isPrerelease,assets)
-            test "$(jq -r '.isDraft or .isPrerelease' <<<"$assets")" = false || continue
-            if jq -e '.assets | map(.name) |
-              index("encore-x86_64-unknown-linux-gnu.tar.gz") != null and
-              index("encore-x86_64-unknown-linux-gnu.tar.gz.sha256") != null' \
-              <<<"$assets" >/dev/null
-            then
-              selected=$tag
-              break
-            fi
-          done < <(gh release list --limit 100 --json tagName,publishedAt \
-            --jq 'sort_by(.publishedAt) | reverse | .[].tagName')
-          if test -z "$selected"; then
-            selected=bootstrap/v0.1.4.3
-            assets=$(gh release view "$selected" --json assets)
-            jq -e '.assets | map(.name) |
-              index("encore-x86_64-unknown-linux-gnu.tar.gz") != null and
-              index("encore-x86_64-unknown-linux-gnu.tar.gz.sha256") != null' \
-              <<<"$assets" >/dev/null
+          releases=$(gh release list --limit 100 --json tagName,publishedAt,isDraft,isPrerelease)
+          selected=$(jq -r '[.[] | select(.isDraft == false and .isPrerelease == false)
+            | select(.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+(-[a-z][a-z0-9-]*)?$"))]
+            | sort_by(.publishedAt) | last | .tagName // empty' <<<"$releases")
+          test -n "$selected" || { echo "::error::No stable compiler release is available"; exit 1; }
+          assets=$(gh release view "$selected" --json isDraft,isPrerelease,assets)
+          test "$(jq -r '.isDraft or .isPrerelease' <<<"$assets")" = false
+          if ! jq -e '.assets | map(.name) |
+            index("encore-x86_64-unknown-linux-gnu.tar.gz") != null and
+            index("encore-x86_64-unknown-linux-gnu.tar.gz.sha256") != null' \
+            <<<"$assets" >/dev/null
+          then
+            echo "::error::Latest stable seed $selected is incomplete; refusing an older fallback"
+            exit 1
           fi
-          test -n "$selected"
           asset=encore-x86_64-unknown-linux-gnu.tar.gz
           mkdir -p target/compiler
           gh release download "$selected" \

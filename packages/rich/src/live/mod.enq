@@ -16,34 +16,42 @@ pub struct LiveFrame {
 
 impl for LiveFrame {
     pub fn new(title: str, body: str) -> Self {
-        ret Self{title, title, body, ""}
+        ret Self {
+            title, title, body, ""
+        }
     }
 
     pub fn with_footer(title: str, body: str, footer: str) -> Self {
-        ret Self{title, title, body, footer}
+        ret Self {
+            title, title, body, footer
+        }
     }
 
     pub fn with_id(id: str, title: str, body: str, footer: str) -> Self {
-        ret Self{id, title, body, footer}
+        ret Self {
+            id, title, body, footer
+        }
     }
 
     pub fn themed(theme: Theme, title: str, body: str, footer: str) -> Self {
-        ret Self{title, theme.live_title(title), body, footer}
+        ret Self {
+            title, theme.live_title(title), body, footer
+        }
     }
 
-    pub fn set_title(self: mut Self, title: str) -> () {
+    pub fn set_title(self: mut Self, title: str) ->() {
         self.title = title
-        ret ()
+        ret()
     }
 
-    pub fn set_body(self: mut Self, body: str) -> () {
+    pub fn set_body(self: mut Self, body: str) ->() {
         self.body = body
-        ret ()
+        ret()
     }
 
-    pub fn set_footer(self: mut Self, footer: str) -> () {
+    pub fn set_footer(self: mut Self, footer: str) ->() {
         self.footer = footer
-        ret ()
+        ret()
     }
 
     pub fn render(self) -> str {
@@ -69,22 +77,24 @@ pub struct LiveView {
 
 impl for LiveView {
     pub fn new() -> Self {
-        ret Self{Vec[LiveFrame]::new()}
+        ret Self {
+            Vec[LiveFrame]::new()
+        }
     }
 
-    pub fn push(self: mut Self, frame: LiveFrame) -> () {
+    pub fn push(self: mut Self, frame: LiveFrame) ->() {
         self.frames.push(frame)
-        ret ()
+        ret()
     }
 
-    pub fn replace_last(self: mut Self, frame: LiveFrame) -> () {
+    pub fn replace_last(self: mut Self, frame: LiveFrame) ->() {
         let total = self.frames.len()
         if total == 0_usize {
             self.frames.push(frame)
-            ret ()
+            ret()
         }
         self.frames.set(total - 1_usize, frame)
-        ret ()
+        ret()
     }
 
     pub fn replace_by_title(self: mut Self, title: str, frame: LiveFrame) -> bool {
@@ -125,9 +135,9 @@ impl for LiveView {
         ret false
     }
 
-    pub fn push_stage(self: mut Self, stage: StageProgress) -> () {
+    pub fn push_stage(self: mut Self, stage: StageProgress) ->() {
         self.push(LiveFrame::with_id(stage.id(), stage.label(), stage.body(), stage.footer()))
-        ret ()
+        ret()
     }
 
     pub fn replace_stage(self: mut Self, stage: StageProgress) -> bool {
@@ -178,13 +188,13 @@ fn live_view_renders_multiple_frames() -> bool {
     live.replace_stage(StageProgress::with_footer("codegen-stage", "Codegen", "emit object files", 2_usize, 2_usize, "done"))
     let rendered = live.render()
     ret assert(str_contains(rendered, "Step 1"))
-        && assert(str_contains(rendered, "translate"))
-        && assert(str_contains(rendered, "Step 4"))
-        && assert(str_contains(rendered, "linked"))
-        && assert(str_contains(rendered, "done"))
-        && assert(str_contains(rendered, "Codegen"))
-        && assert(str_contains(spinner_frame(Spinner::dots(), 1_usize, "load").render(), "load"))
-        && assert(str_contains(stage_frame(StageProgress::new("stage", "Parse", "parse ast", 1_usize, 2_usize)).render(), "Parse"))
+    && assert(str_contains(rendered, "translate"))
+    && assert(str_contains(rendered, "Step 4"))
+    && assert(str_contains(rendered, "linked"))
+    && assert(str_contains(rendered, "done"))
+    && assert(str_contains(rendered, "Codegen"))
+    && assert(str_contains(spinner_frame(Spinner::dots(), 1_usize, "load").render(), "load"))
+    && assert(str_contains(stage_frame(StageProgress::new("stage", "Parse", "parse ast", 1_usize, 2_usize)).render(), "Parse"))
 }
 
 fn str_contains(value: str, needle: str) -> bool {

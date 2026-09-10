@@ -9,23 +9,33 @@ pub struct Panel {
 
 impl for Panel {
     pub fn new(body: str) -> Self {
-        ret Self{"", body}
+        ret Self {
+            "", body
+        }
     }
 
     pub fn titled(title: str, body: str) -> Self {
-        ret Self{title, body}
+        ret Self {
+            title, body
+        }
     }
 
     pub fn themed(theme: Theme, title: str, body: str) -> Self {
-        ret Self{theme.panel_title(title), body}
+        ret Self {
+            theme.panel_title(title), body
+        }
     }
 
     pub fn lines(title: str, lines: Vec[str]) -> Self {
-        ret Self{title, join_lines(lines)}
+        ret Self {
+            title, join_lines(lines)
+        }
     }
 
     pub fn key_values(title: str, fields: Vec[(str, str)]) -> Self {
-        ret Self{title, join_pairs(fields)}
+        ret Self {
+            title, join_pairs(fields)
+        }
     }
 
     pub fn render(self: Self) -> str {
@@ -128,18 +138,17 @@ fn max_str_width(value: str) -> usize {
         match value.get(index) {
             Some(ch) => {
                 if escape {
-                    if ch == "m" { escape = false }
-                }
-                elif ch == "\x1b" {
+                    if ch == "m" {
+                        escape = false
+                    }
+                } elif ch == "\x1b" {
                     escape = true
-                }
-                elif ch == "\n" {
+                } elif ch == "\n" {
                     if current > width {
                         width = current
                     }
                     current = 0_usize
-                }
-                else {
+                } else {
                     current = current + 1_usize
                 }
             }
@@ -184,16 +193,17 @@ fn visible_width(value: str) -> usize {
         match value.get(index) {
             Some(ch) => {
                 if escape {
-                    if ch == "m" { escape = false }
-                }
-                elif ch == "\x1b" {
+                    if ch == "m" {
+                        escape = false
+                    }
+                } elif ch == "\x1b" {
                     escape = true
-                }
-                else {
+                } else {
                     width += 1_usize
                 }
             }
-            None => {}
+            None => {
+            }
         }
         index += 1_usize
     }
@@ -213,11 +223,11 @@ fn panel_renders_title_and_body() -> bool {
     fields.push(("state", "ready"))
     let field_panel = Panel::key_values("Fields", fields).render()
     ret assert(str_contains(rendered, "Build"))
-        && assert(str_contains(rendered, "frontend"))
-        && assert(str_contains(rendered, "backend"))
-        && assert(str_contains(themed, "Summary"))
-        && assert(str_contains(line_panel, "backend"))
-        && assert(str_contains(field_panel, "module: frontend"))
+    && assert(str_contains(rendered, "frontend"))
+    && assert(str_contains(rendered, "backend"))
+    && assert(str_contains(themed, "Summary"))
+    && assert(str_contains(line_panel, "backend"))
+    && assert(str_contains(field_panel, "module: frontend"))
 }
 
 fn str_contains(value: str, needle: str) -> bool {

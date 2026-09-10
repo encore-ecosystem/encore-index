@@ -1,5 +1,5 @@
-import std::io::println
 import std::dict::{Dict, Hashable}
+import std::io::println
 import std::option::Option
 
 fn main() -> u32 {

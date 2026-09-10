@@ -1,9 +1,9 @@
 [project]
 name = "linalg"
-version = "0.1.1"
+version = "0.0.0"
 repository = "https://github.com/encore-ecosystem/encore-index"
-encore = ">=0.2.1, <0.3.0"
+encore = ">=0.0.0"
 description = "Vectors, matrices and transforms for Encore"
 readme = "README.md"
 licence = "MIT"
-dependencies = ["index@std@^1.0.1"]
+dependencies = ["index@std@0.0.0"]

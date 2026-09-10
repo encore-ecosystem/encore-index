@@ -11,23 +11,33 @@ pub struct ConsoleSink {
 
 impl for ConsoleSink {
     pub fn stdout() -> Self {
-        ret Self{Formatter::colored(), false}
+        ret Self {
+            Formatter::colored(), false
+        }
     }
 
     pub fn stderr() -> Self {
-        ret Self{Formatter::colored(), true}
+        ret Self {
+            Formatter::colored(), true
+        }
     }
 
     pub fn plain_stdout() -> Self {
-        ret Self{Formatter::plain(), false}
+        ret Self {
+            Formatter::plain(), false
+        }
     }
 
     pub fn plain_stderr() -> Self {
-        ret Self{Formatter::plain(), true}
+        ret Self {
+            Formatter::plain(), true
+        }
     }
 
     pub fn new(formatter: Formatter, use_stderr: bool) -> Self {
-        ret Self{formatter, use_stderr}
+        ret Self {
+            formatter, use_stderr
+        }
     }
 }
 

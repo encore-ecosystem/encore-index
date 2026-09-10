@@ -1243,7 +1243,9 @@ fn parse_module_source_batch(sources: frozen Vec[EhirModuleSource], worker_index
     while index < sources.len() {
         match sources.get(index) {
             Some(source) => {
-                let copied = EhirModuleSource{"" + source.module_id, "" + source.text}
+                let copied = EhirModuleSource {
+                    "" + source.module_id, "" + source.text
+                }
                 out.push(ParsedModuleChunk {
                         index, parse_module_source_record(copied)
                     }

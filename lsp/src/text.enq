@@ -1,3 +1,5 @@
+//! Provides UTF-8 and UTF-16-aware source text utilities for LSP ranges.
+
 import core::option::Option
 
 extern fn encore_str_find_byte_from(value: str, needle: u8, start: usize) -> usize
@@ -70,6 +72,19 @@ pub fn line_text_at(text: str, target_line: usize) -> Option[str] {
         end -= 1_usize
     }
     ret Option[str]::Some(text.slice_bytes(start, end - start))
+}
+
+/// Converts an LSP UTF-16 line/character position to an Encore character index.
+pub fn text_position_index(text: str, line: usize, utf16_character: usize) -> usize {
+    let line_start_byte = unsafe {
+        encore_str_line_start_byte(text, line)
+    }
+    if line_start_byte > text.byte_len() {
+        ret text.char_len()
+    }
+    let line_start = text.slice_bytes(0_usize, line_start_byte).char_len()
+    let line_text = line_text_at(text, line).unwrap_or("")
+    ret line_start + character_index_from_utf16(line_text, utf16_character)
 }
 
 pub fn find_in_line_at_or_after(line: str, needle: str, start: usize) -> usize {
@@ -155,15 +170,9 @@ pub fn contains_substring(value: str, needle: str) -> bool {
 pub fn document_last_line(text: str) -> usize {
     let mut line = 0_usize
     let mut index = 0_usize
-    while index < text.char_len() {
-        match text.get(index) {
-            Option[str]::Some(ch) => {
-                if ch == "\n" {
-                    line += 1_usize
-                }
-            }
-            Option[str]::None => {
-            }
+    while index < text.byte_len() {
+        if text.byte_at(index) == 10_u8 {
+            line += 1_usize
         }
         index += 1_usize
     }
