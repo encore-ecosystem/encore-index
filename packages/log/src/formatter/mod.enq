@@ -8,30 +8,39 @@ pub struct Formatter {
 
 impl for Formatter {
     pub fn plain() -> Self {
-        ret Self{false, true, true}
+        ret Self {
+            false, true, true
+        }
     }
 
     pub fn colored() -> Self {
-        ret Self{true, true, true}
+        ret Self {
+            true, true, true
+        }
     }
 
     pub fn with_color(self: Self, enabled: bool) -> Self {
-        ret Self{enabled, self.include_target, self.include_newline}
+        ret Self {
+            enabled, self.include_target, self.include_newline
+        }
     }
 
     pub fn with_target(self: Self, enabled: bool) -> Self {
-        ret Self{self.colorize, enabled, self.include_newline}
+        ret Self {
+            self.colorize, enabled, self.include_newline
+        }
     }
 
     pub fn with_newline(self: Self, enabled: bool) -> Self {
-        ret Self{self.colorize, self.include_target, enabled}
+        ret Self {
+            self.colorize, self.include_target, enabled
+        }
     }
 
     pub fn format(self: Self, level: LogLevel, target: str, message: str) -> str {
         let mut out = if self.colorize {
             level_label_colored(level)
-        }
-        else {
+        } else {
             level_label(level)
         }
 

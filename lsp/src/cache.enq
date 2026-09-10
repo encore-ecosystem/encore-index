@@ -1,0 +1,327 @@
+//! Persists validated, per-source LSP analysis metadata.
+
+import core::fmt::Debug
+import core::option::Option
+import core::result::Result
+import core::vec::Vec
+
+import encore::frontend::{DependencyGraph, Documentation, FrontendCallable, FrontendDiagnostic, FrontendDocument, FrontendSymbol}
+import encore::version::compiler_release_version
+import json::{Json, ParseError, field, parse, stringify}
+import std::os::{file_exists, mkdir_all, read_file, write_file_atomic}
+
+fn cache_schema() -> str {
+    ret "encore-lsp-analysis-v1"
+}
+
+pub fn load(path: str, module_name: str, source: str) -> Option[FrontendDocument] {
+    if path == "" || !file_exists(path) {
+        ret Option[FrontendDocument]::None
+    }
+    let root = match parse(read_file(path)) {
+        Result[Json, ParseError]::Ok(value) => value
+        Result[Json, ParseError]::Err(_error) => {
+            ret Option[FrontendDocument]::None
+        }
+    }
+    if object_string(root, "schema") != cache_schema()
+    || object_string(root, "compiler") != compiler_release_version()
+    || object_string(root, "module") != module_name
+    || object_string(root, "sourceHash") != Debug::fmt(source.hash())
+    || object_usize(root, "sourceLength") != source.byte_len()
+    || root.get("parsed").unwrap_or(Json::Null).as_bool().is_none() {
+        ret Option[FrontendDocument]::None
+    }
+
+    let diagnostics = match decode_diagnostics(root.get("diagnostics").unwrap_or(Json::Null)) {
+        Some(value) => value
+        None => {
+            ret Option[FrontendDocument]::None
+        }
+    }
+    let symbols = match decode_symbols(root.get("symbols").unwrap_or(Json::Null)) {
+        Some(value) => value
+        None => {
+            ret Option[FrontendDocument]::None
+        }
+    }
+    let callables = match decode_callables(root.get("callables").unwrap_or(Json::Null)) {
+        Some(value) => value
+        None => {
+            ret Option[FrontendDocument]::None
+        }
+    }
+    let dependencies = match decode_dependencies(root.get("dependencies").unwrap_or(Json::Null)) {
+        Some(value) => value
+        None => {
+            ret Option[FrontendDocument]::None
+        }
+    }
+    let module_documentation = decode_documentation(root.get("moduleDocumentation").unwrap_or(Json::Null))
+    ret Option[FrontendDocument]::Some(FrontendDocument::from_cached_lightweight(source, module_documentation,
+            diagnostics, symbols, callables, dependencies, object_bool(root, "parsed"),))
+}
+
+pub fn save(path: str, module_name: str, source: str, document: FrontendDocument) ->() {
+    if path == "" {
+        ret()
+    }
+    let directory = parent_path(path)
+    if directory == "" || mkdir_all(directory) != 0_i32 {
+        ret()
+    }
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("schema", Json::String(cache_schema())))
+    fields.push(field("compiler", Json::String(compiler_release_version())))
+    fields.push(field("module", Json::String(module_name)))
+    fields.push(field("sourceHash", Json::String(Debug::fmt(source.hash()))))
+    fields.push(field("sourceLength", number(source.byte_len())))
+    fields.push(field("parsed", Json::Bool(document.parsed)))
+    fields.push(field("moduleDocumentation", encode_documentation(document.module_documentation)))
+    fields.push(field("diagnostics", encode_diagnostics(document.diagnostics)))
+    fields.push(field("symbols", encode_symbols(document.symbols)))
+    fields.push(field("callables", encode_callables(document.callables)))
+    fields.push(field("dependencies", encode_dependencies(document.dependencies)))
+    let _written = write_file_atomic(path, stringify(Json::Object(fields)))
+    ret()
+}
+
+fn encode_documentation(documentation: Option[Documentation]) -> Json {
+    match documentation {
+        Some(value) => {
+            let mut fields = Vec[Json]::new()
+            fields.push(Json::String(value.text))
+            fields.push(number(value.line))
+            fields.push(number(value.column))
+            ret Json::Array(fields)
+        }
+        None => {
+            ret Json::Null
+        }
+    }
+}
+
+fn decode_documentation(value: Json) -> Option[Documentation] {
+    match value.as_array() {
+        Some(_fields) => {
+            ret Option[Documentation]::Some(Documentation::new(array_string(value, 0_usize),
+                    array_usize(value, 1_usize), array_usize(value, 2_usize),))
+        }
+        None => {
+            ret Option[Documentation]::None
+        }
+    }
+}
+
+fn encode_diagnostics(values: Vec[FrontendDiagnostic]) -> Json {
+    let mut out = Vec[Json]::new()
+    for value in values {
+        let mut fields = Vec[Json]::new()
+        fields.push(number(value.severity))
+        fields.push(Json::String(value.code))
+        fields.push(Json::String(value.message))
+        fields.push(number(value.line))
+        fields.push(number(value.column))
+        fields.push(number(value.length))
+        out.push(Json::Array(fields))
+    }
+    ret Json::Array(out)
+}
+
+fn decode_diagnostics(value: Json) -> Option[Vec[FrontendDiagnostic]] {
+    let items = match value.as_array() {
+        Some(found) => found
+        None => {
+            ret Option[Vec[FrontendDiagnostic]]::None
+        }
+    }
+    let mut out = Vec[FrontendDiagnostic]::new()
+    for item in items {
+        if item.as_array().is_none() {
+            ret Option[Vec[FrontendDiagnostic]]::None
+        }
+        out.push(FrontendDiagnostic::new(array_usize(item, 0_usize), array_string(item, 1_usize),
+                array_string(item, 2_usize), array_usize(item, 3_usize), array_usize(item, 4_usize),
+                array_usize(item, 5_usize),))
+    }
+    ret Option[Vec[FrontendDiagnostic]]::Some(out)
+}
+
+fn encode_symbols(values: Vec[FrontendSymbol]) -> Json {
+    let mut out = Vec[Json]::new()
+    for value in values {
+        let mut fields = Vec[Json]::new()
+        fields.push(Json::String(value.name))
+        fields.push(Json::String(value.scope))
+        fields.push(number(value.kind))
+        fields.push(number(value.line))
+        fields.push(number(value.column))
+        fields.push(number(value.length))
+        fields.push(encode_documentation(value.documentation))
+        out.push(Json::Array(fields))
+    }
+    ret Json::Array(out)
+}
+
+fn decode_symbols(value: Json) -> Option[Vec[FrontendSymbol]] {
+    let items = match value.as_array() {
+        Some(found) => found
+        None => {
+            ret Option[Vec[FrontendSymbol]]::None
+        }
+    }
+    let mut out = Vec[FrontendSymbol]::new()
+    for item in items {
+        if item.as_array().is_none() {
+            ret Option[Vec[FrontendSymbol]]::None
+        }
+        out.push(FrontendSymbol::new(array_string(item, 0_usize), array_string(item, 1_usize),
+                array_usize(item, 2_usize), array_usize(item, 3_usize), array_usize(item, 4_usize),
+                array_usize(item, 5_usize), decode_documentation(item.index(6_usize).unwrap_or(Json::Null)),))
+    }
+    ret Option[Vec[FrontendSymbol]]::Some(out)
+}
+
+fn encode_callables(values: Vec[FrontendCallable]) -> Json {
+    let mut out = Vec[Json]::new()
+    for value in values {
+        let mut params = Vec[Json]::new()
+        for param in value.params {
+            params.push(Json::String(param))
+        }
+        let mut fields = Vec[Json]::new()
+        fields.push(Json::String(value.name))
+        fields.push(Json::Array(params))
+        fields.push(match value.ret_type {
+                Some(found) => Json::String(found)
+                None => Json::Null
+            }
+        )
+        fields.push(number(value.line))
+        fields.push(number(value.column))
+        fields.push(number(value.length))
+        out.push(Json::Array(fields))
+    }
+    ret Json::Array(out)
+}
+
+fn decode_callables(value: Json) -> Option[Vec[FrontendCallable]] {
+    let items = match value.as_array() {
+        Some(found) => found
+        None => {
+            ret Option[Vec[FrontendCallable]]::None
+        }
+    }
+    let mut out = Vec[FrontendCallable]::new()
+    for item in items {
+        let raw_params = match item.index(1_usize).unwrap_or(Json::Null).as_array() {
+            Some(found) => found
+            None => {
+                ret Option[Vec[FrontendCallable]]::None
+            }
+        }
+        let mut params = Vec[str]::new()
+        for raw in raw_params {
+            match raw.as_str() {
+                Some(param) => params.push(param)
+                None => {
+                    ret Option[Vec[FrontendCallable]]::None
+                }
+            }
+        }
+        let ret_type = match item.index(2_usize).unwrap_or(Json::Null).as_str() {
+            Some(found) => Option[str]::Some(found)
+            None => Option[str]::None
+        }
+        out.push(FrontendCallable::new(array_string(item, 0_usize), params, ret_type,
+                array_usize(item, 3_usize), array_usize(item, 4_usize), array_usize(item, 5_usize),))
+    }
+    ret Option[Vec[FrontendCallable]]::Some(out)
+}
+
+fn encode_dependencies(graph: DependencyGraph) -> Json {
+    let mut out = Vec[Json]::new()
+    for edge in graph.all() {
+        let mut fields = Vec[Json]::new()
+        fields.push(Json::String(edge.source))
+        fields.push(Json::String(edge.target))
+        fields.push(Json::Bool(edge.is_public))
+        fields.push(number(edge.line))
+        fields.push(number(edge.column))
+        fields.push(number(edge.length))
+        out.push(Json::Array(fields))
+    }
+    ret Json::Array(out)
+}
+
+fn decode_dependencies(value: Json) -> Option[DependencyGraph] {
+    let items = match value.as_array() {
+        Some(found) => found
+        None => {
+            ret Option[DependencyGraph]::None
+        }
+    }
+    let mut graph = DependencyGraph::new()
+    for item in items {
+        if item.as_array().is_none() {
+            ret Option[DependencyGraph]::None
+        }
+        graph.add_at(array_string(item, 0_usize), array_string(item, 1_usize), array_bool(item, 2_usize),
+            array_usize(item, 3_usize), array_usize(item, 4_usize), array_usize(item, 5_usize),)
+    }
+    ret Option[DependencyGraph]::Some(graph)
+}
+
+fn number(value: usize) -> Json {
+    ret Json::Number(Debug::fmt(value))
+}
+
+fn object_string(value: Json, key: str) -> str {
+    ret value.get(key).unwrap_or(Json::Null).as_str().unwrap_or("")
+}
+
+fn object_usize(value: Json, key: str) -> usize {
+    ret parse_usize(value.get(key).unwrap_or(Json::Null).as_number().unwrap_or(""))
+}
+
+fn object_bool(value: Json, key: str) -> bool {
+    ret value.get(key).unwrap_or(Json::Null).as_bool().unwrap_or(false)
+}
+
+fn array_string(value: Json, index: usize) -> str {
+    ret value.index(index).unwrap_or(Json::Null).as_str().unwrap_or("")
+}
+
+fn array_usize(value: Json, index: usize) -> usize {
+    ret parse_usize(value.index(index).unwrap_or(Json::Null).as_number().unwrap_or(""))
+}
+
+fn array_bool(value: Json, index: usize) -> bool {
+    ret value.index(index).unwrap_or(Json::Null).as_bool().unwrap_or(false)
+}
+
+fn parse_usize(value: str) -> usize {
+    let mut out = 0_usize
+    let mut index = 0_usize
+    while index < value.byte_len() {
+        let byte = value.byte_at(index)
+        if byte < 48_u8 || byte > 57_u8 {
+            ret 0_usize
+        }
+        out = out * 10_usize +(byte - 48_u8) as usize
+        index += 1_usize
+    }
+    ret out
+}
+
+fn parent_path(path: str) -> str {
+    let mut index = path.char_len()
+    while index > 0_usize {
+        index -= 1_usize
+        let value = path.get(index).unwrap_or("")
+        if value == "/" || value == "\\" {
+            ret path.slice(0_usize, index)
+        }
+    }
+    ret ""
+}

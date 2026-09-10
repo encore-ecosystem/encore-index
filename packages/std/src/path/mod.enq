@@ -1,7 +1,9 @@
 //! Provides normalized filesystem path manipulation.
 
 import core::option::Option
+import std::ops::Div
 import std::os::cwd
+import std::os::file_exists
 import std::os::home_dir
 import std::os::mkdir
 import std::os::mkdir_all
@@ -9,9 +11,7 @@ import std::os::path_separator
 import std::os::read_file
 import std::os::remove_file
 import std::os::write_file
-import std::os::file_exists
 import std::vec::Vec
-import std::ops::Div
 
 /// Stores a platform-aware filesystem path as a root and normalized parts.
 pub struct Path {
@@ -22,8 +22,12 @@ pub struct Path {
 /// Creates an independently owned copy of a shared immutable path.
 pub fn clone_path(path: frozen Path) -> Path {
     let mut parts = Vec[str]::new()
-    for part in path.parts { parts.push("" + part) }
-    ret Path{"" + path.root, parts}
+    for part in path.parts {
+        parts.push("" + part)
+    }
+    ret Path {
+        "" + path.root, parts
+    }
 }
 
 impl for Path {
@@ -52,8 +56,7 @@ impl for Path {
         let mut root = ""
         if has_drive_prefix(raw) {
             root = raw.slice(0_usize, 2_usize) + path_separator()
-        }
-        else {
+        } else {
             match raw.get(0_usize) {
                 Option[str]::Some(v) => {
                     if is_separator(v.byte_at(0_usize)) {
@@ -65,7 +68,9 @@ impl for Path {
             }
         }
 
-        ret Path {root, parts}
+        ret Path {
+            root, parts
+        }
     }
 
     /// Returns the process working directory.
@@ -87,11 +92,9 @@ impl for Path {
                 Option[str]::Some(part) => {
                     if out == "" {
                         out = part
-                    }
-                    elif ends_with_separator(out) {
+                    } elif ends_with_separator(out) {
                         out = out + part
-                    }
-                    else {
+                    } else {
                         out = out + path_separator() + part
                     }
                     index = index + 1_usize
@@ -219,7 +222,9 @@ impl for Path {
                 }
             }
         }
-        ret Path{self.root, out_parts}
+        ret Path {
+            self.root, out_parts
+        }
     }
 
     /// Makes this path absolute without normalizing its components.
@@ -339,7 +344,9 @@ impl for Path {
     }
 
     /// Creates this directory and any missing parents.
-    pub fn mkdir_all(self: Self) -> i32 { ret mkdir_all(self.as_str()) }
+    pub fn mkdir_all(self: Self) -> i32 {
+        ret mkdir_all(self.as_str())
+    }
 
     /// Removes the file at this path.
     pub fn remove_file(self: Self) -> i32 {
@@ -363,7 +370,6 @@ impl Div[str] for Path {
         ret self.join(other)
     }
 }
-
 
 fn path_name(value: str) -> Option[str] {
     let end = trim_trailing_separators_end(value, value.len())
@@ -519,8 +525,7 @@ fn split_path_parts(value: str) -> Vec[str] {
                         out.push(curr)
                         curr = ""
                     }
-                }
-                else {
+                } else {
                     curr = curr + ch
                 }
                 index = index + 1_usize

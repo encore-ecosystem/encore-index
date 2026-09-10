@@ -12,36 +12,40 @@ pub struct Layout {
 
 impl for Layout {
     pub fn new(title: str) -> Self {
-        ret Self{title, Vec[(str, str)]::new()}
+        ret Self {
+            title, Vec[(str, str)]::new()
+        }
     }
 
     pub fn themed(theme: Theme, title: str) -> Self {
-        ret Self{theme.layout_title(title), Vec[(str, str)]::new()}
+        ret Self {
+            theme.layout_title(title), Vec[(str, str)]::new()
+        }
     }
 
-    pub fn add_section(self: mut Self, label: str, body: str) -> () {
+    pub fn add_section(self: mut Self, label: str, body: str) ->() {
         self.sections.push((label, body))
-        ret ()
+        ret()
     }
 
-    pub fn add_themed_section(self: mut Self, theme: Theme, label: str, body: str) -> () {
+    pub fn add_themed_section(self: mut Self, theme: Theme, label: str, body: str) ->() {
         self.add_section(theme.section_label(label), body)
-        ret ()
+        ret()
     }
 
-    pub fn add_panel_section(self: mut Self, label: str, panel: Panel) -> () {
+    pub fn add_panel_section(self: mut Self, label: str, panel: Panel) ->() {
         self.add_section(label, panel.render())
-        ret ()
+        ret()
     }
 
-    pub fn add_table_section(self: mut Self, label: str, table: Table) -> () {
+    pub fn add_table_section(self: mut Self, label: str, table: Table) ->() {
         self.add_section(label, table.render())
-        ret ()
+        ret()
     }
 
-    pub fn add_columns_section(self: mut Self, label: str, left: str, right: str, separator: str) -> () {
+    pub fn add_columns_section(self: mut Self, label: str, left: str, right: str, separator: str) ->() {
         self.add_section(label, render_columns(left, right, separator))
-        ret ()
+        ret()
     }
 
     pub fn render(self) -> str {
@@ -105,13 +109,13 @@ fn layout_renders_sections_and_columns() -> bool {
     stack.push("b")
     let rendered = layout.render()
     ret assert(str_contains(rendered, "Dashboard"))
-        && assert(str_contains(rendered, "[Left]"))
-        && assert(render_columns("a", "b", " | ") == "a | b")
-        && assert(render_stack(stack) == "a\nb")
-        && assert(str_contains(themed.render(), "Compiler Dashboard"))
-        && assert(str_contains(themed.render(), "Frontend"))
-        && assert(str_contains(themed.render(), "Build"))
-        && assert(str_contains(themed.render(), "parse"))
+    && assert(str_contains(rendered, "[Left]"))
+    && assert(render_columns("a", "b", " | ") == "a | b")
+    && assert(render_stack(stack) == "a\nb")
+    && assert(str_contains(themed.render(), "Compiler Dashboard"))
+    && assert(str_contains(themed.render(), "Frontend"))
+    && assert(str_contains(themed.render(), "Build"))
+    && assert(str_contains(themed.render(), "parse"))
 }
 
 fn str_contains(value: str, needle: str) -> bool {

@@ -21,15 +21,27 @@ pub fn render_json_source(source: str) -> Result[str, str] {
 
 fn render_json_level(value: Json, indent: usize) -> str {
     match value {
-        Json::Null => { ret "null" }
+        Json::Null => {
+            ret "null"
+        }
         Json::Bool(flag) => {
-            if flag { ret "true" }
+            if flag {
+                ret "true"
+            }
             ret "false"
         }
-        Json::Number(text) => { ret text }
-        Json::String(text) => { ret "\"" + text + "\"" }
-        Json::Array(values) => { ret render_array(values, indent) }
-        Json::Object(fields) => { ret render_object(fields, indent) }
+        Json::Number(text) => {
+            ret text
+        }
+        Json::String(text) => {
+            ret "\"" + text + "\""
+        }
+        Json::Array(values) => {
+            ret render_array(values, indent)
+        }
+        Json::Object(fields) => {
+            ret render_object(fields, indent)
+        }
     }
 }
 
@@ -98,8 +110,8 @@ fn json_render_formats_objects_and_arrays() -> bool {
     match render_json_source("{\"name\":\"encore\",\"items\":[1,true]}") {
         Result[str, str]::Ok(rendered) => {
             ret assert(str_contains(rendered, "\"name\": \"encore\""))
-                && assert(str_contains(rendered, "\"items\": ["))
-                && assert(str_contains(rendered, "true"))
+            && assert(str_contains(rendered, "\"items\": ["))
+            && assert(str_contains(rendered, "true"))
         }
         Result[str, str]::Err(err) => {
             ret false

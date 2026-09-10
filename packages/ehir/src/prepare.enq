@@ -7,9 +7,9 @@
 //! sequence.
 
 import refrain::core::Module
-import refrain::validate::validate_module
 import refrain::coroutine::lower_coroutines
 import refrain::normalize::normalize_control_flow
+import refrain::validate::validate_module
 
 /// The local outcome avoids coupling the public EHIR API to a frontend's
 /// error type.  It also keeps the validation message available to a driver
@@ -27,13 +27,19 @@ pub enum PreparationOutcome {
 /// EHIR invariants before a backend starts code generation.
 pub fn prepare_module(module: Module) -> PreparationOutcome {
     match validate_module(module) {
-        Err(message) => { ret PreparationOutcome::Error(message) }
+        Err(message) => {
+            ret PreparationOutcome::Error(message)
+        }
         Ok(validated) => {
             let lowered = lower_coroutines(validated)
             let normalized = normalize_control_flow(lowered)
             match validate_module(normalized) {
-                Err(message) => { ret PreparationOutcome::Error(message) }
-                Ok(prepared) => { ret PreparationOutcome::Ready(prepared) }
+                Err(message) => {
+                    ret PreparationOutcome::Error(message)
+                }
+                Ok(prepared) => {
+                    ret PreparationOutcome::Ready(prepared)
+                }
             }
         }
     }

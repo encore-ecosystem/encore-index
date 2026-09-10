@@ -1,6 +1,8 @@
 [project]
 name = "llvm"
 version = "0.0.0"
+repository = "https://github.com/encore-ecosystem/encore-index"
+encore = ">=0.0.0"
 description = "LLVM IR builder for encore"
 readme = "README.md"
 licence = "MIT"

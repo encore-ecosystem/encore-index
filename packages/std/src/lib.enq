@@ -18,6 +18,6 @@ pub import refrain::random
 pub import refrain::result
 pub import refrain::string
 pub import refrain::thread
-pub import refrain::tls
 pub import refrain::time
+pub import refrain::tls
 pub import refrain::vec

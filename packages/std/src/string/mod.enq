@@ -1,7 +1,7 @@
 //! Provides owned string utilities.
 
-import core::option::Option
 import core::fmt::Debug
+import core::option::Option
 
 import refrain::vec::Vec
 
@@ -13,12 +13,16 @@ pub struct String {
 impl for String {
     /// Creates a new value with its default initial state.
     pub fn new() -> String {
-        ret String{""}
+        ret String {
+            ""
+        }
     }
 
     /// Creates a value from str.
     pub fn from_str(s: str) -> String {
-        ret String{s}
+        ret String {
+            s
+        }
     }
 
     /// Returns this value as str.
@@ -136,8 +140,7 @@ impl for String {
                     if c == char {
                         parts.push(String::from_str(curr_part))
                         curr_part = ""
-                    }
-                    else {
+                    } else {
                         curr_part = curr_part + c
                     }
                 }
@@ -166,8 +169,7 @@ impl for String {
                             parts.push(self.slice(start, index - start))
                             in_part = false
                         }
-                    }
-                    else {
+                    } else {
                         if !in_part {
                             start = index
                             in_part = true

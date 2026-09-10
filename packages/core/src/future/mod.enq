@@ -6,7 +6,7 @@ pub enum Poll[S, T] {
     Pending(S)
 }
 
-extern fn encore_async_waker_wake(token: usize) -> ()
+extern fn encore_async_waker_wake(token: usize) ->()
 
 /// Stores the state of a `Waker` value.
 pub struct Waker {
@@ -15,9 +15,9 @@ pub struct Waker {
 
 impl for Waker {
     /// Performs the `wake` operation.
-    pub fn wake(self: Waker) -> () {
+    pub fn wake(self: Waker) ->() {
         encore_async_waker_wake(self.token)
-        ret ()
+        ret()
     }
 }
 
@@ -28,7 +28,11 @@ pub struct Context {
 
 /// Performs the `context` operation.
 pub fn context(token: usize) -> Context {
-    ret Context{Waker{token}}
+    ret Context {
+        Waker {
+            token
+        }
+    }
 }
 
 // Polling consumes the previous state. Pending owns the next state, while
@@ -51,5 +55,7 @@ impl[T] Future[T] for Ready[T] {
 
 /// Reads y from the underlying resource.
 pub fn ready[T](value: T) -> Ready[T] {
-    ret Ready[T]{value}
+    ret Ready[T] {
+        value
+    }
 }

@@ -1,3 +1,5 @@
+//! Implements JSON-RPC framing and reusable LSP response builders.
+
 import core::fmt::Debug
 import core::option::Option
 import core::result::Result
@@ -101,6 +103,16 @@ fn send_protocol_error(code: str, message: str) ->() {
 pub fn send_notification(method: str, params: Json) ->() {
     let mut fields = Vec[(str, Json)]::new()
     fields.push(field("jsonrpc", Json::String("2.0")))
+    fields.push(field("method", Json::String(method)))
+    fields.push(field("params", params))
+    write_lsp_payload(Json::Object(fields))
+    ret()
+}
+
+pub fn send_request(id: str, method: str, params: Json) ->() {
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("jsonrpc", Json::String("2.0")))
+    fields.push(field("id", Json::String(id)))
     fields.push(field("method", Json::String(method)))
     fields.push(field("params", params))
     write_lsp_payload(Json::Object(fields))

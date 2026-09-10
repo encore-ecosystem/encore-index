@@ -1,18 +1,20 @@
-import core::option::Option
 import core::fmt::Debug
-import refrain::core::*
+import core::option::Option
+import refrain::core:: *
 
 extern fn encore_text_builder_new() -> usize
-extern fn encore_text_builder_append(builder: usize, value: str) -> ()
-extern fn encore_text_builder_append_builder(builder: usize, other: usize) -> ()
+extern fn encore_text_builder_append(builder: usize, value: str) ->()
+extern fn encore_text_builder_append_builder(builder: usize, other: usize) ->()
 extern fn encore_text_builder_finish(builder: usize) -> str
-extern fn encore_text_builder_set_suppressed(suppressed: bool) -> ()
+extern fn encore_text_builder_set_suppressed(suppressed: bool) ->()
 
 /// Enables or disables allocation-heavy text output for validation-only
 /// compiler passes on the current native thread.
-pub fn suppress_text_builder_output(suppressed: bool) -> () {
-    unsafe { encore_text_builder_set_suppressed(suppressed) }
-    ret ()
+pub fn suppress_text_builder_output(suppressed: bool) ->() {
+    unsafe {
+        encore_text_builder_set_suppressed(suppressed)
+    }
+    ret()
 }
 
 pub struct EhirTextBuilder {
@@ -21,17 +23,27 @@ pub struct EhirTextBuilder {
 
 impl for EhirTextBuilder {
     pub fn new() -> Self {
-        ret Self {unsafe { encore_text_builder_new() }}
+        ret Self {
+            unsafe {
+                encore_text_builder_new()
+            }
+        }
     }
 
     pub fn append(self: Self, other: Self) -> Self {
-        unsafe { encore_text_builder_append_builder(self.handle, other.handle) }
+        unsafe {
+            encore_text_builder_append_builder(self.handle, other.handle)
+        }
         ret self
     }
 
     pub fn append_str(self: Self, value: str) -> Self {
-        if value == "" { ret self }
-        unsafe { encore_text_builder_append(self.handle, value) }
+        if value == "" {
+            ret self
+        }
+        unsafe {
+            encore_text_builder_append(self.handle, value)
+        }
         ret self
     }
 
@@ -56,10 +68,11 @@ impl for EhirTextBuilder {
     }
 
     pub fn finish(self: Self) -> str {
-        ret unsafe { encore_text_builder_finish(self.handle) }
+        ret unsafe {
+            encore_text_builder_finish(self.handle)
+        }
     }
 }
-
 
 fn newline() -> str {
     ret "\n"
@@ -239,7 +252,8 @@ fn enum_value_to_string(value: EnumValue) -> str {
         Some(payload) => {
             out = out + variable_to_string(payload)
         }
-        None => {}
+        None => {
+        }
     }
     out = out + ")"
     ret out
@@ -367,7 +381,8 @@ pub fn type_to_string(typ: Type) -> str {
         RepresentationKind::LocalPlace => {
             ret "mut " + out
         }
-        RepresentationKind::Inline => {}
+        RepresentationKind::Inline => {
+        }
     }
 
     ret out
@@ -409,7 +424,8 @@ pub fn match_arm_to_string(arm: MatchArm) -> str {
             out = out + variable_to_string(payload)
             out = out + ")"
         }
-        None => {}
+        None => {
+        }
     }
     out = out + " => $"
     out = out + arm.label
@@ -451,22 +467,54 @@ fn render_assignable(out_var: Variable, opcode: str, args: str) -> str {
 
 fn binary_op_to_string(op: BinaryOpKind) -> str {
     match op {
-        BinaryOpKind::ADD => { ret "add" }
-        BinaryOpKind::SUB => { ret "sub" }
-        BinaryOpKind::MUL => { ret "mul" }
-        BinaryOpKind::DIV => { ret "div" }
-        BinaryOpKind::MOD => { ret "mod" }
-        BinaryOpKind::SHL => { ret "shl" }
-        BinaryOpKind::SHR => { ret "shr" }
-        BinaryOpKind::LES => { ret "les" }
-        BinaryOpKind::LEQ => { ret "leq" }
-        BinaryOpKind::GRT => { ret "grt" }
-        BinaryOpKind::GEQ => { ret "geq" }
-        BinaryOpKind::IEQ => { ret "ieq" }
-        BinaryOpKind::NEQ => { ret "neq" }
-        BinaryOpKind::AND => { ret "and" }
-        BinaryOpKind::OR => { ret "or" }
-        BinaryOpKind::XOR => { ret "xor" }
+        BinaryOpKind::ADD => {
+            ret "add"
+        }
+        BinaryOpKind::SUB => {
+            ret "sub"
+        }
+        BinaryOpKind::MUL => {
+            ret "mul"
+        }
+        BinaryOpKind::DIV => {
+            ret "div"
+        }
+        BinaryOpKind::MOD => {
+            ret "mod"
+        }
+        BinaryOpKind::SHL => {
+            ret "shl"
+        }
+        BinaryOpKind::SHR => {
+            ret "shr"
+        }
+        BinaryOpKind::LES => {
+            ret "les"
+        }
+        BinaryOpKind::LEQ => {
+            ret "leq"
+        }
+        BinaryOpKind::GRT => {
+            ret "grt"
+        }
+        BinaryOpKind::GEQ => {
+            ret "geq"
+        }
+        BinaryOpKind::IEQ => {
+            ret "ieq"
+        }
+        BinaryOpKind::NEQ => {
+            ret "neq"
+        }
+        BinaryOpKind::AND => {
+            ret "and"
+        }
+        BinaryOpKind::OR => {
+            ret "or"
+        }
+        BinaryOpKind::XOR => {
+            ret "xor"
+        }
     }
 }
 
@@ -497,7 +545,11 @@ fn format_call_instruction(call_instr: CallInstruction) -> str {
     args = args + join_strings(collect_variable_strings(call_instr.args), ", ")
     args = args + ")"
 
-    let opcode: str = if call_instr.is_unsafe { "unsafe call" } else { "call" }
+    let opcode: str = if call_instr.is_unsafe {
+        "unsafe call"
+    } else {
+        "call"
+    }
     ret render_assignable(call_instr.out, opcode, args)
 }
 
@@ -732,66 +784,116 @@ fn format_impl_directive(impl_dir: ImplDirective) -> str {
 
 pub fn instruction_to_string(instruction: Instruction) -> str {
     match instruction {
-        Instruction::Comment(comment_instr) => { ret format_comment_instruction(comment_instr) }
+        Instruction::Comment(comment_instr) => {
+            ret format_comment_instruction(comment_instr)
+        }
         Instruction::Lcpos(lcpos_instr) => {
             ret render_assignable(lcpos_instr.out, "lcpos", lcpos_instr.value)
         }
         Instruction::Alias(alias_instr) => {
             ret render_assignable(alias_instr.out, "alias", variable_to_string(alias_instr.src))
         }
-        Instruction::Lcsos(lcsos_instr) => { ret format_lcsos_instruction(lcsos_instr) }
+        Instruction::Lcsos(lcsos_instr) => {
+            ret format_lcsos_instruction(lcsos_instr)
+        }
         Instruction::Lceos(lceos_instr) => {
             ret render_assignable(lceos_instr.out, "lceos", enum_value_to_string(lceos_instr.value))
         }
-        Instruction::Call(call_instr) => { ret format_call_instruction(call_instr) }
+        Instruction::Call(call_instr) => {
+            ret format_call_instruction(call_instr)
+        }
         Instruction::Await(await_instr) => {
             ret render_assignable(await_instr.out, "await", variable_to_string(await_instr.future))
         }
-        Instruction::Store(store_instr) => { ret format_store_instruction(store_instr) }
+        Instruction::Store(store_instr) => {
+            ret format_store_instruction(store_instr)
+        }
         Instruction::Load(load_instr) => {
             ret render_assignable(load_instr.out, "load", variable_to_string(load_instr.src))
         }
-        Instruction::GetField(getfield_instr) => { ret format_field_instruction("getfield", getfield_instr.out, getfield_instr.src, getfield_instr.field) }
+        Instruction::GetField(getfield_instr) => {
+            ret format_field_instruction("getfield", getfield_instr.out, getfield_instr.src, getfield_instr.field)
+        }
         Instruction::SetField(setfield_instr) => {
             ret "setfield " + variable_to_string(setfield_instr.src) + " > " + variable_to_string(setfield_instr.field) + ", " + variable_to_string(setfield_instr.value)
         }
-        Instruction::GetFieldPtr(getfieldptr_instr) => { ret format_field_instruction("getfieldptr", getfieldptr_instr.out, getfieldptr_instr.src, getfieldptr_instr.field) }
-        Instruction::SGetField(sgetfield_instr) => { ret format_field_instruction("sgetfield", sgetfield_instr.out, sgetfield_instr.src, sgetfield_instr.field) }
-        Instruction::SGetFieldPtr(sgetfieldptr_instr) => { ret format_field_instruction("sgetfieldptr", sgetfieldptr_instr.out, sgetfieldptr_instr.src, sgetfieldptr_instr.field) }
+        Instruction::GetFieldPtr(getfieldptr_instr) => {
+            ret format_field_instruction("getfieldptr", getfieldptr_instr.out, getfieldptr_instr.src, getfieldptr_instr.field)
+        }
+        Instruction::SGetField(sgetfield_instr) => {
+            ret format_field_instruction("sgetfield", sgetfield_instr.out, sgetfield_instr.src, sgetfield_instr.field)
+        }
+        Instruction::SGetFieldPtr(sgetfieldptr_instr) => {
+            ret format_field_instruction("sgetfieldptr", sgetfieldptr_instr.out, sgetfieldptr_instr.src, sgetfieldptr_instr.field)
+        }
         Instruction::GetPtr(getptr_instr) => {
             ret render_assignable(getptr_instr.out, "getptr", variable_to_string(getptr_instr.src))
         }
-        Instruction::Gep(gep_instr) => { ret format_gep_instruction(gep_instr) }
-        Instruction::PtrCast(pcast_instr) => { ret format_pcast_instruction(pcast_instr) }
+        Instruction::Gep(gep_instr) => {
+            ret format_gep_instruction(gep_instr)
+        }
+        Instruction::PtrCast(pcast_instr) => {
+            ret format_pcast_instruction(pcast_instr)
+        }
         Instruction::StackAlloc(salloc_instr) => {
             ret render_assignable(salloc_instr.out, "salloc", type_to_string(salloc_instr.typ))
         }
         Instruction::HeapAlloc(halloc_instr) => {
             ret render_assignable(halloc_instr.out, "halloc", type_to_string(halloc_instr.typ))
         }
-        Instruction::HeapRealloc(hrealloc_instr) => { ret format_hrealloc_instruction(hrealloc_instr) }
-        Instruction::HeapFree(hfree_instr) => { ret format_hfree_instruction(hfree_instr) }
-        Instruction::Put(put_instr) => { ret format_put_instruction(put_instr) }
-        Instruction::Binary(binary_instr) => { ret format_binary_instruction(binary_instr) }
+        Instruction::HeapRealloc(hrealloc_instr) => {
+            ret format_hrealloc_instruction(hrealloc_instr)
+        }
+        Instruction::HeapFree(hfree_instr) => {
+            ret format_hfree_instruction(hfree_instr)
+        }
+        Instruction::Put(put_instr) => {
+            ret format_put_instruction(put_instr)
+        }
+        Instruction::Binary(binary_instr) => {
+            ret format_binary_instruction(binary_instr)
+        }
         Instruction::Phi(phi_instr) => {
             ret render_assignable(phi_instr.out, "phi", join_strings(collect_phi_pair_strings(phi_instr.pairs), ", "))
         }
-        Instruction::Cfree(cfree_instr) => { ret format_cfree_instruction(cfree_instr) }
-        Instruction::AddEdge(edge_instr) => { ret format_edge_instruction("addedge", edge_instr) }
-        Instruction::RemoveEdge(edge_instr) => { ret format_edge_instruction("removeedge", edge_instr) }
-        Instruction::Drop(drop_instr) => { ret "drop " + variable_to_string(drop_instr.value) }
-        Instruction::Retain(retain_instr) => { ret "retain " + variable_to_string(retain_instr.value) }
+        Instruction::Cfree(cfree_instr) => {
+            ret format_cfree_instruction(cfree_instr)
+        }
+        Instruction::AddEdge(edge_instr) => {
+            ret format_edge_instruction("addedge", edge_instr)
+        }
+        Instruction::RemoveEdge(edge_instr) => {
+            ret format_edge_instruction("removeedge", edge_instr)
+        }
+        Instruction::Drop(drop_instr) => {
+            ret "drop " + variable_to_string(drop_instr.value)
+        }
+        Instruction::Retain(retain_instr) => {
+            ret "retain " + variable_to_string(retain_instr.value)
+        }
     }
 }
 
 pub fn terminator_to_string(terminator: Terminator) -> str {
     match terminator {
-        Terminator::Unreachable => { ret "unreachable" }
-        Terminator::Ret(ret_instr) => { ret format_ret_terminator(ret_instr) }
-        Terminator::Br(br_instr) => { ret format_br_terminator(br_instr) }
-        Terminator::Cbr(cbr_instr) => { ret format_cbr_terminator(cbr_instr) }
-        Terminator::Match(match_instr) => { ret format_match_terminator(match_instr) }
-        Terminator::Switch(switch_instr) => { ret format_switch_terminator(switch_instr) }
+        Terminator::Unreachable => {
+            ret "unreachable"
+        }
+        Terminator::Ret(ret_instr) => {
+            ret format_ret_terminator(ret_instr)
+        }
+        Terminator::Br(br_instr) => {
+            ret format_br_terminator(br_instr)
+        }
+        Terminator::Cbr(cbr_instr) => {
+            ret format_cbr_terminator(cbr_instr)
+        }
+        Terminator::Match(match_instr) => {
+            ret format_match_terminator(match_instr)
+        }
+        Terminator::Switch(switch_instr) => {
+            ret format_switch_terminator(switch_instr)
+        }
     }
 }
 
@@ -826,7 +928,9 @@ pub fn fn_to_string(function: FnDirective) -> str {
     if function.is_extern {
         out = "extern fn "
     } else {
-        if function.is_async { out = "async fn " }
+        if function.is_async {
+            out = "async fn "
+        }
     }
     out = out + function.name
     if function.generics.len() > 0_usize {
@@ -853,23 +957,36 @@ pub fn fn_to_string(function: FnDirective) -> str {
 
 pub fn directive_to_string(directive: Directive) -> str {
     match directive {
-        Directive::Struct(struct_dir) => { ret format_struct_directive(struct_dir) }
-        Directive::Enum(enum_dir) => { ret format_enum_directive(enum_dir) }
+        Directive::Struct(struct_dir) => {
+            ret format_struct_directive(struct_dir)
+        }
+        Directive::Enum(enum_dir) => {
+            ret format_enum_directive(enum_dir)
+        }
         Directive::Function(function_dir) => {
             ret fn_to_string(function_dir)
         }
-        Directive::Trait(trait_dir) => { ret format_trait_directive(trait_dir) }
-        Directive::Impl(impl_dir) => { ret format_impl_directive(impl_dir) }
+        Directive::Trait(trait_dir) => {
+            ret format_trait_directive(trait_dir)
+        }
+        Directive::Impl(impl_dir) => {
+            ret format_impl_directive(impl_dir)
+        }
     }
 }
 
 pub fn module_to_string(module: Module) -> str {
     let mut chunks = Vec[str]::new()
     match module.documentation {
-        Option[str]::Some(documentation) => { chunks.push(documentation_comments(documentation, "//!")) }
-        Option[str]::None => {}
+        Option[str]::Some(documentation) => {
+            chunks.push(documentation_comments(documentation, "//!"))
+        }
+        Option[str]::None => {
+        }
     }
-    for imported in module.imports { chunks.push("import " + imported.module_id) }
+    for imported in module.imports {
+        chunks.push("import " + imported.module_id)
+    }
     for directive in module.directives {
         let mut rendered = directive_to_string(directive)
         let target = directive_documentation_target(directive)
@@ -886,11 +1003,21 @@ pub fn module_to_string(module: Module) -> str {
 
 fn directive_documentation_target(directive: Directive) -> str {
     match directive {
-        Directive::Struct(item) => { ret item.name }
-        Directive::Enum(item) => { ret item.name }
-        Directive::Function(item) => { ret item.name }
-        Directive::Trait(item) => { ret item.name }
-        Directive::Impl(item) => { ret "impl " + item.for_type.name }
+        Directive::Struct(item) => {
+            ret item.name
+        }
+        Directive::Enum(item) => {
+            ret item.name
+        }
+        Directive::Function(item) => {
+            ret item.name
+        }
+        Directive::Trait(item) => {
+            ret item.name
+        }
+        Directive::Impl(item) => {
+            ret "impl " + item.for_type.name
+        }
     }
 }
 
@@ -905,11 +1032,15 @@ fn documentation_comments(documentation: str, prefix: str) -> str {
                     out = out + "\n" + prefix
                     line_has_text = false
                 } else {
-                    if !line_has_text { out = out + " " line_has_text = true }
+                    if !line_has_text {
+                        out = out + " " line_has_text = true
+                    }
                     out = out + ch
                 }
             }
-            Option[str]::None => { break }
+            Option[str]::None => {
+                break
+            }
         }
         index += 1_usize
     }

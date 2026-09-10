@@ -1,43 +1,43 @@
 import core::option::Option
-import std::vec::Vec
-import refrain::types::LLVMType
-import refrain::types::void_type
-import refrain::value::LLVMValue
-import refrain::core::LLVMParam
-import refrain::core::LLVMInstruction
-import refrain::core::LLVMPhiIncoming
-import refrain::core::LLVMTerminator
 import refrain::core::LLVMBasicBlock
 import refrain::core::LLVMFunction
+import refrain::core::LLVMInstruction
 import refrain::core::LLVMModule
+import refrain::core::LLVMParam
+import refrain::core::LLVMPhiIncoming
+import refrain::core::LLVMTerminator
+import refrain::core::llvm_add_instruction
+import refrain::core::llvm_alloca_instruction
+import refrain::core::llvm_basic_block
+import refrain::core::llvm_bitcast_instruction
+import refrain::core::llvm_br_term
+import refrain::core::llvm_call_instruction
+import refrain::core::llvm_cast_instruction
+import refrain::core::llvm_cbr_term
 import refrain::core::llvm_context_new
+import refrain::core::llvm_extractvalue_instruction
+import refrain::core::llvm_function
+import refrain::core::llvm_function_with_attributes
+import refrain::core::llvm_function_with_linkage
+import refrain::core::llvm_gep_instruction
+import refrain::core::llvm_insertvalue_instruction
+import refrain::core::llvm_load_instruction
 import refrain::core::llvm_module_new
 import refrain::core::llvm_param
-import refrain::core::llvm_add_instruction
-import refrain::core::llvm_sub_instruction
-import refrain::core::llvm_raw_binary_instruction
-import refrain::core::llvm_call_instruction
-import refrain::core::llvm_alloca_instruction
-import refrain::core::llvm_load_instruction
-import refrain::core::llvm_store_instruction
-import refrain::core::llvm_gep_instruction
-import refrain::core::llvm_bitcast_instruction
-import refrain::core::llvm_cast_instruction
-import refrain::core::llvm_insertvalue_instruction
-import refrain::core::llvm_extractvalue_instruction
 import refrain::core::llvm_phi_incoming
 import refrain::core::llvm_phi_instruction
+import refrain::core::llvm_raw_binary_instruction
 import refrain::core::llvm_ret_term
-import refrain::core::llvm_br_term
-import refrain::core::llvm_cbr_term
+import refrain::core::llvm_store_instruction
+import refrain::core::llvm_sub_instruction
 import refrain::core::llvm_unreachable_term
-import refrain::core::llvm_basic_block
-import refrain::core::llvm_function
-import refrain::core::llvm_function_with_linkage
-import refrain::core::llvm_function_with_attributes
 import refrain::ir::emit_module_lines
 import refrain::ir::emit_module_text
 import refrain::ir::emit_module_to_file
+import refrain::types::LLVMType
+import refrain::types::void_type
+import refrain::value::LLVMValue
+import std::vec::Vec
 
 pub fn llvm_new(module_name: str, functions: Vec[LLVMFunction]) -> LLVMModule {
     let context = llvm_context_new()
@@ -62,7 +62,7 @@ pub fn llvm_define_fn(
     name: str,
     ret_type: LLVMType,
     params: Vec[LLVMParam],
-    blocks: Vec[LLVMBasicBlock]
+    blocks: Vec[LLVMBasicBlock],
 ) -> LLVMFunction {
     ret llvm_function(name, ret_type, params, blocks, false)
 }
@@ -71,7 +71,7 @@ pub fn llvm_declare_fn(
     name: str,
     ret_type: LLVMType,
     params: Vec[LLVMParam],
-    blocks: Vec[LLVMBasicBlock]
+    blocks: Vec[LLVMBasicBlock],
 ) -> LLVMFunction {
     ret llvm_function(name, ret_type, params, blocks, true)
 }
@@ -104,7 +104,7 @@ pub fn llvm_inst_call(
     out: Option[LLVMValue],
     ret_type: LLVMType,
     callee: str,
-    args: Vec[LLVMValue]
+    args: Vec[LLVMValue],
 ) -> LLVMInstruction {
     ret llvm_call_instruction(out, ret_type, callee, args)
 }
@@ -126,7 +126,7 @@ pub fn llvm_inst_gep(
     element_type: LLVMType,
     ptr: LLVMValue,
     indices: Vec[LLVMValue],
-    inbounds: bool
+    inbounds: bool,
 ) -> LLVMInstruction {
     ret llvm_gep_instruction(out, element_type, ptr, indices, inbounds)
 }

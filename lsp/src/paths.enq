@@ -1,4 +1,4 @@
-import core::option::Option
+//! Converts between filesystem paths and LSP document URIs.
 
 pub fn uri_to_path(uri: str) -> str {
     let prefix = "file://"

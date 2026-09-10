@@ -9,17 +9,19 @@ pub struct TreeNode {
 
 impl for TreeNode {
     pub fn new(label: str) -> Self {
-        ret Self{label, Vec[TreeNode]::new()}
+        ret Self {
+            label, Vec[TreeNode]::new()
+        }
     }
 
-    pub fn add_child(self: mut Self, child: TreeNode) -> () {
+    pub fn add_child(self: mut Self, child: TreeNode) ->() {
         self.children.push(child)
-        ret ()
+        ret()
     }
 
-    pub fn branch(self: mut Self, label: str) -> () {
+    pub fn branch(self: mut Self, label: str) ->() {
         self.add_child(TreeNode::new(label))
-        ret ()
+        ret()
     }
 
     pub fn render(self: Self) -> str {
@@ -31,19 +33,20 @@ fn render_node(node: TreeNode, prefix: str, is_last: bool) -> str {
     let mut out = ""
     if prefix == "" {
         out = node.label
-    }
-    else {
-        let connector = if is_last { "└── " } else { "├── " }
+    } else {
+        let connector = if is_last {
+            "└── "
+        } else {
+            "├── "
+        }
         out = prefix + connector + node.label
     }
 
     let next_prefix = if prefix == "" {
         ""
-    }
-    elif is_last {
+    } elif is_last {
         prefix + "    "
-    }
-    else {
+    } else {
         prefix + "│   "
     }
 
@@ -72,8 +75,8 @@ fn tree_renders_nested_nodes() -> bool {
     root.add_child(frontend)
     let rendered = root.render()
     ret assert(str_contains(rendered, "root"))
-        && assert(str_contains(rendered, "frontend"))
-        && assert(str_contains(rendered, "lexer"))
+    && assert(str_contains(rendered, "frontend"))
+    && assert(str_contains(rendered, "lexer"))
 }
 
 fn str_contains(value: str, needle: str) -> bool {

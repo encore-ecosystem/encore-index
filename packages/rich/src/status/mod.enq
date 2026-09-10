@@ -27,10 +27,10 @@ pub fn status_fail(message: str) -> str {
 #attr(test)
 fn status_helpers_include_payload() -> bool {
     ret assert(str_contains(status(Spinner::dots(), 1_usize, "loading"), "loading"))
-        && assert(str_contains(status_info("info"), "info"))
-        && assert(str_contains(status_ok("ok"), "ok"))
-        && assert(str_contains(status_warn("warn"), "warn"))
-        && assert(str_contains(status_fail("fail"), "fail"))
+    && assert(str_contains(status_info("info"), "info"))
+    && assert(str_contains(status_ok("ok"), "ok"))
+    && assert(str_contains(status_warn("warn"), "warn"))
+    && assert(str_contains(status_fail("fail"), "fail"))
 }
 
 fn str_contains(value: str, needle: str) -> bool {

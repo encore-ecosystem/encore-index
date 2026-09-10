@@ -7,7 +7,7 @@ pub trait Fn[Args, Output] {
 }
 
 pub trait FnMut[Args, Output] {
-    fn call_mut(self: Self&, args: Args) -> Output
+    fn call_mut(self: Self &, args: Args) -> Output
 }
 
 pub trait FnOnce[Args, Output] {

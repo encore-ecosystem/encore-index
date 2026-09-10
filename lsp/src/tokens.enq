@@ -1,3 +1,5 @@
+//! Classifies Encore lexer tokens for semantic highlighting.
+
 import encore::frontend::TokenType
 
 pub fn is_keyword_token(token_type: TokenType) -> bool {

@@ -25,7 +25,7 @@ pub fn tan(x: f32) -> f32 {
 }
 
 /// Performs the `min` operation.
-pub fn min[T:Lt[T]](lhs: T, rhs: T) -> T {
+pub fn min[T: Lt[T]](lhs: T, rhs: T) -> T {
     if lhs < rhs {
         ret lhs
     }
@@ -33,7 +33,7 @@ pub fn min[T:Lt[T]](lhs: T, rhs: T) -> T {
 }
 
 /// Performs the `max` operation.
-pub fn max[T:Gt[T]](lhs: T, rhs: T) -> T {
+pub fn max[T: Gt[T]](lhs: T, rhs: T) -> T {
     if lhs > rhs {
         ret lhs
     }
@@ -41,7 +41,7 @@ pub fn max[T:Gt[T]](lhs: T, rhs: T) -> T {
 }
 
 /// Performs the `clamp` operation.
-pub fn clamp[T:Lt[T]+Gt[T]](value: T, low: T, high: T) -> T {
+pub fn clamp[T: Lt[T] + Gt[T]](value: T, low: T, high: T) -> T {
     if value < low {
         ret low
     }

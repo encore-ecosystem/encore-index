@@ -3,8 +3,8 @@
 pub import core::future::{Context, Future, Poll, Ready, Waker, context, ready}
 
 extern fn encore_async_waker_new() -> usize
-extern fn encore_async_waker_wait(token: usize) -> ()
-extern fn encore_async_waker_drop(token: usize) -> ()
+extern fn encore_async_waker_wait(token: usize) ->()
+extern fn encore_async_waker_drop(token: usize) ->()
 
 /// Performs the `block_on` operation.
 pub fn block_on[T, F: Future[T]](future: F) -> T {

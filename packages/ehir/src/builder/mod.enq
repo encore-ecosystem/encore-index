@@ -15,11 +15,10 @@ import refrain::core::Terminator
 import refrain::core::Type
 import refrain::core::Variable
 import refrain::core::block
-import refrain::core::fn_item
 import refrain::core::extern_fn_item
+import refrain::core::fn_item
 import refrain::core::make_module
 import refrain::core::var
-
 
 pub struct ModuleBuilder {
     name: str
@@ -42,17 +41,19 @@ pub struct FunctionBuilder {
 
 impl for ModuleBuilder {
     pub fn new(name: str) -> ModuleBuilder {
-        ret ModuleBuilder{name, Vec[Directive]::new()}
+        ret ModuleBuilder {
+            name, Vec[Directive]::new()
+        }
     }
 
-    pub fn push(mut self, directive: Directive) -> () {
+    pub fn push(mut self, directive: Directive) ->() {
         self.directives.push(directive)
-        ret ()
+        ret()
     }
 
-    pub fn push_function(mut self, function: FnDirective) -> () {
+    pub fn push_function(mut self, function: FnDirective) ->() {
         self.push(Directive::Function(function))
-        ret ()
+        ret()
     }
 
     pub fn finish(self: ModuleBuilder) -> Module {
@@ -62,7 +63,7 @@ impl for ModuleBuilder {
 
 impl for FunctionBuilder {
     pub fn new(name: str, generics: Vec[Type], params: Vec[Parameter], ret_type: Type) -> FunctionBuilder {
-        ret FunctionBuilder{
+        ret FunctionBuilder {
             name,
             generics,
             params,
@@ -78,7 +79,7 @@ impl for FunctionBuilder {
     }
 
     pub fn new_extern(name: str, generics: Vec[Type], params: Vec[Parameter], ret_type: Type) -> FunctionBuilder {
-        ret FunctionBuilder{
+        ret FunctionBuilder {
             name,
             generics,
             params,
@@ -93,16 +94,16 @@ impl for FunctionBuilder {
         }
     }
 
-    fn ensure_active_block(self) -> () {
+    fn ensure_active_block(self) ->() {
         if !self.has_open_block {
             panic("FunctionBuilder has no active block")
         }
-        ret ()
+        ret()
     }
 
-    fn flush_current_block(mut self) -> () {
+    fn flush_current_block(mut self) ->() {
         if !self.has_open_block {
-            ret ()
+            ret()
         }
 
         match self.current_terminator {
@@ -120,10 +121,10 @@ impl for FunctionBuilder {
         self.current_instructions = Vec[Instruction]::new()
         self.current_terminator = Option[Terminator]::None
         self.has_open_block = false
-        ret ()
+        ret()
     }
 
-    pub fn start_block(mut self, name: str) -> () {
+    pub fn start_block(mut self, name: str) ->() {
         if self.is_extern {
             panic("Extern function can not own blocks")
         }
@@ -136,16 +137,16 @@ impl for FunctionBuilder {
         self.current_instructions = Vec[Instruction]::new()
         self.current_terminator = Option[Terminator]::None
         self.has_open_block = true
-        ret ()
+        ret()
     }
 
-    pub fn emit(mut self, instruction: Instruction) -> () {
+    pub fn emit(mut self, instruction: Instruction) ->() {
         self.ensure_active_block()
         self.current_instructions.push(instruction)
-        ret ()
+        ret()
     }
 
-    pub fn terminate(mut self, terminator: Terminator) -> () {
+    pub fn terminate(mut self, terminator: Terminator) ->() {
         self.ensure_active_block()
 
         match self.current_terminator {
@@ -157,7 +158,7 @@ impl for FunctionBuilder {
             }
         }
 
-        ret ()
+        ret()
     }
 
     pub fn fresh_temp(mut self, typ: Type) -> Variable {

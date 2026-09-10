@@ -1,6 +1,6 @@
 //! Provides growable vectors and vector iterators.
 
-pub import core::vec::*
+pub import core::vec:: *
 
 import core::option::Option
 
@@ -25,8 +25,12 @@ pub fn append[T](left: Vec[T], right: Vec[T]) -> Vec[T] {
 /// Performs the `head_or` operation.
 pub fn head_or[T](values: Vec[T], default: T) -> T {
     match values.get(0_usize) {
-        Option[T]::Some(value) => { ret value }
-        Option[T]::None => { ret default }
+        Option[T]::Some(value) => {
+            ret value
+        }
+        Option[T]::None => {
+            ret default
+        }
     }
 }
 
@@ -39,8 +43,12 @@ pub fn tail_or[T](values: Vec[T], default: Vec[T]) -> Vec[T] {
     let mut index = 1_usize
     while index < values.len() {
         match values.get(index) {
-            Option[T]::Some(value) => { out.push(value) }
-            Option[T]::None => { break }
+            Option[T]::Some(value) => {
+                out.push(value)
+            }
+            Option[T]::None => {
+                break
+            }
         }
         index = index + 1_usize
     }

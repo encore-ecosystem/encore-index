@@ -45,7 +45,9 @@ pub fn create_dir(path: str) -> i32 {
 }
 
 /// Creates a directory and missing parents.
-pub fn create_dir_all(path: str) -> i32 { ret mkdir_all(path) }
+pub fn create_dir_all(path: str) -> i32 {
+    ret mkdir_all(path)
+}
 
 /// Returns the names contained directly in a directory.
 pub fn read_dir(path: str) -> Vec[str] {

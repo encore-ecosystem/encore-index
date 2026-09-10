@@ -1,6 +1,6 @@
-import std::io::println
 import core::testing::assert
 import core::vec::Vec
+import std::io::println
 
 import refrain::style::{accent, muted}
 
@@ -32,11 +32,13 @@ pub fn pretty_list(values: Vec[str]) -> str {
     ret out
 }
 
-pub struct PrettyPrinter {}
+pub struct PrettyPrinter {
+}
 
 impl for PrettyPrinter {
     pub fn new() -> Self {
-        ret Self{}
+        ret Self {
+        }
     }
 
     pub fn render(self, value: str) -> str {
@@ -51,9 +53,9 @@ impl for PrettyPrinter {
         ret accent(label) + " " + muted(message)
     }
 
-    pub fn println(self, value: str) -> () {
+    pub fn println(self, value: str) ->() {
         println(self.render(value))
-        ret ()
+        ret()
     }
 }
 
@@ -64,9 +66,9 @@ fn pretty_formats_scalars_and_lists() -> bool {
     values.push("two")
     let list_rendered = pretty_list(values)
     ret assert(pretty("value") == "value")
-        && assert(str_contains(pretty_kv("count", "3"), "count"))
-        && assert(str_contains(list_rendered, "one"))
-        && assert(str_contains(list_rendered, "two"))
+    && assert(str_contains(pretty_kv("count", "3"), "count"))
+    && assert(str_contains(list_rendered, "one"))
+    && assert(str_contains(list_rendered, "two"))
 }
 
 fn str_contains(value: str, needle: str) -> bool {

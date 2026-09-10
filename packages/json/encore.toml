@@ -1,8 +1,8 @@
 [project]
 name = "json"
-version = "1.0.1"
+version = "0.0.0"
 repository = "https://github.com/encore-ecosystem/encore-index"
-encore = ">=0.1.5, <0.3.0"
+encore = ">=0.0.0"
 description = "JSON parser and formatter for Encore"
 readme = "README.md"
 licence = "MIT"

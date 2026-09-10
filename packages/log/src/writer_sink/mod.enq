@@ -1,8 +1,8 @@
+import core::testing::assert
 import refrain::formatter::Formatter
 import refrain::level::LogLevel
 import refrain::sink::{LogSink, Writable}
 import std::os::{file_exists, read_file, write_file}
-import core::testing::assert
 
 pub struct WriterSink {
     writer: dyn Writable
@@ -11,11 +11,15 @@ pub struct WriterSink {
 
 impl for WriterSink {
     pub fn new(writer: dyn Writable) -> Self {
-        ret Self{writer, Formatter::plain()}
+        ret Self {
+            writer, Formatter::plain()
+        }
     }
 
     pub fn with_formatter(writer: dyn Writable, formatter: Formatter) -> Self {
-        ret Self{writer, formatter}
+        ret Self {
+            writer, formatter
+        }
     }
 }
 
@@ -44,7 +48,10 @@ impl Writable for CaptureWriter {
 fn writer_sink_uses_writable_trait_object() -> bool {
     let path = "target/log_writer_sink_contract.txt"
     write_file(path, "")
-    let sink = WriterSink::new(CaptureWriter{path} as dyn Writable)
+    let sink = WriterSink::new(CaptureWriter {
+            path
+        }
+        as dyn Writable)
     sink.write(LogLevel::Warn, "writer", "hello")
     let text = read_file(path)
     ret assert(str_contains(text, "[WARN] [writer] hello"))

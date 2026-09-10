@@ -1,7 +1,7 @@
 //! Provides hashable keys and hash maps.
 
-import std::option::Option
 import std::ops::Eq
+import std::option::Option
 import std::vec::Vec
 
 /// Defines the behavior required by `Hashable` implementations.
@@ -17,7 +17,7 @@ impl Hashable for str {
         for i in 0..self.len() {
             match self.get_byte(i) {
                 Option::Some(b) => {
-                    h = h ^ (b as u64)
+                    h = h ^(b as u64)
                     h = h * prime
                 }
                 Option::None => {
@@ -39,16 +39,56 @@ impl Hashable for bool {
     }
 }
 
-impl Hashable for u8 { pub fn hash(self: u8) -> u64 { ret self as u64 } }
-impl Hashable for u16 { pub fn hash(self: u16) -> u64 { ret self as u64 } }
-impl Hashable for u32 { pub fn hash(self: u32) -> u64 { ret self as u64 } }
-impl Hashable for u64 { pub fn hash(self: u64) -> u64 { ret self } }
-impl Hashable for usize { pub fn hash(self: usize) -> u64 { ret self as u64 } }
-impl Hashable for i8 { pub fn hash(self: i8) -> u64 { ret self as u64 } }
-impl Hashable for i16 { pub fn hash(self: i16) -> u64 { ret self as u64 } }
-impl Hashable for i32 { pub fn hash(self: i32) -> u64 { ret self as u64 } }
-impl Hashable for i64 { pub fn hash(self: i64) -> u64 { ret self as u64 } }
-impl Hashable for isize { pub fn hash(self: isize) -> u64 { ret self as u64 } }
+impl Hashable for u8 {
+    pub fn hash(self: u8) -> u64 {
+        ret self as u64
+    }
+}
+impl Hashable for u16 {
+    pub fn hash(self: u16) -> u64 {
+        ret self as u64
+    }
+}
+impl Hashable for u32 {
+    pub fn hash(self: u32) -> u64 {
+        ret self as u64
+    }
+}
+impl Hashable for u64 {
+    pub fn hash(self: u64) -> u64 {
+        ret self
+    }
+}
+impl Hashable for usize {
+    pub fn hash(self: usize) -> u64 {
+        ret self as u64
+    }
+}
+impl Hashable for i8 {
+    pub fn hash(self: i8) -> u64 {
+        ret self as u64
+    }
+}
+impl Hashable for i16 {
+    pub fn hash(self: i16) -> u64 {
+        ret self as u64
+    }
+}
+impl Hashable for i32 {
+    pub fn hash(self: i32) -> u64 {
+        ret self as u64
+    }
+}
+impl Hashable for i64 {
+    pub fn hash(self: i64) -> u64 {
+        ret self as u64
+    }
+}
+impl Hashable for isize {
+    pub fn hash(self: isize) -> u64 {
+        ret self as u64
+    }
+}
 
 /// Stores the state of a `Dict` value.
 pub struct Dict[K, V] {
@@ -56,7 +96,7 @@ pub struct Dict[K, V] {
     len: usize
 }
 
-impl[K:Hashable+Eq, V] for Dict[K, V] {
+impl[K: Hashable + Eq, V] for Dict[K, V] {
     /// Creates a new value with its default initial state.
     pub fn new() -> Dict[K, V] {
         ret Dict[K, V]::with_capacity(16_usize)
@@ -69,7 +109,9 @@ impl[K:Hashable+Eq, V] for Dict[K, V] {
             actual = 1_usize
         }
         let entries = Vec[(K, V)]::with_capacity(actual)
-        ret Dict[K, V]{entries, 0_usize}
+        ret Dict[K, V] {
+            entries, 0_usize
+        }
     }
 
     /// Returns the len of this value.
@@ -88,10 +130,10 @@ impl[K:Hashable+Eq, V] for Dict[K, V] {
     }
 
     /// Performs the `clear` operation.
-    pub fn clear(self: mut Dict[K, V]) -> () {
+    pub fn clear(self: mut Dict[K, V]) ->() {
         self.entries.clear()
         self.len = 0_usize
-        ret ()
+        ret()
     }
 
     fn find_entry(self: Dict[K, V], key: K) -> Option[usize] {
@@ -140,18 +182,22 @@ impl[K:Hashable+Eq, V] for Dict[K, V] {
         let mut next_entries = self.entries
         match self.find_entry(key) {
             Option::Some(pos) => {
-                next_entries.set(pos, (key, value))
-                ret Dict[K, V]{next_entries, self.len}
+                next_entries.set(pos,(key, value))
+                ret Dict[K, V] {
+                    next_entries, self.len
+                }
             }
             Option::None => {
                 next_entries.push((key, value))
-                ret Dict[K, V]{next_entries, self.len + 1_usize}
+                ret Dict[K, V] {
+                    next_entries, self.len + 1_usize
+                }
             }
         }
     }
 
     /// Removes the selected value.
-    pub fn remove(self: Dict[K, V], key: K) -> (Dict[K, V], Option[V]) {
+    pub fn remove(self: Dict[K, V], key: K) ->(Dict[K, V], Option[V]) {
         match self.find_entry(key) {
             Option::Some(pos) => {
                 let mut out = Vec[(K, V)]::with_capacity(self.entries.capacity())
@@ -163,8 +209,7 @@ impl[K:Hashable+Eq, V] for Dict[K, V] {
                         Option::Some(entry) => {
                             if i == pos {
                                 removed = Option[V]::Some(entry.1)
-                            }
-                            else {
+                            } else {
                                 out.push(entry)
                             }
                             i = i + 1_usize
@@ -174,10 +219,13 @@ impl[K:Hashable+Eq, V] for Dict[K, V] {
                         }
                     }
                 }
-                ret (Dict[K, V]{out, self.len - 1_usize}, removed)
+                ret(Dict[K, V] {
+                        out, self.len - 1_usize
+                    }
+                    , removed,)
             }
             Option::None => {
-                ret (self, Option[V]::None)
+                ret(self, Option[V]::None)
             }
         }
     }

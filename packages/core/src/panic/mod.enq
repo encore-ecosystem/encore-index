@@ -4,10 +4,10 @@ extern fn encore_io_write(fd: i32, value: str) -> i32
 extern fn encore_proc_exit(code: i32) -> i32
 
 /// Performs the `panic` operation.
-pub fn panic(message: str) -> () {
+pub fn panic(message: str) ->() {
     unsafe {
         encore_io_write(2_i32, "panic: " + message + "\n")
         encore_proc_exit(1_i32)
     }
-    ret ()
+    ret()
 }

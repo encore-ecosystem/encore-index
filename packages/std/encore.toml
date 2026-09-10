@@ -1,8 +1,8 @@
 [project]
 name = "std"
-version = "1.0.1"
+version = "0.0.0"
 repository = "https://github.com/encore-ecosystem/encore-index"
-encore = ">=0.1.5, <0.3.0"
+encore = ">=0.0.0"
 description = "stdlib for Encore language"
 readme = "README.md"
 licence = "MIT"

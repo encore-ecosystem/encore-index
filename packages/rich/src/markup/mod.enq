@@ -15,44 +15,37 @@ pub fn render_markup(source: str) -> str {
             buffer = ""
             mode = "bold"
             index = index + 6_usize
-        }
-        elif matches_tag(source, index, "[dim]") {
+        } elif matches_tag(source, index, "[dim]") {
             out += flush(mode, buffer)
             buffer = ""
             mode = "dim"
             index = index + 5_usize
-        }
-        elif matches_tag(source, index, "[info]") {
+        } elif matches_tag(source, index, "[info]") {
             out += flush(mode, buffer)
             buffer = ""
             mode = "info"
             index = index + 6_usize
-        }
-        elif matches_tag(source, index, "[ok]") {
+        } elif matches_tag(source, index, "[ok]") {
             out += flush(mode, buffer)
             buffer = ""
             mode = "ok"
             index = index + 4_usize
-        }
-        elif matches_tag(source, index, "[warn]") {
+        } elif matches_tag(source, index, "[warn]") {
             out += flush(mode, buffer)
             buffer = ""
             mode = "warn"
             index = index + 6_usize
-        }
-        elif matches_tag(source, index, "[error]") {
+        } elif matches_tag(source, index, "[error]") {
             out += flush(mode, buffer)
             buffer = ""
             mode = "error"
             index = index + 7_usize
-        }
-        elif matches_tag(source, index, "[/]") {
+        } elif matches_tag(source, index, "[/]") {
             out += flush(mode, buffer)
             buffer = ""
             mode = ""
             index = index + 3_usize
-        }
-        else {
+        } else {
             buffer += source.slice(index, 1_usize)
             index = index + 1_usize
         }
@@ -93,8 +86,8 @@ fn flush(mode: str, text: str) -> str {
 fn markup_renders_known_tags() -> bool {
     let rendered = render_markup("[info]hello[/] [warn]build[/] [error]fail[/]")
     ret assert(str_contains(rendered, "hello"))
-        && assert(str_contains(rendered, "build"))
-        && assert(str_contains(rendered, "fail"))
+    && assert(str_contains(rendered, "build"))
+    && assert(str_contains(rendered, "fail"))
 }
 
 fn str_contains(value: str, needle: str) -> bool {

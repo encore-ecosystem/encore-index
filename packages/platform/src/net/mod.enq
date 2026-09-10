@@ -1,8 +1,8 @@
 //! Provides synchronous network primitives.
 
-import core::result::Result
 import core::fmt::Debug
 import core::ops::ContextManager
+import core::result::Result
 
 extern fn encore_net_tcp_connect(addr: str) -> i32
 extern fn encore_net_tcp_bind(addr: str) -> i32
@@ -46,7 +46,10 @@ impl for TcpStream {
         unsafe {
             let fd = encore_net_tcp_connect(addr)
             if ok_fd(fd) {
-                ret Result[TcpStream, str]::Ok(TcpStream{fd})
+                ret Result[TcpStream, str]::Ok(TcpStream {
+                        fd
+                    }
+                )
             }
             ret Result[TcpStream, str]::Err(last_error())
         }
@@ -95,7 +98,10 @@ impl for TcpListener {
         unsafe {
             let fd = encore_net_tcp_bind(addr)
             if ok_fd(fd) {
-                ret Result[TcpListener, str]::Ok(TcpListener{fd})
+                ret Result[TcpListener, str]::Ok(TcpListener {
+                        fd
+                    }
+                )
             }
             ret Result[TcpListener, str]::Err(last_error())
         }
@@ -106,7 +112,10 @@ impl for TcpListener {
         unsafe {
             let fd = encore_net_tcp_accept(self.fd)
             if ok_fd(fd) {
-                ret Result[TcpStream, str]::Ok(TcpStream{fd})
+                ret Result[TcpStream, str]::Ok(TcpStream {
+                        fd
+                    }
+                )
             }
             ret Result[TcpStream, str]::Err(last_error())
         }

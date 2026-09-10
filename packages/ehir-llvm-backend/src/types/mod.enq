@@ -30,15 +30,21 @@ pub struct BuildArtifact {
 }
 
 pub fn backend_config(target_dir: str, profile: BackendOptProfile) -> BackendConfig {
-    ret BackendConfig{target_dir, profile}
+    ret BackendConfig {
+        target_dir, profile
+    }
 }
 
 pub fn compiled_refrain(name: str, target: BackendTarget, module: Module) -> CompiledRefrain {
-    ret CompiledRefrain{name, target, module}
+    ret CompiledRefrain {
+        name, target, module
+    }
 }
 
 pub fn build_artifact(output_path: str, target: BackendTarget, status: i32) -> BuildArtifact {
-    ret BuildArtifact{output_path, target, status}
+    ret BuildArtifact {
+        output_path, target, status
+    }
 }
 
 pub fn debug_profile() -> BackendOptProfile {

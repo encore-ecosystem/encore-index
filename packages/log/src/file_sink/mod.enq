@@ -1,5 +1,5 @@
-import std::os::{file_exists, read_file, write_file}
 import core::testing::assert
+import std::os::{file_exists, read_file, write_file}
 
 import refrain::formatter::Formatter
 import refrain::level::LogLevel
@@ -12,11 +12,15 @@ pub struct FileSink {
 
 impl for FileSink {
     pub fn new(path: str) -> Self {
-        ret Self{path, Formatter::plain()}
+        ret Self {
+            path, Formatter::plain()
+        }
     }
 
     pub fn with_formatter(path: str, formatter: Formatter) -> Self {
-        ret Self{path, formatter}
+        ret Self {
+            path, formatter
+        }
     }
 }
 
@@ -40,7 +44,7 @@ fn file_sink_appends_records() -> bool {
     sink.write(LogLevel::Error, "file", "second")
     let text = read_file(path)
     ret assert(str_contains(text, "[INFO] [file] first"))
-        && assert(str_contains(text, "[ERROR] [file] second"))
+    && assert(str_contains(text, "[ERROR] [file] second"))
 }
 
 fn str_contains(value: str, needle: str) -> bool {

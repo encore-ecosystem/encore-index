@@ -9,7 +9,9 @@ pub struct Inspector {
 
 impl for Inspector {
     pub fn new(title: str) -> Self {
-        ret Self{title, Vec[(str, str)]::new()}
+        ret Self {
+            title, Vec[(str, str)]::new()
+        }
     }
 
     pub fn with_fields(title: str, fields: Vec[(str, str)]) -> Self {
@@ -18,12 +20,12 @@ impl for Inspector {
         ret inspector
     }
 
-    pub fn add_field(self: mut Self, name: str, value: str) -> () {
+    pub fn add_field(self: mut Self, name: str, value: str) ->() {
         self.fields.push((name, value))
-        ret ()
+        ret()
     }
 
-    pub fn add_fields(self: mut Self, fields: Vec[(str, str)]) -> () {
+    pub fn add_fields(self: mut Self, fields: Vec[(str, str)]) ->() {
         let mut index = 0_usize
         loop {
             match fields.get(index) {
@@ -36,12 +38,12 @@ impl for Inspector {
                 }
             }
         }
-        ret ()
+        ret()
     }
 
-    pub fn add_kv(self: mut Self, name: str, value: str) -> () {
+    pub fn add_kv(self: mut Self, name: str, value: str) ->() {
         self.add_field(name, value)
-        ret ()
+        ret()
     }
 
     pub fn render(self) -> str {
@@ -93,11 +95,11 @@ fn inspector_renders_fields() -> bool {
     let rendered = inspect_fields("Project", fields)
     let compiler = inspect_compiler_state("parse", "frontend", 4_usize, "collecting imports")
     ret assert(str_contains(rendered, "Project"))
-        && assert(str_contains(rendered, "name"))
-        && assert(str_contains(rendered, "bootstrap"))
-        && assert(str_contains(compiler, "Compiler State"))
-        && assert(str_contains(compiler, "symbols"))
-        && assert(str_contains(compiler, "collecting imports"))
+    && assert(str_contains(rendered, "name"))
+    && assert(str_contains(rendered, "bootstrap"))
+    && assert(str_contains(compiler, "Compiler State"))
+    && assert(str_contains(compiler, "symbols"))
+    && assert(str_contains(compiler, "collecting imports"))
 }
 
 fn usize_to_str(value: usize) -> str {

@@ -37,11 +37,15 @@ pub struct StageProgress {
 
 impl for ProgressBar {
     pub fn new(width: usize) -> Self {
-        ret Self{width, "=", "-"}
+        ret Self {
+            width, "=", "-"
+        }
     }
 
     pub fn with_chars(width: usize, complete: str, pending: str) -> Self {
-        ret Self{width, complete, pending}
+        ret Self {
+            width, complete, pending
+        }
     }
 
     pub fn render(self, current: usize, total: usize) -> str {
@@ -49,7 +53,11 @@ impl for ProgressBar {
             ret "[" + repeat(self.pending, self.width) + "] 0%"
         }
 
-        let clamped = if current > total { total } else { current }
+        let clamped = if current > total {
+            total
+        } else {
+            current
+        }
         let filled = clamped * self.width / total
         let percent = clamped * 100_usize / total
         ret "[" + repeat(self.complete, filled) + repeat(self.pending, self.width - filled) + "] " + Debug::fmt(percent) + "%"
@@ -66,26 +74,30 @@ impl for ProgressBar {
 
 impl for ProgressTask {
     pub fn new(label: str, current: usize, total: usize) -> Self {
-        ret Self{label, label, current, total}
+        ret Self {
+            label, label, current, total
+        }
     }
 
     pub fn with_id(id: str, label: str, current: usize, total: usize) -> Self {
-        ret Self{id, label, current, total}
+        ret Self {
+            id, label, current, total
+        }
     }
 
-    pub fn set_current(self: mut Self, current: usize) -> () {
+    pub fn set_current(self: mut Self, current: usize) ->() {
         self.current = current
-        ret ()
+        ret()
     }
 
-    pub fn set_total(self: mut Self, total: usize) -> () {
+    pub fn set_total(self: mut Self, total: usize) ->() {
         self.total = total
-        ret ()
+        ret()
     }
 
-    pub fn advance(self: mut Self, step: usize) -> () {
+    pub fn advance(self: mut Self, step: usize) ->() {
         self.current = self.current + step
-        ret ()
+        ret()
     }
 
     pub fn render(self, width: usize) -> str {
@@ -111,22 +123,24 @@ impl for ProgressTask {
 
 impl for ProgressView {
     pub fn new(title: str, width: usize) -> Self {
-        ret Self{title, width, Vec[ProgressTask]::new()}
+        ret Self {
+            title, width, Vec[ProgressTask]::new()
+        }
     }
 
-    pub fn add_task(self: mut Self, label: str, current: usize, total: usize) -> () {
+    pub fn add_task(self: mut Self, label: str, current: usize, total: usize) ->() {
         self.tasks.push(ProgressTask::new(label, current, total))
-        ret ()
+        ret()
     }
 
-    pub fn add_task_with_id(self: mut Self, id: str, label: str, current: usize, total: usize) -> () {
+    pub fn add_task_with_id(self: mut Self, id: str, label: str, current: usize, total: usize) ->() {
         self.tasks.push(ProgressTask::with_id(id, label, current, total))
-        ret ()
+        ret()
     }
 
-    pub fn add_stage(self: mut Self, stage: StageProgress) -> () {
+    pub fn add_stage(self: mut Self, stage: StageProgress) ->() {
         self.add_task_with_id(stage.id(), stage.label(), stage.current(), stage.total())
-        ret ()
+        ret()
     }
 
     pub fn update_task(self: mut Self, index: usize, current: usize, total: usize) -> Result[bool, str] {
@@ -274,11 +288,15 @@ impl for ProgressView {
 
 impl for StageProgress {
     pub fn new(id: str, label: str, body: str, current: usize, total: usize) -> Self {
-        ret Self{id, label, body, current, total, ""}
+        ret Self {
+            id, label, body, current, total, ""
+        }
     }
 
     pub fn with_footer(id: str, label: str, body: str, current: usize, total: usize, footer: str) -> Self {
-        ret Self{id, label, body, current, total, footer}
+        ret Self {
+            id, label, body, current, total, footer
+        }
     }
 
     pub fn id(self) -> str {
@@ -305,29 +323,29 @@ impl for StageProgress {
         ret self.footer
     }
 
-    pub fn set_current(self: mut Self, current: usize) -> () {
+    pub fn set_current(self: mut Self, current: usize) ->() {
         self.current = current
-        ret ()
+        ret()
     }
 
-    pub fn set_total(self: mut Self, total: usize) -> () {
+    pub fn set_total(self: mut Self, total: usize) ->() {
         self.total = total
-        ret ()
+        ret()
     }
 
-    pub fn set_body(self: mut Self, body: str) -> () {
+    pub fn set_body(self: mut Self, body: str) ->() {
         self.body = body
-        ret ()
+        ret()
     }
 
-    pub fn set_footer(self: mut Self, footer: str) -> () {
+    pub fn set_footer(self: mut Self, footer: str) ->() {
         self.footer = footer
-        ret ()
+        ret()
     }
 
-    pub fn advance(self: mut Self, step: usize) -> () {
+    pub fn advance(self: mut Self, step: usize) ->() {
         self.current = self.current + step
-        ret ()
+        ret()
     }
 
     pub fn is_done(self) -> bool {
@@ -378,8 +396,8 @@ fn progress_bar_renders_percentages() -> bool {
     let half = bar.render(5_usize, 10_usize)
     let over = bar.render(12_usize, 10_usize)
     ret assert(str_contains(half, "50%"))
-        && assert(str_contains(over, "100%"))
-        && assert(str_contains(bar.render_with_label(2_usize, 4_usize, "compile"), "compile"))
+    && assert(str_contains(over, "100%"))
+    && assert(str_contains(bar.render_with_label(2_usize, 4_usize, "compile"), "compile"))
 }
 
 #attr(test)
@@ -399,11 +417,11 @@ fn progress_view_renders_tasks_and_summary() -> bool {
     stages.push(StageProgress::new("frontend-stage", "frontend", "parse", 5_usize, 5_usize))
     stages.push(StageProgress::new("backend-stage", "backend", "link", 1_usize, 1_usize))
     ret assert(str_contains(rendered, "frontend"))
-        && assert(str_contains(rendered, "backend"))
-        && assert(str_contains(rendered, "link"))
-        && assert(str_contains(summary, "3/3 done"))
-        && assert(str_contains(themed, "Build"))
-        && assert(str_contains(stage_summary(stages), "2/2 done"))
+    && assert(str_contains(rendered, "backend"))
+    && assert(str_contains(rendered, "link"))
+    && assert(str_contains(summary, "3/3 done"))
+    && assert(str_contains(themed, "Build"))
+    && assert(str_contains(stage_summary(stages), "2/2 done"))
 }
 
 fn str_contains(value: str, needle: str) -> bool {
