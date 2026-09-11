@@ -1483,6 +1483,46 @@ int32_t encore_proc_run(encore_str command) {
 #endif
 }
 
+#ifdef _WIN32
+/* The CRT flattens argv without quoting. Preserve every argument, including
+   empty strings, embedded quotes and trailing backslashes, for the child CRT. */
+static int32_t encore_windows_spawn_wait(const char *program, char *const *argv) {
+    size_t argc = 0;
+    while (argv[argc] != NULL) argc += 1;
+    char **quoted = calloc(argc + 1, sizeof(char *));
+    if (quoted == NULL) return -1;
+    int32_t result = -1;
+    for (size_t index = 0; index < argc; index += 1) {
+        size_t length = strlen(argv[index]);
+        if (length > (SIZE_MAX - 3) / 2) goto cleanup;
+        quoted[index] = malloc(length * 2 + 3);
+        if (quoted[index] == NULL) goto cleanup;
+        size_t used = 0, slashes = 0;
+        quoted[index][used++] = '"';
+        for (const char *cursor = argv[index]; ; cursor += 1) {
+            if (*cursor == '\\') { slashes += 1; continue; }
+            if (*cursor == '"' || *cursor == '\0') {
+                size_t count = slashes * 2 + (*cursor == '"' ? 1 : 0);
+                while (count > 0) { quoted[index][used++] = '\\'; count -= 1; }
+                slashes = 0;
+                if (*cursor == '\0') break;
+            } else {
+                while (slashes > 0) { quoted[index][used++] = '\\'; slashes -= 1; }
+            }
+            quoted[index][used++] = *cursor;
+        }
+        quoted[index][used++] = '"';
+        quoted[index][used] = '\0';
+    }
+    intptr_t status = _spawnvp(_P_WAIT, program, (const char *const *)quoted);
+    if (status >= 0 && status <= INT32_MAX) result = (int32_t)status;
+cleanup:
+    for (size_t index = 0; index < argc; index += 1) free(quoted[index]);
+    free(quoted);
+    return result;
+}
+#endif
+
 static int32_t encore_proc_run_args_impl(encore_str program, size_t raw_args, size_t args_len, const char *output_path) {
     encore_str *args = (encore_str *)(uintptr_t)raw_args;
     char *program_c = encore_to_cstr(program);
@@ -1504,8 +1544,7 @@ static int32_t encore_proc_run_args_impl(encore_str program, size_t raw_args, si
     int32_t result = -1;
 #ifdef _WIN32
     if (output_path == NULL) {
-        intptr_t status = _spawnvp(_P_WAIT, program_c, (const char *const *)argv);
-        if (status >= 0 && status <= INT32_MAX) result = (int32_t)status;
+        result = encore_windows_spawn_wait(program_c, argv);
     } else {
         /* _dup2 changes process-wide descriptors and races when several Encore
            workers capture children concurrently. Give CreateProcess private
@@ -1668,8 +1707,7 @@ encore_str encore_proc_command_output_parts(encore_str program, size_t raw_args,
     int capture_fd = _fileno(capture), saved_stdout = _dup(1), saved_stderr = _dup(2);
     if (capture_fd >= 0 && saved_stdout >= 0 && saved_stderr >= 0 &&
         _dup2(capture_fd, 1) == 0 && _dup2(capture_fd, 2) == 0) {
-        intptr_t status = _spawnvp(_P_WAIT, argv[0], (const char *const *)argv);
-        if (status >= 0 && status <= INT32_MAX) g_proc_output_status = (int32_t)status;
+        g_proc_output_status = encore_windows_spawn_wait(argv[0], argv);
     }
     fflush(stdout); fflush(stderr);
     if (saved_stdout >= 0) { _dup2(saved_stdout, 1); _close(saved_stdout); }
