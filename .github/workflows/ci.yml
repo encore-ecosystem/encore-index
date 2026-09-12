@@ -103,7 +103,11 @@ jobs:
               "$compiler" sync
               "$compiler" check
               "$compiler" test
-              "$compiler" build
+              if test -f src/main.enq; then
+                "$compiler" build
+              else
+                echo "Library package: checked above; executable test harnesses built by encore test"
+              fi
             )
             echo "::endgroup::"
           done < <(find target/new-packages -mindepth 1 -maxdepth 1 -type d | LC_ALL=C sort)
