@@ -98,7 +98,14 @@ jobs:
               echo "::endgroup::"
               continue
             fi
+            # Preserve the source layout for immutable legacy archives whose
+            # tests inspect cwd (std 0.0.0). No tests or archive bytes are changed.
+            package_name=$(python3 -c 'import sys,tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["project"]["name"])' "$package/encore.toml")
+            verification_root="$PWD/target/package-checks/$(basename "$package")/packages/$package_name"
+            mkdir -p "$verification_root"
+            cp -R "$package/." "$verification_root/"
             (
+              package=$verification_root
               cd "$package"
               "$compiler" sync
               "$compiler" check

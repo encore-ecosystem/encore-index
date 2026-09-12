@@ -13,6 +13,18 @@
       "archive": "https://github.com/encore-ecosystem/encore-index/releases/download/std-v0.0.0-neumann/std-0.0.0.tar.gz",
       "checksum": "3eb888e4e1596945f8b51d30919d414ecd69d182b26729d37b66670a2c6e852e",
       "yanked": false
+    },
+    {
+      "version": "0.0.1",
+      "encore": ">=0.0.0",
+      "epoch": "neumann",
+      "nametag": "neumann",
+      "release": "0.0.1-neumann",
+      "commit": "9c062a0b906b7df5f4abac862e5a32ea3468c223",
+      "subdir": "packages/std",
+      "archive": "https://github.com/encore-ecosystem/encore-index/releases/download/std-v0.0.1-neumann/std-0.0.1.tar.gz",
+      "checksum": "0e48caf5ace11a51b84c1c509536f7d3a4f880e5f5f85d40c6f598d9d0c3c73c",
+      "yanked": false
     }
   ]
 }
