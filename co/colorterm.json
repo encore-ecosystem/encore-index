@@ -1,1 +1,18 @@
-{"name":"colorterm","versions":[{"version":"1.0.0","archive":"https://github.com/encore-ecosystem/encore-index/releases/download/packages-v0.1.4/colorterm-1.0.0.tar.gz","checksum":"62042a0f529cd57af1b5f89001c264f343bd4012fae52d4ed8ff19e99d330f01","yanked":false}]}
+{
+  "name": "colorterm",
+  "repository": "https://github.com/encore-ecosystem/encore-index",
+  "versions": [
+    {
+      "version": "0.0.0",
+      "encore": ">=0.0.0",
+      "epoch": "neumann",
+      "nametag": "neumann",
+      "release": "0.0.0-neumann",
+      "commit": "331ff20566ed68538dd99bdf28554dc10362bb29",
+      "subdir": "packages/colorterm",
+      "archive": "https://github.com/encore-ecosystem/encore-index/releases/download/colorterm-v0.0.0-neumann/colorterm-0.0.0.tar.gz",
+      "checksum": "f71169f22a6eaf8fda7a91dbea12fa42d7a324906ee9ead3d6837d672411ef70",
+      "yanked": false
+    }
+  ]
+}

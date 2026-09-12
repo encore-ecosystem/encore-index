@@ -1,1 +1,18 @@
-{"name":"log","versions":[{"version":"1.0.0","archive":"https://github.com/encore-ecosystem/encore-index/releases/download/packages-v0.1.4/log-1.0.0.tar.gz","checksum":"3f3a01b2aef6a7454b40d50169c78a5417b0f58300c74b2ab6235aecdbb19b94","yanked":false}]}
+{
+  "name": "log",
+  "repository": "https://github.com/encore-ecosystem/encore-index",
+  "versions": [
+    {
+      "version": "0.0.0",
+      "encore": ">=0.0.0",
+      "epoch": "neumann",
+      "nametag": "neumann",
+      "release": "0.0.0-neumann",
+      "commit": "331ff20566ed68538dd99bdf28554dc10362bb29",
+      "subdir": "packages/log",
+      "archive": "https://github.com/encore-ecosystem/encore-index/releases/download/log-v0.0.0-neumann/log-0.0.0.tar.gz",
+      "checksum": "34ae812c6668433ce339e57369339163fff19b76a228a28ce21eb1646576e07d",
+      "yanked": false
+    }
+  ]
+}

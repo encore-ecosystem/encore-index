@@ -1,6 +1,6 @@
 [project]
 name = "std"
-version = "0.0.0"
+version = "0.0.1"
 repository = "https://github.com/encore-ecosystem/encore-index"
 encore = ">=0.0.0"
 description = "stdlib for Encore language"

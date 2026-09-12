@@ -1,5 +1,5 @@
 {
-  "name": "rich",
+  "name": "argparse",
   "repository": "https://github.com/encore-ecosystem/encore-index",
   "versions": [
     {
@@ -9,9 +9,9 @@
       "nametag": "neumann",
       "release": "0.0.0-neumann",
       "commit": "331ff20566ed68538dd99bdf28554dc10362bb29",
-      "subdir": "packages/rich",
-      "archive": "https://github.com/encore-ecosystem/encore-index/releases/download/rich-v0.0.0-neumann/rich-0.0.0.tar.gz",
-      "checksum": "7af4afb3927e7f8a11017ec77aa1f2831ad294c4ebe9b73466befd025d1016f4",
+      "subdir": "packages/argparse",
+      "archive": "https://github.com/encore-ecosystem/encore-index/releases/download/argparse-v0.0.0-neumann/argparse-0.0.0.tar.gz",
+      "checksum": "b4fcba6b5ef53d6d64c15baa5e02bf27082cbba432ea76b33365ea91f80a374a",
       "yanked": false
     }
   ]

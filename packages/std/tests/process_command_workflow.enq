@@ -10,8 +10,13 @@ fn main() -> u32 {
         ret 1_u32
     }
 
-    let located = Command::new("pwd").cwd(".").output()
-    if !assert(located.success()) || !assert(located.text().contains("packages/std")) {
+    let parent = Command::new("pwd").output()
+    if !assert(parent.success()) || !assert(parent.text().len() > 1_usize) {
+        ret 1_u32
+    }
+    let expected = parent.text().slice(0_usize, parent.text().len() - 1_usize) + "/src\n"
+    let located = Command::new("pwd").cwd("src").output()
+    if !assert(located.success()) || !assert(located.text() == expected) {
         ret 1_u32
     }
     ret 0_u32
