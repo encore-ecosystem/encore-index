@@ -1,1 +1,18 @@
-{"name":"toml","versions":[{"version":"1.0.0","archive":"https://github.com/encore-ecosystem/encore-index/releases/download/packages-v0.1.4/toml-1.0.0.tar.gz","checksum":"4b9a249ce07f2dd4325734aede4d7ac0cc8929de4612ecb257babed8e31c548c","yanked":false}]}
+{
+  "name": "toml",
+  "repository": "https://github.com/encore-ecosystem/encore-index",
+  "versions": [
+    {
+      "version": "0.0.0",
+      "encore": ">=0.0.0",
+      "epoch": "neumann",
+      "nametag": "neumann",
+      "release": "0.0.0-neumann",
+      "commit": "331ff20566ed68538dd99bdf28554dc10362bb29",
+      "subdir": "packages/toml",
+      "archive": "https://github.com/encore-ecosystem/encore-index/releases/download/toml-v0.0.0-neumann/toml-0.0.0.tar.gz",
+      "checksum": "e7ca00b45ad6e56ba699582fb3d3653f9ca552da6a1252e6f9598660fef631ca",
+      "yanked": false
+    }
+  ]
+}

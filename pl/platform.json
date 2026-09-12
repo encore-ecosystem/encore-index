@@ -1,5 +1,5 @@
 {
-  "name": "rich",
+  "name": "platform",
   "repository": "https://github.com/encore-ecosystem/encore-index",
   "versions": [
     {
@@ -9,9 +9,9 @@
       "nametag": "neumann",
       "release": "0.0.0-neumann",
       "commit": "331ff20566ed68538dd99bdf28554dc10362bb29",
-      "subdir": "packages/rich",
-      "archive": "https://github.com/encore-ecosystem/encore-index/releases/download/rich-v0.0.0-neumann/rich-0.0.0.tar.gz",
-      "checksum": "7af4afb3927e7f8a11017ec77aa1f2831ad294c4ebe9b73466befd025d1016f4",
+      "subdir": "packages/platform",
+      "archive": "https://github.com/encore-ecosystem/encore-index/releases/download/platform-v0.0.0-neumann/platform-0.0.0.tar.gz",
+      "checksum": "68d03c5aa50d074f6001ed1189deb2c6671b5b5dfa7d9ed28b461cd1261f1405",
       "yanked": false
     }
   ]
