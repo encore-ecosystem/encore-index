@@ -2,6 +2,7 @@
 
 import core::fmt::Debug
 import core::option::Option
+import core::result::Result
 import core::vec::Vec
 
 import encore::analyzer::{AnalyzerConfig, analyze_source_document, analyzer_frontend_diagnostics}
@@ -15,22 +16,31 @@ import encore::frontend::FrontendCallable
 import encore::frontend::FrontendDiagnostic
 import encore::frontend::FrontendDocument
 import encore::frontend::FrontendSymbol
+import encore::frontend::Lexer
 import encore::frontend::PreparedLightweightModule
 import encore::frontend::PreparedSemanticWorkspace
 import encore::frontend::SyntaxDocument
 import encore::frontend::Token
 import encore::frontend::TokenType
+import encore::frontend::analysis_database::MemberDetails
 import encore::frontend::check_prepared_semantic_workspace
+import encore::frontend::cursor_expects_type
+import encore::frontend::cursor_symbol_path
+import encore::frontend::editor_queries::cursor_call_context
+import encore::frontend::editor_queries::{cursor_associated_owner, cursor_associated_context}
 import encore::frontend::prepare_cached_lightweight_module
 import encore::frontend::prepare_lightweight_module
 import encore::frontend::prepare_semantic_workspace_from_sources
-import encore::frontend::tooling_tokens
-import encore::project::load_entry_workspace_source
+import encore::frontend::{DefinitionKind, plan_import_insertion}
+import encore::frontend::{HirDefinition, DefinitionNamespace, ModuleImportTarget}
+import encore::frontend::{cursor_member_context, MemberCompletionContext, SemanticBinding, SemanticMember}
 import encore::project::read_project_tooling_config_at
-import encore::project::resolve_index_dependency
+import encore::project::{try_load_cached_entry_workspace_source, ProjectWorkspace, ProjectFailure}
+import encore::project::{try_read_project_manifest, project_manifest_dependencies, try_cached_project_dependency_root}
 import encore::version::compiler_release_version
 import json::Json
 import json::field
+import mod::actions::{diagnostic_actions, ranges_overlap, versioned_edit}
 import mod::cache::{load, save}
 import mod::paths::{uri_to_path, path_to_uri, join_path, ends_with, starts_with}
 import mod::protocol::{read_lsp_message, send_response, send_error, send_notification, send_request, json_get, json_get_str, json_usize, json_number_usize, make_range, range_between, location_json, text_edit, bool_provider, rename_provider, signature_help_provider, semantic_tokens_provider,}
@@ -52,6 +62,10 @@ extern fn encore_fs_read_dir(path: str) -> str
 extern fn encore_strset_new() -> usize
 extern fn encore_strset_insert(set: usize, value: str) -> bool
 extern fn encore_strset_free(set: usize) ->()
+extern fn encore_strmap_new() -> usize
+extern fn encore_strmap_put(map: usize, key: str, value: usize) ->()
+extern fn encore_strmap_get(map: usize, key: str) -> usize
+extern fn encore_strmap_free(map: usize) ->()
 
 struct Document {
     uri: str
@@ -112,6 +126,7 @@ struct ProjectGraphSource {
 struct PreparedProjectGraph {
     sources: Vec[ProjectGraphSource]
     modules: Vec[PreparedLightweightModule]
+    diagnostics: Vec[FrontendDiagnostic]
 }
 
 struct ProjectGraphState {
@@ -121,19 +136,22 @@ struct ProjectGraphState {
     generation: usize
     ready: bool
     sources: Vec[ProjectGraphSource]
+    diagnostics: Vec[FrontendDiagnostic]
 }
 
 struct DocumentRevision {
     uri: str
     generation: usize
-}
-
-struct InferredBinding {
-    name: str
-    typ: str
+    client_version: Json
 }
 
 struct ProjectRoot {
+    root: str
+    name: str
+}
+
+struct AutoimportScope {
+    owner: str
     root: str
     name: str
 }
@@ -170,6 +188,7 @@ struct ResolvedReference {
     range: Json
     hover: str
     callable: Option[FrontendCallable]
+    rename_id: str
 }
 
 struct ServerState {
@@ -197,6 +216,18 @@ struct ServerState {
     cache_enabled: bool
     cache_root: str
     completion_documents: Vec[Document]
+    semantic_token_cache: Vec[SemanticTokenCache]
+    resolve_completion_documentation: bool
+    autoimport_scopes: Vec[AutoimportScope]
+    supports_document_changes: bool
+}
+
+struct SemanticTokenCache {
+    uri: str
+    generation: usize
+    token_count: usize
+    symbol_count: usize
+    response: Json
 }
 
 impl for Document {
@@ -236,7 +267,11 @@ impl for ServerState {
                 encore_os_getenv("ENCORE_LSP_CACHE_DIR")
             }
             ,
-            Vec[Document]::new()
+            Vec[Document]::new(),
+            Vec[SemanticTokenCache]::new(),
+            false,
+            Vec[AutoimportScope]::new(),
+            false
         }
     }
 
@@ -419,7 +454,9 @@ fn analysis_worker_count() -> usize {
     if parallelism <= 1_usize {
         ret 1_usize
     }
-    ret parallelism - 1_usize
+    // Interactive tooling shares the machine with the editor and build tools.
+    // Explicit ENCORE_LSP_JOBS / initialization options still take precedence.
+    ret min_usize(4_usize,(parallelism + 1_usize) / 2_usize)
 }
 
 fn configured_usize(name: str, fallback: usize) -> usize {
@@ -482,7 +519,27 @@ fn check_semantic_job(prepared: sending PreparedSemanticWorkspace) -> sending Ve
 }
 
 fn prepare_project_graph(root: str, entry: str, source: str) -> sending PreparedProjectGraph {
-    let workspace = load_entry_workspace_source(Path::new(root), Path::new(entry), source)
+    let mut diagnostics = Vec[FrontendDiagnostic]::new()
+    match try_load_cached_entry_workspace_source(Path::new(root), Path::new(entry), source) {
+        Result[ProjectWorkspace, ProjectFailure]::Ok(workspace) => {
+            ret prepare_loaded_project_graph(workspace)
+        }
+        Result[ProjectWorkspace, ProjectFailure]::Err(failure) => {
+            diagnostics.push(FrontendDiagnostic::new(1_usize, failure.code, failure.message,
+                    0_usize, 0_usize, 1_usize,))
+            ret PreparedProjectGraph {
+                Vec[ProjectGraphSource]::new(),
+                Vec[PreparedLightweightModule]::new(), diagnostics
+            }
+        }
+    }
+    ret PreparedProjectGraph {
+        Vec[ProjectGraphSource]::new(), Vec[PreparedLightweightModule]::new(), diagnostics
+    }
+}
+
+fn prepare_loaded_project_graph(workspace: ProjectWorkspace) -> sending PreparedProjectGraph {
+    let diagnostics = Vec[FrontendDiagnostic]::new()
     let mut sources = Vec[ProjectGraphSource]::new()
     let mut prepared = Vec[PreparedLightweightModule]::new()
     for module in workspace.loaded_modules() {
@@ -494,7 +551,7 @@ fn prepare_project_graph(root: str, entry: str, source: str) -> sending Prepared
         prepared.push(prepare_lightweight_module(module.analysis_name(), module.path(), module.source_text()))
     }
     ret PreparedProjectGraph {
-        sources, prepared
+        sources, prepared, diagnostics
     }
 }
 
@@ -539,31 +596,8 @@ fn import_fingerprint(source: str) -> u64 {
     ret imports.hash()
 }
 
-fn project_has_unresolved_index_dependency(root: str) -> bool {
-    let manifest = read_file(join_path(root, "encore.toml"))
-    let mut cursor = 0_usize
-    loop {
-        let relative = find_substring(manifest.slice(cursor, manifest.len() - cursor), "\"index@")
-        if relative >= manifest.len() - cursor {
-            break
-        }
-        let start = cursor + relative + 1_usize
-        let tail = manifest.slice(start, manifest.len() - start)
-        let end = find_char(tail, "\"", 0_usize)
-        if end >= tail.len() {
-            ret true
-        }
-        let dependency = tail.slice(0_usize, end)
-        if resolve_index_dependency(dependency, Path::new(root), false) == "" {
-            ret true
-        }
-        cursor = start + end + 1_usize
-    }
-    ret false
-}
-
 fn queue_project_graph(state: mut ServerState, root: str, entry: str, source: str) ->() {
-    if root == "" || entry == "" || project_has_unresolved_index_dependency(root) {
+    if root == "" || entry == "" {
         ret()
     }
     let fingerprint = import_fingerprint(source)
@@ -578,7 +612,7 @@ fn queue_project_graph(state: mut ServerState, root: str, entry: str, source: st
                     let generation = state.next_generation
                     state.next_generation += 1_usize
                     state.project_graphs.set(index, ProjectGraphState {
-                            root, entry, fingerprint, generation, false, Vec[ProjectGraphSource]::new()
+                            root, entry, fingerprint, generation, false, Vec[ProjectGraphSource]::new(), Vec[FrontendDiagnostic]::new()
                         }
                         ,)
                     state.project_graph_queue.push(ProjectGraphRequest {
@@ -596,7 +630,7 @@ fn queue_project_graph(state: mut ServerState, root: str, entry: str, source: st
     let generation = state.next_generation
     state.next_generation += 1_usize
     state.project_graphs.push(ProjectGraphState {
-            root, entry, fingerprint, generation, false, Vec[ProjectGraphSource]::new()
+            root, entry, fingerprint, generation, false, Vec[ProjectGraphSource]::new(), Vec[FrontendDiagnostic]::new()
         }
         ,
     )
@@ -654,7 +688,7 @@ fn advance_document_generation(state: mut ServerState, uri: str) -> usize {
             Some(revision) => {
                 if revision.uri == uri {
                     state.document_revisions.set(index, DocumentRevision {
-                            uri, generation
+                            uri, generation, revision.client_version
                         }
                         ,
                     )
@@ -667,11 +701,36 @@ fn advance_document_generation(state: mut ServerState, uri: str) -> usize {
         index += 1_usize
     }
     state.document_revisions.push(DocumentRevision {
-            uri, generation
+            uri, generation, Json::Null
         }
         ,
     )
     ret generation
+}
+
+fn set_client_document_version(state: mut ServerState, uri: str, version: Json) ->() {
+    let mut index = 0_usize
+    for revision in state.document_revisions {
+        if revision.uri == uri {
+            state.document_revisions.set(index, DocumentRevision {
+                    uri, revision.generation, version
+                }
+                ,
+            )
+            ret()
+        }
+        index += 1_usize
+    }
+    ret()
+}
+
+fn client_document_version(state: ServerState, uri: str) -> Json {
+    for revision in state.document_revisions {
+        if revision.uri == uri {
+            ret revision.client_version
+        }
+    }
+    ret Json::Null
 }
 
 fn remove_queued_analysis_for_uri(state: mut ServerState, uri: str) ->() {
@@ -737,6 +796,9 @@ fn project_semantic_workspace(state: ServerState, uri: str, module_name: str,
     let entry = uri_to_path(uri)
     for graph in state.project_graphs {
         if graph.entry == entry && graph.ready {
+            if graph.diagnostics.len() > 0_usize {
+                ret Option[PreparedSemanticWorkspace]::None
+            }
             let mut sources = Vec[AnalysisSourceSnapshot]::new()
             let mut replaced = false
             for graph_source in graph.sources {
@@ -899,8 +961,7 @@ fn schedule_open_semantic_analysis(state: mut ServerState) ->() {
         && semantic_result_for_uri(state, doc.uri).is_none()
         && project_graph_ready_for_uri(state, doc.uri)
         && doc.analysis.parsed
-        && doc.analysis.diagnostics.len() == 0_usize
-        && !source_has_incomplete_import(doc.text) {
+        && doc.analysis.diagnostics.len() == 0_usize {
             let _scheduled = queue_semantic_analysis(state, doc.uri)
         }
     }
@@ -923,7 +984,7 @@ fn finish_project_graph_task(state: mut ServerState, task: ProjectGraphTask) ->(
                 if graph.entry == task.entry && graph.generation == task.generation {
                     state.project_graphs.set(index, ProjectGraphState {
                             graph.root, graph.entry, graph.import_fingerprint, graph.generation, true,
-                            graph_result.sources
+                            graph_result.sources, graph_result.diagnostics
                         }
                         ,)
                     break
@@ -1007,7 +1068,7 @@ fn finish_analysis_task(state: mut ServerState, task: AnalysisTask) ->() {
         ret()
     }
     let document = prepared.document()
-    if source_has_incomplete_import(task.job.text) {
+    if !document.parsed {
         state.analysis.remove_module(task.job.module_name)
         if task.job.workspace {
             state.upsert_ready_workspace_document(task.job.uri, task.job.text, document)
@@ -1029,7 +1090,10 @@ fn finish_analysis_task(state: mut ServerState, task: AnalysisTask) ->() {
     if !task.job.workspace {
         match state.document(task.job.uri) {
             Some(doc) => {
-                if !source_has_incomplete_import(doc.text)
+                // The workspace loader is the strict compiler entry point:
+                // never pass a buffer with known syntax errors to it.
+                // The lightweight document now includes recoverable parser diagnostics.
+                if doc.analysis.parsed && doc.analysis.diagnostics.len() == 0_usize
                 && tolerant_import_diagnostics(state, doc).len() == 0_usize {
                     match project_root_for_path(uri_to_path(doc.uri)) {
                         Some(root) => queue_project_graph(state, root, uri_to_path(doc.uri), doc.text)
@@ -1308,11 +1372,26 @@ fn handle_message(state: mut ServerState, message: Json) -> bool {
         ret true
     }
     if method == "textDocument/rename" {
-        send_response(json_get(message, "id"), rename_result(state, json_get(message, "params")))
+        match rename_result(state, json_get(message, "params")) {
+            Ok(edit) => {
+                send_response(json_get(message, "id"), edit)
+            }
+            Err(reason) => {
+                send_error(json_get(message, "id"), "-32803", reason)
+            }
+        }
         ret true
     }
     if method == "textDocument/completion" {
         send_response(json_get(message, "id"), completion_result(state, json_get(message, "params")))
+        ret true
+    }
+    if method == "completionItem/resolve" {
+        send_response(json_get(message, "id"), resolve_completion_item(state, json_get(message, "params")))
+        ret true
+    }
+    if method == "textDocument/codeAction" {
+        send_response(json_get(message, "id"), code_action_result(state, json_get(message, "params")))
         ret true
     }
     if method == "textDocument/inlayHint" {
@@ -1382,6 +1461,21 @@ fn handle_message(state: mut ServerState, message: Json) -> bool {
 }
 
 fn configure_server(state: mut ServerState, params: Json) ->() {
+    let workspace = json_get(json_get(params, "capabilities"), "workspace")
+    state.supports_document_changes = json_get(json_get(workspace, "workspaceEdit"), "documentChanges").as_bool().unwrap_or(false)
+    let completion = json_get(json_get(json_get(params, "capabilities"), "textDocument"), "completion")
+    let support = json_get(json_get(completion, "completionItem"), "resolveSupport")
+    match json_get(support, "properties").as_array() {
+        Some(properties) => {
+            for property in properties {
+                if property.as_str().unwrap_or("") == "documentation" {
+                    state.resolve_completion_documentation = true
+                }
+            }
+        }
+        None => {
+        }
+    }
     let options = json_get(params, "initializationOptions")
     match options.as_object() {
         Some(_fields) => {
@@ -1413,6 +1507,7 @@ fn index_workspace_roots_shallow(state: mut ServerState) ->() {
     state.workspace_documents = Vec[Document]::new()
     state.workspace_projects = Vec[ProjectRoot]::new()
     state.indexed_project_roots = Vec[str]::new()
+    state.autoimport_scopes = Vec[AutoimportScope]::new()
     let mut root_index = 0_usize
     while root_index < state.workspace_roots.len() {
         match state.workspace_roots.get(root_index) {
@@ -1437,6 +1532,7 @@ fn handle_did_open(state: mut ServerState, params: Json) ->() {
     if uri != "" {
         ensure_workspace_for_uri(state, uri)
         queue_open_analysis(state, uri, text, source_matches_disk(uri, text))
+        set_client_document_version(state, uri, json_get(text_document, "version"))
     }
     ret()
 }
@@ -1449,6 +1545,7 @@ fn handle_did_change(state: mut ServerState, params: Json) ->() {
     if uri != "" {
         ensure_workspace_for_uri(state, uri)
         queue_open_analysis(state, uri, text, false)
+        set_client_document_version(state, uri, json_get(text_document, "version"))
     }
     ret()
 }
@@ -1457,6 +1554,7 @@ fn handle_did_close(state: mut ServerState, params: Json) ->() {
     let text_document = json_get(params, "textDocument")
     let uri = json_get_str(text_document, "uri", "")
     if uri != "" {
+        clear_semantic_token_cache(state, uri)
         advance_document_generation(state, uri)
         remove_queued_analysis_for_uri(state, uri)
         state.remove_document(uri)
@@ -1574,6 +1672,7 @@ fn handle_initialize_workspace(state: mut ServerState, params: Json) ->() {
     state.workspace_documents = Vec[Document]::new()
     state.workspace_projects = Vec[ProjectRoot]::new()
     state.indexed_project_roots = Vec[str]::new()
+    state.autoimport_scopes = Vec[AutoimportScope]::new()
     state.discovered_workspace_roots = Vec[str]::new()
     ret()
 }
@@ -1664,6 +1763,7 @@ fn handle_project_files_changed(state: mut ServerState) ->() {
     state.project_graphs = Vec[ProjectGraphState]::new()
     state.workspace_projects = Vec[ProjectRoot]::new()
     state.indexed_project_roots = Vec[str]::new()
+    state.autoimport_scopes = Vec[AutoimportScope]::new()
     state.discovered_workspace_roots = Vec[str]::new()
     state.completion_documents = Vec[Document]::new()
     index_workspace_roots_shallow(state)
@@ -1705,8 +1805,51 @@ fn ensure_workspace_for_uri(state: mut ServerState, uri: str) ->() {
                 state_add_workspace_project(state, root)
             }
             index_workspace_project_once(state, root)
+            ensure_autoimport_scopes(state, root)
         }
         Option[str]::None => {
+        }
+    }
+    ret()
+}
+
+fn ensure_autoimport_scopes(state: mut ServerState, root: str) ->() {
+    for scope in state.autoimport_scopes {
+        if scope.owner == root {
+            ret()
+        }
+    }
+    state.autoimport_scopes.push(AutoimportScope {
+            root, root, "refrain"
+        }
+        ,
+    )
+    match try_read_project_manifest(Path::new(root)) {
+        Ok(manifest) => {
+            for reference in project_manifest_dependencies(manifest) {
+                match try_cached_project_dependency_root(Path::new(root), reference) {
+                    Ok(dependency) => {
+                        match try_read_project_manifest(dependency) {
+                            Ok(package) => {
+                                let path = dependency.resolve().as_str()
+                                state.autoimport_scopes.push(AutoimportScope {
+                                        root, path, package.name
+                                    }
+                                    ,
+                                )
+                                state_add_workspace_project(state, path)
+                                index_workspace_project_once(state, path)
+                            }
+                            Err(_) => {
+                            }
+                        }
+                    }
+                    Err(_) => {
+                    }
+                }
+            }
+        }
+        Err(_) => {
         }
     }
     ret()
@@ -2020,7 +2163,7 @@ fn initialize_result() -> Json {
     sync_fields.push(field("save", Json::Object(save_fields)))
 
     let mut completion_fields = Vec[(str, Json)]::new()
-    completion_fields.push(field("resolveProvider", Json::Bool(false)))
+    completion_fields.push(field("resolveProvider", Json::Bool(true)))
     completion_fields.push(field("triggerCharacters", completion_trigger_characters()))
 
     let mut capabilities = Vec[(str, Json)]::new()
@@ -2032,6 +2175,7 @@ fn initialize_result() -> Json {
     capabilities.push(field("referencesProvider", Json::Bool(true)))
     capabilities.push(field("documentHighlightProvider", Json::Bool(true)))
     capabilities.push(field("renameProvider", rename_provider()))
+    capabilities.push(field("codeActionProvider", Json::Bool(true)))
     capabilities.push(field("signatureHelpProvider", signature_help_provider()))
     capabilities.push(field("documentSymbolProvider", Json::Bool(true)))
     capabilities.push(field("workspaceSymbolProvider", Json::Bool(true)))
@@ -2171,6 +2315,77 @@ fn workspace_symbol_item(doc: Document, symbol: FrontendSymbol) -> Json {
     ret Json::Object(fields)
 }
 
+fn code_action_result(state: mut ServerState, params: Json) -> Json {
+    let uri = request_uri(params)
+    match json_get(json_get(params, "context"), "only").as_array() {
+        Option[Vec[Json]]::Some(kinds) => {
+            let mut allowed = kinds.len() == 0_usize
+            for kind in kinds {
+                if kind.as_str().unwrap_or("") == "quickfix" {
+                    allowed = true
+                }
+            }
+            if !allowed {
+                ret Json::Array(Vec[Json]::new())
+            }
+        }
+        Option[Vec[Json]]::None => {
+        }
+    }
+    match state.document(uri) {
+        Option[Document]::Some(doc) => {
+            let diagnostics = document_diagnostics_json(state, doc, true)
+            let version = client_document_version(state, uri)
+            let range = json_get(params, "range")
+            let mut actions = diagnostic_actions(uri, version, diagnostics, range)
+            for diagnostic in diagnostics {
+                let code = json_get_str(diagnostic, "code", "")
+                if code != "unknown-type" && code != "unknown-trait" && code != "unknown-variable"
+                && code != "unresolved-call" {
+                    continue
+                }
+                let location = json_get(diagnostic, "range")
+                if !ranges_overlap(location, range) {
+                    continue
+                }
+                let mut query = Vec[(str, Json)]::new()
+                query.push(field("position", json_get(location, "end")))
+                let query_params = Json::Object(query)
+                let name = completion_prefix(doc, query_params)
+                if name == "" {
+                    continue
+                }
+                let mut candidates = Vec[Json]::new()
+                push_autoimport_items(state, candidates, doc, query_params,
+                    code == "unknown-type" || code == "unknown-trait",)
+                for candidate in candidates {
+                    if json_get_str(candidate, "label", "") != name {
+                        continue
+                    }
+                    match json_get(candidate, "additionalTextEdits").as_array() {
+                        Some(edits) => {
+                            let mut related = Vec[Json]::new()
+                            related.push(diagnostic)
+                            let mut action = Vec[(str, Json)]::new()
+                            action.push(field("title", json_get(candidate, "detail")))
+                            action.push(field("kind", Json::String("quickfix")))
+                            action.push(field("diagnostics", Json::Array(related)))
+                            action.push(field("edit", versioned_edit(uri, version, edits)))
+                            actions.push(Json::Object(action))
+                        }
+                        None => {
+                        }
+                    }
+                }
+            }
+            ret Json::Array(actions)
+        }
+        Option[Document]::None => {
+        }
+    }
+    ret Json::Array(Vec[Json]::new())
+}
+
 fn completion_result(state: mut ServerState, params: Json) -> Json {
     let uri = request_uri(params)
     match state.document(uri) {
@@ -2192,6 +2407,46 @@ fn completion_result(state: mut ServerState, params: Json) -> Json {
                 result.push(field("items", Json::Array(items)))
                 ret Json::Object(result)
             }
+            let position = json_get(params, "position")
+            let line = json_number_usize(json_get(position, "line"), 0_usize)
+            let column = request_character_index(doc, line, json_number_usize(json_get(position, "character"), 0_usize))
+            match cursor_associated_context(doc.analysis.tokens, line, column) {
+                Some(context) => {
+                    let visited = encore_strset_new()
+                    index_query_module(state, doc, visited, true)
+                    encore_strset_free(visited)
+                    let query_owner = associated_query_owner(state, doc, context.0)
+                    match state.analysis.associated_owner_type(doc.uri, query_owner) {
+                        Some(receiver) => {
+                            let members = state.analysis.associated_members_for_type(doc.uri, query_owner)
+                            let mut items = semantic_member_completion_items(members, context.1)
+                            for variant in state.analysis.enum_variant_definitions(doc.uri, query_owner) {
+                                if starts_with(variant.name(), context.1) && !completion_item_exists(items, variant.name()) {
+                                    items.push(completion_item(variant.name(), 20_usize, context.0 + "::" + variant.name()))
+                                }
+                            }
+                            let mut result = Vec[(str, Json)]::new()
+                            result.push(field("isIncomplete", Json::Bool(analysis_is_pending(state))))
+                            result.push(field("items", Json::Array(items)))
+                            ret Json::Object(result)
+                        }
+                        None => {
+                        }
+                    }
+                }
+                None => {
+                }
+            }
+            match cursor_member_context(doc.analysis.tokens, line, column) {
+                Some(context) => {
+                    let mut result = Vec[(str, Json)]::new()
+                    result.push(field("isIncomplete", Json::Bool(analysis_is_pending(state))))
+                    result.push(field("items", Json::Array(member_completion_items(state, doc, context))))
+                    ret Json::Object(result)
+                }
+                None => {
+                }
+            }
         }
         None => {
         }
@@ -2203,31 +2458,294 @@ fn completion_result(state: mut ServerState, params: Json) -> Json {
     }
     match state.document(uri) {
         Option[Document]::Some(doc) => {
-            let mut index = 0_usize
-            while index < doc.analysis.symbols.len() {
-                match doc.analysis.symbols.get(index) {
-                    Option[FrontendSymbol]::Some(symbol) => {
-                        if encore_strset_insert(seen, symbol.name) {
-                            items.push(completion_item(symbol.name, symbol_completion_kind(symbol.kind),
-                                    "Encore symbol",))
-                        }
-                    }
-                    Option[FrontendSymbol]::None => {
-                    }
-                }
-                index += 1_usize
-            }
+            push_visible_completion_items(state, items, doc, params, false)
+            push_autoimport_items(state, items, doc, params, false)
         }
         Option[Document]::None => {
         }
     }
-    push_workspace_completion_items(state, items, seen)
     encore_strset_free(seen)
 
     let mut result = Vec[(str, Json)]::new()
     result.push(field("isIncomplete", Json::Bool(analysis_is_pending(state))))
     result.push(field("items", Json::Array(items)))
     ret Json::Object(result)
+}
+
+fn completion_definition_allowed(definition: HirDefinition, types_only: bool) -> bool {
+    if types_only && definition.namespace() != DefinitionNamespace::Type
+    && definition.namespace() != DefinitionNamespace::Trait {
+        ret false
+    }
+    match definition.kind() {
+        DefinitionKind::Method => {
+            ret false
+        }
+        DefinitionKind::Field => {
+            ret false
+        }
+        DefinitionKind::Parameter => {
+            ret false
+        }
+        DefinitionKind::GenericParameter => {
+            ret false
+        }
+        DefinitionKind::Variant => {
+            ret false
+        }
+        _ => {
+            ret true
+        }
+    }
+}
+
+fn definition_completion_item(state: mut ServerState, definition: HirDefinition) -> Json {
+    let origin = document_for_path(state, uri_to_path(definition.source_name()))
+    for symbol in origin.analysis.symbols {
+        if symbol.line == definition.line() && symbol.column == definition.column() {
+            let mut renamed = symbol
+            renamed.name = definition.name()
+            if state.resolve_completion_documentation {
+                ret deferred_symbol_completion_item(origin, renamed)
+            }
+            ret symbol_completion_item(renamed)
+        }
+    }
+    ret completion_item(definition.name(), 6_usize, "Encore declaration")
+}
+
+fn push_visible_completion_items(state: mut ServerState, items: mut Vec[Json], doc: Document,
+    params: Json, types_only: bool,) ->() {
+    let prefix = completion_prefix(doc, params)
+    let seen = encore_strset_new()
+    let source_hash = if state.resolve_completion_documentation {
+        Debug::fmt(doc.text.hash())
+    } else {
+        ""
+    }
+    for item in items {
+        encore_strset_insert(seen, json_get_str(item, "label", ""))
+    }
+    // The outline already contains local declarations and their documentation.
+    // Do not rediscover each one by scanning the document's symbols again.
+    for symbol in doc.analysis.symbols {
+        if symbol.scope == "" && starts_with(symbol.name, prefix)
+        &&(!types_only || is_type_symbol(symbol)) && encore_strset_insert(seen, symbol.name) {
+            if state.resolve_completion_documentation {
+                items.push(deferred_symbol_completion_with_hash(doc, symbol, source_hash))
+            } else {
+                items.push(symbol_completion_item(symbol))
+            }
+        }
+    }
+    push_imported_visible_completion_items(state, items, doc, prefix, types_only, seen)
+    if !types_only {
+        let visited = encore_strset_new()
+        index_query_module(state, doc, visited, true)
+        encore_strset_free(visited)
+        let position = json_get(params, "position")
+        let line = json_number_usize(json_get(position, "line"), 0_usize)
+        let column = request_character_index(doc, line, json_number_usize(json_get(position, "character"), 0_usize))
+        for binding in state.analysis.semantic_bindings_at(doc.uri, line, column) {
+            if !starts_with(binding.name, prefix) {
+                continue
+            }
+            let item = completion_item(binding.name, 6_usize, binding.typ)
+            if encore_strset_insert(seen, binding.name) {
+                items.push(item)
+            } else {
+                let mut index = 0_usize
+                while index < items.len() {
+                    if json_get_str(items.get(index).unwrap_or(Json::Null), "label", "") == binding.name {
+                        items.set(index, item)
+                        break
+                    }
+                    index += 1_usize
+                }
+            }
+        }
+    }
+    encore_strset_free(seen)
+    ret()
+}
+
+fn push_imported_visible_completion_items(state: mut ServerState, items: mut Vec[Json], doc: Document,
+    prefix: str, types_only: bool, seen: usize,) ->() {
+    for request in import_requests_from_doc(doc) {
+        let original_name = last_scope_segment(request.target)
+        let local_name = request.alias.unwrap_or(original_name)
+        if !request.wildcard && !starts_with(local_name, prefix) {
+            continue
+        }
+        match resolve_import_request_uri(state, doc, request) {
+            Some(uri) => {
+                // Only imported modules need a definition map here, not the
+                // potentially huge, still-being-analyzed current document.
+                let imported = document_for_path(state, uri_to_path(uri))
+                let visited = encore_strset_new()
+                index_navigation_module(state, imported, visited)
+                encore_strset_free(visited)
+                for definition in state.analysis.module_exports(imported.uri) {
+                    let label = if request.wildcard {
+                        definition.name()
+                    } else {
+                        local_name
+                    }
+                    if (!request.wildcard && definition.name() != original_name)
+                    || !starts_with(label, prefix) || !completion_definition_allowed(definition, types_only)
+                    || !encore_strset_insert(seen, label) {
+                        continue
+                    }
+                    let original = definition_completion_item(state, definition)
+                    let mut fields = Vec[(str, Json)]::new()
+                    match original.as_object() {
+                        Some(values) => {
+                            for value in values {
+                                if value.0 != "label" {
+                                    fields.push(value)
+                                }
+                            }
+                        }
+                        None => {
+                        }
+                    }
+                    fields.push(field("label", Json::String(label)))
+                    items.push(Json::Object(fields))
+                }
+            }
+            None => {
+            }
+        }
+    }
+    ret()
+}
+
+fn completion_prefix(doc: Document, params: Json) -> str {
+    let position = json_get(params, "position")
+    let line = json_number_usize(json_get(position, "line"), 0_usize)
+    let column = request_character_index(doc, line, json_number_usize(json_get(position, "character"), 0_usize))
+    for token in doc.analysis.tokens {
+        if token.type == TokenType::IDENTIFIER && token.line == line && token.column <= column
+        && column <= token.column + token.value.char_len() {
+            ret token.value.slice(0_usize, column - token.column)
+        }
+    }
+    ret ""
+}
+
+fn push_autoimport_items(state: mut ServerState, items: mut Vec[Json], doc: Document,
+    params: Json, types_only: bool,) ->() {
+    let prefix = completion_prefix(doc, params)
+    if prefix == "" {
+        ret()
+    }
+    match module_ref_for_uri(state, doc.uri) {
+        Some(owner) => {
+            for scope in state.autoimport_scopes {
+                if scope.owner != owner.project_root {
+                    continue
+                }
+                for candidate in state.workspace_documents {
+                    if candidate.uri == doc.uri {
+                        continue
+                    }
+                    let relative = path_relative_to(join_path(scope.root, "src"), uri_to_path(candidate.uri))
+                    if relative == "" {
+                        continue
+                    }
+                    let current = document_for_path(state, uri_to_path(candidate.uri))
+                    let mut matches = current.analysis.dependencies.all().len() > 0_usize
+                    for symbol in current.analysis.symbols {
+                        if symbol.scope == "" && starts_with(symbol.name, prefix) {
+                            matches = true break
+                        }
+                    }
+                    if !matches {
+                        continue
+                    }
+                    let visited = encore_strset_new()
+                    index_navigation_module(state, current, visited)
+                    encore_strset_free(visited)
+                    for definition in state.analysis.module_exports(current.uri) {
+                        if !completion_definition_allowed(definition, types_only)
+                        || !starts_with(definition.name(), prefix)
+                        || completion_item_exists(items, definition.name()) {
+                            continue
+                        }
+                        let module = module_name_from_relative_path(relative)
+                        let target = scope.name + "::" + if module == "" {
+                            definition.name()
+                        } else {
+                            module + "::" + definition.name()
+                        }
+                        match plan_import_insertion(doc.text, target) {
+                            Some(insertion) => {
+                                let original = definition_completion_item(state, definition)
+                                let mut fields = Vec[(str, Json)]::new()
+                                match original.as_object() {
+                                    Some(values) => {
+                                        for value in values {
+                                            if value.0 != "detail" {
+                                                fields.push(value)
+                                            }
+                                        }
+                                    }
+                                    None => {
+                                    }
+                                }
+                                let mut edits = Vec[Json]::new()
+                                edits.push(text_edit(lsp_range(doc, insertion.line, insertion.column, 0_usize), insertion.text))
+                                fields.push(field("additionalTextEdits", Json::Array(edits)))
+                                fields.push(field("detail", Json::String("Import " + target)))
+                                items.push(Json::Object(fields))
+                            }
+                            None => {
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None => {
+        }
+    }
+    ret()
+}
+
+fn member_completion_items(state: mut ServerState, doc: Document, context: MemberCompletionContext) -> Vec[Json] {
+    let visited = encore_strset_new()
+    index_query_module(state, doc, visited, true)
+    encore_strset_free(visited)
+    ret semantic_member_completion_items(state.analysis.members_at(doc.uri, context.line, context.column), context.prefix)
+}
+
+fn semantic_member_completion_items(members: Vec[SemanticMember], prefix: str) -> Vec[Json] {
+    let mut items = Vec[Json]::new()
+    for member in members {
+        if !starts_with(member.name, prefix) || completion_item_exists(items, member.name) {
+            continue
+        }
+        let mut detail = member.typ
+        if member.is_method {
+            detail = "fn " + member.name + "("
+            let mut first = true
+            for param in member.params {
+                if !first {
+                    detail += ", "
+                }
+                detail += param
+                first = false
+            }
+            detail += ") -> " + member.typ
+        }
+        items.push(completion_item(member.name, if member.is_method {
+                    2_usize
+                } else {
+                    5_usize
+                }
+                , detail,))
+    }
+    ret items
 }
 
 fn import_completion_items(state: mut ServerState, doc: Document, params: Json) -> Option[Vec[Json]] {
@@ -2261,7 +2779,7 @@ fn import_completion_items(state: mut ServerState, doc: Document, params: Json) 
             }
         )
         let mut items = Vec[Json]::new()
-        push_import_symbol_items(state, doc, items, base, prefix, 0_usize)
+        push_import_symbol_items(state, doc, items, base, prefix)
         ret Option[Vec[Json]]::Some(items)
     }
     let trailing_scope = ends_with(target, "::")
@@ -2285,7 +2803,7 @@ fn import_completion_items(state: mut ServerState, doc: Document, params: Json) 
     let parent = join_scope_parts(parts, parent_count)
     let mut items = Vec[Json]::new()
     push_child_module_items(state, doc, items, parent, prefix)
-    push_import_symbol_items(state, doc, items, parent, prefix, 0_usize)
+    push_import_symbol_items(state, doc, items, parent, prefix)
     ret Option[Vec[Json]]::Some(items)
 }
 
@@ -2358,14 +2876,11 @@ fn push_child_module_items(state: mut ServerState, doc: Document, items: mut Vec
 }
 
 fn push_import_symbol_items(state: mut ServerState, doc: Document, items: mut Vec[Json], module_path: str,
-    prefix: str, depth: usize,) ->() {
-    if depth > 3_usize {
-        ret()
-    }
+    prefix: str,) ->() {
     match completion_module_file_for_doc(state, doc, module_path) {
         Some(path) => {
             let module_doc = document_for_path(state, path)
-            push_symbols_from_document(items, module_doc, prefix)
+            push_module_export_items(state, items, module_doc, prefix)
             // A directory module may expose declarations from its sibling
             // source files. This is how imports such as
             // `frontend::parser::Documentation` are represented on disk.
@@ -2375,16 +2890,8 @@ fn push_import_symbol_items(state: mut ServerState, doc: Document, items: mut Ve
                     if entry != "mod.enq" && ends_with(entry, ".enq") {
                         let sibling_path = join_path(directory, entry)
                         let sibling = document_for_path(state, sibling_path)
-                        push_symbols_from_document(items, sibling, prefix)
+                        push_module_export_items(state, items, sibling, prefix)
                     }
-                }
-            }
-            for edge in module_doc.analysis.dependencies.all() {
-                if edge.is_public && ends_with(edge.target, "::*") {
-                    // Relative `mod::...` re-exports are resolved from the
-                    // imported module, not from the editor's current file.
-                    push_import_symbol_items(state, module_doc, items, edge.target.slice(0_usize, edge.target.len() - 3_usize),
-                        prefix, depth + 1_usize,)
                 }
             }
         }
@@ -2394,13 +2901,26 @@ fn push_import_symbol_items(state: mut ServerState, doc: Document, items: mut Ve
     ret()
 }
 
-fn push_symbols_from_document(items: mut Vec[Json], doc: Document, prefix: str) ->() {
-    for symbol in doc.analysis.symbols {
-        // Import completion exposes module-level declarations. Methods and
-        // nested declarations are completed after their owning value/type,
-        // not as free names in an import list.
-        if symbol.scope == "" && starts_with(symbol.name, prefix) && !completion_item_exists(items, symbol.name) {
-            items.push(symbol_completion_item(symbol))
+fn push_module_export_items(state: mut ServerState, items: mut Vec[Json], doc: Document, prefix: str) ->() {
+    let visited = encore_strset_new()
+    index_navigation_module(state, doc, visited)
+    encore_strset_free(visited)
+    for definition in state.analysis.module_exports(doc.uri) {
+        if !starts_with(definition.name(), prefix) || completion_item_exists(items, definition.name()) {
+            continue
+        }
+        let origin = document_for_path(state, definition.source_name())
+        for symbol in origin.analysis.symbols {
+            if symbol.scope == "" && symbol.line == definition.line() && symbol.column == definition.column() {
+                let mut exported = symbol
+                exported.name = definition.name()
+                if state.resolve_completion_documentation {
+                    items.push(deferred_symbol_completion_item(origin, exported))
+                } else {
+                    items.push(symbol_completion_item(exported))
+                }
+                break
+            }
         }
     }
     ret()
@@ -2538,6 +3058,67 @@ fn symbol_completion_item(symbol: FrontendSymbol) -> Json {
     ret completion_item(symbol.name, symbol_completion_kind(symbol.kind), "Encore import")
 }
 
+fn deferred_symbol_completion_item(doc: Document, symbol: FrontendSymbol) -> Json {
+    ret deferred_symbol_completion_with_hash(doc, symbol, Debug::fmt(doc.text.hash()))
+}
+
+fn deferred_symbol_completion_with_hash(doc: Document, symbol: FrontendSymbol, source_hash: str) -> Json {
+    let mut data = Vec[(str, Json)]::new()
+    data.push(field("uri", Json::String(doc.uri)))
+    data.push(field("sourceHash", Json::String(source_hash)))
+    data.push(field("line", json_usize(symbol.line)))
+    data.push(field("column", json_usize(symbol.column)))
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("label", Json::String(symbol.name)))
+    fields.push(field("kind", json_usize(symbol_completion_kind(symbol.kind))))
+    fields.push(field("data", Json::Object(data)))
+    ret Json::Object(fields)
+}
+
+fn resolve_completion_item(state: mut ServerState, item: Json) -> Json {
+    let data = json_get(item, "data")
+    let uri = json_get_str(data, "uri", "")
+    if uri == "" {
+        ret item
+    }
+    let doc = document_for_path(state, uri_to_path(uri))
+    if json_get_str(data, "sourceHash", "") != Debug::fmt(doc.text.hash()) {
+        ret item
+    }
+    for symbol in doc.analysis.symbols {
+        if symbol.line != json_number_usize(json_get(data, "line"), 0_usize)
+        || symbol.column != json_number_usize(json_get(data, "column"), 0_usize) {
+            continue
+        }
+        match symbol.documentation {
+            Some(documentation) => {
+                let mut fields = Vec[(str, Json)]::new()
+                match item.as_object() {
+                    Some(original) => {
+                        for entry in original {
+                            if entry.0 != "documentation" {
+                                fields.push(entry)
+                            }
+                        }
+                    }
+                    None => {
+                        ret item
+                    }
+                }
+                let mut markup = Vec[(str, Json)]::new()
+                markup.push(field("kind", Json::String("markdown")))
+                markup.push(field("value", Json::String(documentation.text)))
+                fields.push(field("documentation", Json::Object(markup)))
+                ret Json::Object(fields)
+            }
+            None => {
+                ret item
+            }
+        }
+    }
+    ret item
+}
+
 fn completion_module_file(state: ServerState, target: str) -> Option[str] {
     let parts = split_scope_path(target)
     if parts.len() == 0_usize {
@@ -2670,8 +3251,10 @@ fn inlay_hint_result(state: mut ServerState, params: Json) -> Json {
         Option[Document]::Some(doc) => {
             let range = json_get(params, "range")
             let start_line = json_number_usize(json_get(json_get(range, "start"), "line"), 0_usize)
-            let end_line = json_number_usize(json_get(json_get(range, "end"), "line"), document_last_line(doc.text))
-            ret inferred_let_hints(state, doc, start_line, end_line)
+            let end_line = json_number_usize(json_get(json_get(range, "end"), "line"), document_last_line(doc.text) + 1_usize)
+            let start_column = json_number_usize(json_get(json_get(range, "start"), "character"), 0_usize)
+            let end_column = json_number_usize(json_get(json_get(range, "end"), "character"), 0_usize)
+            ret inferred_let_hints(state, doc, start_line, start_column, end_line, end_column)
         }
         Option[Document]::None => {
         }
@@ -2679,10 +3262,10 @@ fn inlay_hint_result(state: mut ServerState, params: Json) -> Json {
     ret Json::Array(Vec[Json]::new())
 }
 
-fn inferred_let_hints(state: mut ServerState, doc: Document, start_line: usize, end_line: usize) -> Json
-{
+fn inferred_let_hints(state: mut ServerState, doc: Document, start_line: usize, start_column: usize,
+    end_line: usize, end_column: usize,) -> Json {
     let mut hints = Vec[Json]::new()
-    let mut bindings = Vec[InferredBinding]::new()
+    let mut indexed = false
     let mut index = 0_usize
     while index < doc.analysis.tokens.len() {
         match doc.analysis.tokens.get(index) {
@@ -2692,32 +3275,38 @@ fn inferred_let_hints(state: mut ServerState, doc: Document, start_line: usize, 
                     if token_has_type(doc, name_index, TokenType::KW_MUT) {
                         name_index += 1_usize
                     }
-                    if token_has_type(doc, name_index, TokenType::IDENTIFIER) {
-                        match doc.analysis.tokens.get(name_index) {
-                            Some(name_token) => {
-                                let after_name = name_index + 1_usize
-                                if !token_has_type(doc, after_name, TokenType::COLON) && token_has_type(doc,
-                                    after_name, TokenType::ASSIGN,) {
-                                    // Live editor text is intentionally analyzed only through
-                                    // tolerant queries. The strict semantic parser terminates on
-                                    // incomplete syntax, which is valid while the user is typing.
-                                    let inferred_type = infer_expression_type(state, doc, after_name + 1_usize,
-                                        bindings,).unwrap_or("")
-                                    if inferred_type != "" {
-                                        bindings.push(InferredBinding {
-                                                name_token.value, inferred_type
-                                            }
-                                            ,
-                                        )
-                                        if name_token.line >= start_line && name_token.line <= end_line
-                                        {
-                                            hints.push(type_inlay_hint(doc, name_index, name_token, inferred_type))
+                    match doc.analysis.tokens.get(name_index) {
+                        Some(name) => {
+                            if name.type == TokenType::IDENTIFIER && name.line >= start_line
+                            && name.line <= end_line && token_has_type(doc, name_index + 1_usize, TokenType::ASSIGN) {
+                                let column = utf16_column(line_text_at(doc.text, name.line).unwrap_or(""),
+                                    actual_token_column_at_index(doc, name_index, name),) + utf16_len(name.value)
+                                if (name.line == start_line && column < start_column)
+                                ||(name.line == end_line && column >= end_column) {
+                                    index += 1_usize
+                                    continue
+                                }
+                                if !indexed {
+                                    let visited = encore_strset_new()
+                                    index_query_module(state, doc, visited, true)
+                                    encore_strset_free(visited)
+                                    indexed = true
+                                }
+                                // The same recovered body and declaration identity serve
+                                // hover, navigation, rename and inferred type hints.
+                                match state.analysis.semantic_binding_at(doc.uri, name.value, name.line, name.column) {
+                                    Some(binding) => {
+                                        if binding.name == name.value && binding.line == name.line
+                                        && binding.column == name.column && binding.typ != "" {
+                                            hints.push(type_inlay_hint(doc, name_index, name, binding.typ))
                                         }
+                                    }
+                                    None => {
                                     }
                                 }
                             }
-                            None => {
-                            }
+                        }
+                        None => {
                         }
                     }
                 }
@@ -2728,126 +3317,6 @@ fn inferred_let_hints(state: mut ServerState, doc: Document, start_line: usize, 
         index += 1_usize
     }
     ret Json::Array(hints)
-}
-
-fn infer_expression_type(state: ServerState, doc: Document, index: usize,
-    bindings: Vec[InferredBinding],) -> Option[str]
-{
-    match doc.analysis.tokens.get(index) {
-        Option[Token]::Some(token) => {
-            if token.type == TokenType::STRING {
-                ret Option[str]::Some("str")
-            }
-            if token.type == TokenType::BOOLEAN {
-                ret Option[str]::Some("bool")
-            }
-            if token.type == TokenType::FLOAT {
-                ret Option[str]::Some(numeric_literal_type(doc, index, "f64"))
-            }
-            if token.type == TokenType::INTEGER {
-                ret Option[str]::Some(numeric_literal_type(doc, index, "i32"))
-            }
-            if token.type == TokenType::IDENTIFIER {
-                match qualified_generic_receiver_type(doc, index) {
-                    Option[str]::Some(receiver_type) => {
-                        ret Option[str]::Some(receiver_type)
-                    }
-                    Option[str]::None => {
-                    }
-                }
-                if token_has_type(doc, index + 1_usize, TokenType::LEFT_BRACE) {
-                    ret Option[str]::Some(token.value)
-                }
-                if token_has_type(doc, index + 1_usize, TokenType::LEFT_PAREN) {
-                    let mut callable_index = 0_usize
-                    while callable_index < doc.analysis.callables.len() {
-                        match doc.analysis.callables.get(callable_index) {
-                            Option[FrontendCallable]::Some(callable) => {
-                                if callable.name == token.value {
-                                    ret callable.ret_type
-                                }
-                            }
-                            Option[FrontendCallable]::None => {
-                            }
-                        }
-                        callable_index += 1_usize
-                    }
-                    match callable_doc_by_name(state, token.value) {
-                        Some(result) => {
-                            ret result.1.ret_type
-                        }
-                        None => {
-                        }
-                    }
-                }
-                let mut binding_index = bindings.len()
-                while binding_index > 0_usize {
-                    binding_index -= 1_usize
-                    match bindings.get(binding_index) {
-                        Option[InferredBinding]::Some(binding) => {
-                            if binding.name == token.value {
-                                ret Option[str]::Some(binding.typ)
-                            }
-                        }
-                        Option[InferredBinding]::None => {
-                        }
-                    }
-                }
-            }
-        }
-        Option[Token]::None => {
-        }
-    }
-    ret Option[str]::None
-}
-
-fn qualified_generic_receiver_type(doc: Document, start_index: usize) -> Option[str] {
-    if !token_has_type(doc, start_index, TokenType::IDENTIFIER) || !token_has_type(doc, start_index +
-        1_usize, TokenType::LEFT_BRACKET,) {
-        ret Option[str]::None
-    }
-    let mut value = ""
-    let mut depth = 0_i32
-    let mut index = start_index
-    while index < doc.analysis.tokens.len() {
-        match doc.analysis.tokens.get(index) {
-            Option[Token]::Some(token) => {
-                if token.type == TokenType::LEFT_BRACKET {
-                    depth += 1_i32
-                } elif token.type == TokenType::RIGHT_BRACKET {
-                    depth -= 1_i32
-                }
-                value = value + token.value
-                if depth == 0_i32 && index > start_index {
-                    if token_has_type(doc, index + 1_usize, TokenType::SCOPE) && token_has_type(doc,
-                        index + 2_usize, TokenType::IDENTIFIER,) && token_has_type(doc, index + 3_usize,
-                        TokenType::LEFT_PAREN,)
-                    {
-                        ret Option[str]::Some(value)
-                    }
-                    ret Option[str]::None
-                }
-            }
-            Option[Token]::None => {
-            }
-        }
-        index += 1_usize
-    }
-    ret Option[str]::None
-}
-
-fn numeric_literal_type(doc: Document, index: usize, default_type: str) -> str {
-    match doc.analysis.tokens.get(index + 1_usize) {
-        Option[Token]::Some(suffix) => {
-            if suffix.type == TokenType::IDENTIFIER && starts_with(suffix.value, "_") && suffix.value.char_len()
-            > 1_usize {
-                ret suffix.value.slice(1_usize, suffix.value.char_len() - 1_usize)
-            }
-        }
-        Option[Token]::None => {
-        }
-    }
-    ret default_type
 }
 
 fn type_inlay_hint(doc: Document, token_index: usize, token: Token, typ: str) -> Json {
@@ -2863,52 +3332,6 @@ fn type_inlay_hint(doc: Document, token_index: usize, token: Token, typ: str) ->
     hint.push(field("paddingLeft", Json::Bool(false)))
     hint.push(field("paddingRight", Json::Bool(false)))
     ret Json::Object(hint)
-}
-
-fn push_workspace_completion_items(state: ServerState, items: mut Vec[Json], seen: usize) ->() {
-    let mut doc_index = 0_usize
-    while doc_index < state.documents.len() {
-        match state.documents.get(doc_index) {
-            Option[Document]::Some(doc) => {
-                push_symbol_completion_items_for_doc(items, doc, seen)
-            }
-            Option[Document]::None => {
-            }
-        }
-        doc_index += 1_usize
-    }
-
-    let mut workspace_index = 0_usize
-    while workspace_index < state.workspace_documents.len() {
-        match state.workspace_documents.get(workspace_index) {
-            Option[Document]::Some(doc) => {
-                if !open_document_exists(state, doc.uri) {
-                    push_symbol_completion_items_for_doc(items, doc, seen)
-                }
-            }
-            Option[Document]::None => {
-            }
-        }
-        workspace_index += 1_usize
-    }
-    ret()
-}
-
-fn push_symbol_completion_items_for_doc(items: mut Vec[Json], doc: Document, seen: usize) ->() {
-    let mut index = 0_usize
-    while index < doc.analysis.symbols.len() {
-        match doc.analysis.symbols.get(index) {
-            Option[FrontendSymbol]::Some(symbol) => {
-                if encore_strset_insert(seen, symbol.name) {
-                    items.push(completion_item(symbol.name, symbol_completion_kind(symbol.kind), "Encore symbol"))
-                }
-            }
-            Option[FrontendSymbol]::None => {
-            }
-        }
-        index += 1_usize
-    }
-    ret()
 }
 
 fn completion_item_exists(items: Vec[Json], label: str) -> bool {
@@ -2928,13 +3351,13 @@ fn completion_item_exists(items: Vec[Json], label: str) -> bool {
     ret false
 }
 
-fn definition_result(state: ServerState, params: Json) -> Json {
+fn definition_result(state: mut ServerState, params: Json) -> Json {
     let uri = request_uri(params)
     match state.document(uri) {
         Option[Document]::Some(doc) => {
             match identifier_at_request(doc, params) {
                 Option[Token]::Some(token) => {
-                    match resolved_symbol_by_name(state, doc, token.value) {
+                    match resolved_symbol_at(state, doc, token) {
                         Option[ResolvedReference]::Some(reference) => {
                             let mut items = Vec[Json]::new()
                             items.push(location_json(reference.uri, reference.range))
@@ -3038,7 +3461,7 @@ fn hover_result(state: mut ServerState, params: Json) -> Json {
                                     value = package_hover
                                 }
                                 Option[str]::None => {
-                                    match resolved_symbol_by_name(state, doc, token.value) {
+                                    match resolved_symbol_at(state, doc, token) {
                                         Option[ResolvedReference]::Some(reference) => {
                                             value = reference.hover
                                         }
@@ -3134,13 +3557,16 @@ fn import_package_hover(state: ServerState, doc: Document, package: str, line_nu
     ret Option[str]::None
 }
 
-fn signature_help_result(state: ServerState, params: Json) -> Json {
+fn signature_help_result(state: mut ServerState, params: Json) -> Json {
     let uri = request_uri(params)
     match state.document(uri) {
         Option[Document]::Some(doc) => {
-            match active_call_at_request(doc, params) {
-                Option[(str, usize)]::Some(call) => {
-                    match resolved_symbol_by_name(state, doc, call.0) {
+            let position = json_get(params, "position")
+            let line = json_number_usize(json_get(position, "line"), 0_usize)
+            let column = request_character_index(doc, line, json_number_usize(json_get(position, "character"), 0_usize))
+            match cursor_call_context(doc.analysis.tokens, line, column) {
+                Some(call) => {
+                    match resolved_symbol_at(state, doc, call.0) {
                         Option[ResolvedReference]::Some(reference) => {
                             match reference.callable {
                                 Option[FrontendCallable]::Some(callable) => {
@@ -3153,17 +3579,8 @@ fn signature_help_result(state: ServerState, params: Json) -> Json {
                         Option[ResolvedReference]::None => {
                         }
                     }
-                    // Keep the workspace-name fallback for incomplete imports
-                    // and buffers that have not reached semantic resolution.
-                    match callable_by_name_in_open_documents(state, call.0) {
-                        Option[FrontendCallable]::Some(callable) => {
-                            ret signature_help_for_callable(callable, call.1)
-                        }
-                        Option[FrontendCallable]::None => {
-                        }
-                    }
                 }
-                Option[(str, usize)]::None => {
+                None => {
                 }
             }
         }
@@ -3181,7 +3598,12 @@ fn signature_help_for_callable(callable: FrontendCallable, active_parameter: usi
     let mut fields = Vec[(str, Json)]::new()
     fields.push(field("signatures", Json::Array(signatures)))
     fields.push(field("activeSignature", Json::Number("0")))
-    fields.push(field("activeParameter", json_usize(min_usize(active_parameter, callable.params.len()))))
+    let last_parameter = if callable.params.len() > 0_usize {
+        callable.params.len() - 1_usize
+    } else {
+        0_usize
+    }
+    fields.push(field("activeParameter", json_usize(min_usize(active_parameter, last_parameter))))
     ret Json::Object(fields)
 }
 
@@ -3670,7 +4092,25 @@ fn incoming_call_index(items: Vec[Json], name: str) -> Option[usize] {
     ret Option[usize]::None
 }
 
-fn references_result(state: ServerState, params: Json) -> Json {
+fn references_with_declaration_policy(locations: Vec[Json], reference: ResolvedReference, params: Json) -> Json {
+    if json_get(json_get(params, "context"), "includeDeclaration").as_bool().unwrap_or(false) {
+        ret Json::Array(locations)
+    }
+    let declaration = json_get(reference.range, "start")
+    let mut uses = Vec[Json]::new()
+    for location in locations {
+        let start = json_get(json_get(location, "range"), "start")
+        if json_get_str(location, "uri", "") == reference.uri
+        && json_number_usize(json_get(start, "line"), 0_usize) == json_number_usize(json_get(declaration, "line"), 0_usize)
+        && json_number_usize(json_get(start, "character"), 0_usize) == json_number_usize(json_get(declaration, "character"), 0_usize) {
+            continue
+        }
+        uses.push(location)
+    }
+    ret Json::Array(uses)
+}
+
+fn references_result(state: mut ServerState, params: Json) -> Json {
     let uri = request_uri(params)
     match state.document(uri) {
         Option[Document]::Some(doc) => {
@@ -3679,12 +4119,17 @@ fn references_result(state: ServerState, params: Json) -> Json {
                     if token_is_extern_function_declaration(doc, token) {
                         ret Json::Array(Vec[Json]::new())
                     }
-                    match resolved_symbol_by_name(state, doc, token.value) {
+                    match resolved_symbol_at(state, doc, token) {
                         Option[ResolvedReference]::Some(reference) => {
                             if resolved_reference_is_extern_function(state, reference) {
                                 ret Json::Array(Vec[Json]::new())
                             }
-                            ret Json::Array(reference_locations_in_workspace(state, reference.id))
+                            if starts_with(reference.id, doc.uri + "#local:") {
+                                let mut locations = Vec[Json]::new()
+                                push_reference_locations_for_doc(state, locations, doc, reference.id, reference.label)
+                                ret references_with_declaration_policy(locations, reference, params)
+                            }
+                            ret references_with_declaration_policy(reference_locations_in_workspace(state, reference.id, reference.label), reference, params)
                         }
                         Option[ResolvedReference]::None => {
                         }
@@ -3749,14 +4194,22 @@ fn resolved_reference_is_extern_function(state: ServerState, reference: Resolved
     ret false
 }
 
-fn document_highlight_result(state: ServerState, params: Json) -> Json {
+fn document_highlight_result(state: mut ServerState, params: Json) -> Json {
     let mut highlights = Vec[Json]::new()
     let uri = request_uri(params)
     match state.document(uri) {
         Option[Document]::Some(doc) => {
             match identifier_at_request(doc, params) {
                 Option[Token]::Some(token) => {
-                    let refs = identifier_locations_for_doc(doc, token.value)
+                    let mut refs = Vec[Json]::new()
+                    match resolved_symbol_at(state, doc, token) {
+                        Some(reference) => {
+                            push_reference_locations_for_doc(state, refs, doc, reference.id, reference.label)
+                        }
+                        None => {
+                            ret Json::Array(highlights)
+                        }
+                    }
                     let mut index = 0_usize
                     while index < refs.len() {
                         match refs.get(index) {
@@ -3817,13 +4270,13 @@ fn identifier_locations_for_doc(doc: Document, name: str) -> Vec[Json] {
     ret items
 }
 
-fn reference_locations_in_workspace(state: ServerState, target_id: str) -> Vec[Json] {
+fn reference_locations_in_workspace(state: mut ServerState, target_id: str, name: str) -> Vec[Json] {
     let mut items = Vec[Json]::new()
     let mut doc_index = 0_usize
     while doc_index < state.documents.len() {
         match state.documents.get(doc_index) {
             Option[Document]::Some(doc) => {
-                push_reference_locations_for_doc(state, items, doc, target_id)
+                push_reference_locations_for_doc(state, items, doc, target_id, name)
             }
             Option[Document]::None => {
             }
@@ -3835,7 +4288,7 @@ fn reference_locations_in_workspace(state: ServerState, target_id: str) -> Vec[J
         match state.workspace_documents.get(workspace_index) {
             Option[Document]::Some(doc) => {
                 if !open_document_exists(state, doc.uri) {
-                    push_reference_locations_for_doc(state, items, doc, target_id)
+                    push_reference_locations_for_doc(state, items, doc, target_id, name)
                 }
             }
             Option[Document]::None => {
@@ -3846,20 +4299,33 @@ fn reference_locations_in_workspace(state: ServerState, target_id: str) -> Vec[J
     ret items
 }
 
-fn push_reference_locations_for_doc(state: ServerState, items: mut Vec[Json], doc: Document, target_id:
-    str,) ->() {
+fn push_reference_locations_for_doc(state: mut ServerState, items: mut Vec[Json], doc: Document, target_id:
+    str, name: str,) ->() {
+    let visited = encore_strset_new()
+    index_query_module(state, doc, visited, true)
+    encore_strset_free(visited)
+    let exact_name = starts_with(target_id, "member:") || starts_with(target_id, doc.uri + "#local:")
+    let names = if exact_name {
+        Vec[str]::new()
+    } else {
+        reference_candidate_names(doc, name)
+    }
     let mut index = 0_usize
     while index < doc.analysis.tokens.len() {
         match doc.analysis.tokens.get(index) {
             Option[Token]::Some(candidate) => {
-                if candidate.type == TokenType::IDENTIFIER {
-                    match resolved_symbol_by_name(state, doc, candidate.value) {
-                        Option[ResolvedReference]::Some(reference) => {
-                            if reference.id == target_id {
+                if candidate.type == TokenType::IDENTIFIER &&
+                ((exact_name && candidate.value == name) ||(!exact_name && reference_candidate_token(doc, index, candidate, names))) {
+                    if !reference_candidate_matches_kind(state, doc, index, candidate, target_id) {
+                        index += 1_usize continue
+                    }
+                    match reference_identity_in_index(state, doc, candidate, target_id) {
+                        Option[str]::Some(identity) => {
+                            if identity == target_id {
                                 items.push(location_json(doc.uri, token_range_at_index(doc, index, candidate)))
                             }
                         }
-                        Option[ResolvedReference]::None => {
+                        Option[str]::None => {
                         }
                     }
                 }
@@ -3889,12 +4355,27 @@ fn push_identifier_locations_for_doc(items: mut Vec[Json], doc: Document, name: 
     ret()
 }
 
-fn prepare_rename_result(state: ServerState, params: Json) -> Json {
+fn prepare_rename_result(state: mut ServerState, params: Json) -> Json {
     let uri = request_uri(params)
     match state.document(uri) {
         Option[Document]::Some(doc) => {
             match identifier_at_request(doc, params) {
                 Option[Token]::Some(token) => {
+                    if token.value == "self" {
+                        ret Json::Null
+                    }
+                    match resolved_symbol_at(state, doc, token) {
+                        Some(reference) => {
+                            // Member navigation is available before owner collision
+                            // and trait-implementation rename checks are complete.
+                            if starts_with(reference.id, "member:") {
+                                ret Json::Null
+                            }
+                        }
+                        None => {
+                            ret Json::Null
+                        }
+                    }
                     let mut fields = Vec[(str, Json)]::new()
                     fields.push(field("range", token_range(doc, token)))
                     fields.push(field("placeholder", Json::String(token.value)))
@@ -3910,25 +4391,41 @@ fn prepare_rename_result(state: ServerState, params: Json) -> Json {
     ret Json::Null
 }
 
-fn rename_result(state: ServerState, params: Json) -> Json {
+fn rename_result(state: mut ServerState, params: Json) -> Result[Json, str] {
     let uri = request_uri(params)
     let new_name = json_get_str(params, "newName", "")
-    if !is_identifier_name(new_name) {
-        ret empty_workspace_edit()
+    let mut lexer = Lexer::new()
+    let name_tokens = lexer.tokenize(new_name)
+    let name_token = name_tokens.get(0_usize).unwrap_or(Token::new(TokenType::EOF, "", 0_usize, 0_usize))
+    if !is_identifier_name(new_name) || name_tokens.len() != 2_usize
+    || name_token.type != TokenType::IDENTIFIER || new_name == "self" || new_name == "Self" {
+        ret Result[Json, str]::Ok(empty_workspace_edit())
     }
 
     match state.document(uri) {
         Option[Document]::Some(doc) => {
             match identifier_at_request(doc, params) {
                 Option[Token]::Some(token) => {
-                    match resolved_symbol_by_name(state, doc, token.value) {
+                    if token.value == "self" {
+                        ret Result[Json, str]::Ok(empty_workspace_edit())
+                    }
+                    match resolved_symbol_at(state, doc, token) {
                         Option[ResolvedReference]::Some(reference) => {
                             let mut changes = Vec[(str, Json)]::new()
-                            push_rename_edits_for_reference(state, changes, reference.id, new_name)
+                            if starts_with(reference.id, "member:") {
+                                ret Result[Json, str]::Err("Member rename requires owner collision and trait implementation checks; no files were changed.")
+                            }
+                            if starts_with(reference.id, doc.uri + "#local:") {
+                                if !local_rename_is_safe(state, doc, token, reference.label, new_name) {
+                                    ret Result[Json, str]::Err("Cannot rename '" + reference.label + "' to '" + new_name
+                                        + "': the new name would change which declaration an existing reference resolves to.")
+                                }
+                                push_rename_edits_for_reference_doc(state, changes, doc, reference.id, reference.label, new_name)
+                            } else {
+                                push_rename_edits_for_reference(state, changes, reference.rename_id, token.value, new_name)
+                            }
 
-                            let mut result = Vec[(str, Json)]::new()
-                            result.push(field("changes", Json::Object(changes)))
-                            ret Json::Object(result)
+                            ret Result[Json, str]::Ok(rename_workspace_edit(state, changes))
                         }
                         Option[ResolvedReference]::None => {
                         }
@@ -3941,7 +4438,61 @@ fn rename_result(state: ServerState, params: Json) -> Json {
         Option[Document]::None => {
         }
     }
-    ret empty_workspace_edit()
+    ret Result[Json, str]::Ok(empty_workspace_edit())
+}
+
+fn local_rename_is_safe(state: mut ServerState, doc: Document, selected: Token,
+    old_name: str, new_name: str,) -> bool {
+    match state.analysis.semantic_binding_at(doc.uri, old_name, selected.line, selected.column) {
+        Some(binding) => {
+            for token in doc.analysis.tokens {
+                if token.type != TokenType::IDENTIFIER ||(token.value != old_name && token.value != new_name) {
+                    continue
+                }
+                if split_scope_path(cursor_symbol_path(doc.analysis.tokens, token.line, token.column)).len() > 1_usize
+                || cursor_expects_type(doc.analysis.tokens, token.line, token.column)
+                || cursor_member_context(doc.analysis.tokens, token.line, token.column + token.value.char_len()).is_some() {
+                    continue
+                }
+                if !state.analysis.local_rename_preserves_binding(doc.uri, token.value,
+                    token.line, token.column, binding.line, binding.column, new_name,) {
+                    ret false
+                }
+            }
+            ret true
+        }
+        None => {
+            ret false
+        }
+    }
+}
+
+fn rename_workspace_edit(state: ServerState, changes: Vec[(str, Json)]) -> Json {
+    let mut result = Vec[(str, Json)]::new()
+    if !state.supports_document_changes {
+        result.push(field("changes", Json::Object(changes)))
+        ret Json::Object(result)
+    }
+    let mut documents = Vec[Json]::new()
+    for entry in changes {
+        let uri = entry.0
+        let edits = entry.1
+        let mut document = Vec[(str, Json)]::new()
+        document.push(field("uri", Json::String(uri)))
+        // Closed files have no client-owned version, even if previously open.
+        let version = if open_document_exists(state, uri) {
+            client_document_version(state, uri)
+        } else {
+            Json::Null
+        }
+        document.push(field("version", version))
+        let mut change = Vec[(str, Json)]::new()
+        change.push(field("textDocument", Json::Object(document)))
+        change.push(field("edits", edits))
+        documents.push(Json::Object(change))
+    }
+    result.push(field("documentChanges", Json::Array(documents)))
+    ret Json::Object(result)
 }
 
 fn push_rename_edits_for_workspace(state: ServerState, changes: mut Vec[(str, Json)], old_name: str,
@@ -3973,13 +4524,13 @@ fn push_rename_edits_for_workspace(state: ServerState, changes: mut Vec[(str, Js
     ret()
 }
 
-fn push_rename_edits_for_reference(state: ServerState, changes: mut Vec[(str, Json)], target_id: str,
-    new_name: str,) ->() {
+fn push_rename_edits_for_reference(state: mut ServerState, changes: mut Vec[(str, Json)], target_id: str,
+    old_name: str, new_name: str,) ->() {
     let mut doc_index = 0_usize
     while doc_index < state.documents.len() {
         match state.documents.get(doc_index) {
             Option[Document]::Some(doc) => {
-                push_rename_edits_for_reference_doc(state, changes, doc, target_id, new_name)
+                push_rename_edits_for_reference_doc(state, changes, doc, target_id, old_name, new_name)
             }
             Option[Document]::None => {
             }
@@ -3991,7 +4542,7 @@ fn push_rename_edits_for_reference(state: ServerState, changes: mut Vec[(str, Js
         match state.workspace_documents.get(workspace_index) {
             Option[Document]::Some(doc) => {
                 if !open_document_exists(state, doc.uri) {
-                    push_rename_edits_for_reference_doc(state, changes, doc, target_id, new_name)
+                    push_rename_edits_for_reference_doc(state, changes, doc, target_id, old_name, new_name)
                 }
             }
             Option[Document]::None => {
@@ -4002,16 +4553,29 @@ fn push_rename_edits_for_reference(state: ServerState, changes: mut Vec[(str, Js
     ret()
 }
 
-fn push_rename_edits_for_reference_doc(state: ServerState, changes: mut Vec[(str, Json)], doc: Document,
-    target_id: str, new_name: str,) ->() {
+fn push_rename_edits_for_reference_doc(state: mut ServerState, changes: mut Vec[(str, Json)], doc: Document,
+    target_id: str, old_name: str, new_name: str,) ->() {
+    let visited = encore_strset_new()
+    index_query_module(state, doc, visited, true)
+    encore_strset_free(visited)
+    let exact_name = starts_with(target_id, "member:") || starts_with(target_id, doc.uri + "#local:")
+    let names = if exact_name {
+        Vec[str]::new()
+    } else {
+        reference_candidate_names(doc, old_name)
+    }
     let mut index = 0_usize
     while index < doc.analysis.tokens.len() {
         match doc.analysis.tokens.get(index) {
             Option[Token]::Some(candidate) => {
-                if candidate.type == TokenType::IDENTIFIER {
-                    match resolved_symbol_by_name(state, doc, candidate.value) {
+                if candidate.type == TokenType::IDENTIFIER &&
+                ((exact_name && candidate.value == old_name) ||(!exact_name && reference_candidate_token(doc, index, candidate, names))) {
+                    if !reference_candidate_matches_kind(state, doc, index, candidate, target_id) {
+                        index += 1_usize continue
+                    }
+                    match resolved_symbol_in_index(state, doc, candidate) {
                         Option[ResolvedReference]::Some(reference) => {
-                            if reference.id == target_id {
+                            if reference.rename_id == target_id {
                                 add_text_edit_to_changes(changes, doc.uri, text_edit(token_range_at_index(doc,
                                             index, candidate,), new_name))
                             }
@@ -4027,6 +4591,112 @@ fn push_rename_edits_for_reference_doc(state: ServerState, changes: mut Vec[(str
         index += 1_usize
     }
     ret()
+}
+
+// Reference searches need identity, not hover text, documentation or call tips.
+fn reference_identity_in_index(state: mut ServerState, doc: Document, token: Token, target: str) -> Option[str] {
+    if starts_with(target, "member:") {
+        let owner = associated_query_owner(state, doc, cursor_associated_owner(doc.analysis.tokens, token.line, token.column))
+        if owner != "" {
+            match state.analysis.associated_owner_type(doc.uri, owner) {
+                Some(receiver) => {
+                    match state.analysis.associated_member_definition(doc.uri, owner, token.value) {
+                        Some(definition) => {
+                            ret Option[str]::Some("member:" + definition.source_identity().key())
+                        }
+                        None => {
+                            ret Option[str]::None
+                        }
+                    }
+                }
+                None => {
+                }
+            }
+        }
+        let definition = if cursor_member_context(doc.analysis.tokens, token.line, token.column + token.value.char_len()).is_some() {
+            state.analysis.member_definition_at(doc.uri, token.value, token.line, token.column)
+        } else {
+            state.analysis.member_declaration_at(doc.uri, token.value, token.line, token.column)
+        }
+        match definition {
+            Some(value) => {
+                ret Option[str]::Some("member:" + value.source_identity().key())
+            }
+            None => {
+                ret Option[str]::None
+            }
+        }
+    }
+    match resolved_symbol_in_index(state, doc, token) {
+        Some(reference) => {
+            ret Option[str]::Some(reference.id)
+        }
+        None => {
+            ret Option[str]::None
+        }
+    }
+}
+
+fn reference_candidate_matches_kind(state: mut ServerState, doc: Document, index: usize, token: Token, target: str) -> bool {
+    if starts_with(target, "member:") {
+        if index > 0_usize {
+            let previous = doc.analysis.tokens.get(index - 1_usize).unwrap_or(token)
+            if previous.type == TokenType::DOT || previous.type == TokenType::SCOPE {
+                ret true
+            }
+        }
+        // A local parameter named `tokens` cannot refer to a field named
+        // `tokens`. Do not analyze that parameter's entire function body.
+        ret state.analysis.member_declaration_at(doc.uri, token.value, token.line, token.column).is_some()
+    }
+    if starts_with(target, doc.uri + "#local:") {
+        ret cursor_member_context(doc.analysis.tokens, token.line, token.column + token.value.char_len()).is_none()
+        && !cursor_expects_type(doc.analysis.tokens, token.line, token.column)
+    }
+    ret true
+}
+
+fn reference_candidate_names(doc: Document, name: str) -> Vec[str] {
+    let mut names = Vec[str]::new()
+    names.push(name)
+    // Aliases are candidates, never matches by themselves: semantic identity
+    // is still checked below, so unrelated aliases cannot produce edits.
+    for imported in import_requests_from_doc(doc) {
+        names.push(last_scope_segment(imported.target))
+        match imported.alias {
+            Some(alias) => {
+                names.push(alias)
+            }
+            None => {
+            }
+        }
+    }
+    ret names
+}
+
+fn reference_name_matches(names: Vec[str], candidate: str) -> bool {
+    for name in names {
+        if name == candidate {
+            ret true
+        }
+    }
+    ret false
+}
+
+fn reference_candidate_token(doc: Document, index: usize, token: Token, names: Vec[str]) -> bool {
+    if reference_name_matches(names, token.value) {
+        ret true
+    }
+    if index > 0_usize {
+        match doc.analysis.tokens.get(index - 1_usize) {
+            Some(previous) => {
+                ret previous.type == TokenType::SCOPE
+            }
+            None => {
+            }
+        }
+    }
+    ret false
 }
 
 fn push_rename_edits_for_doc(changes: mut Vec[(str, Json)], doc: Document, old_name: str, new_name: str)
@@ -4819,6 +5489,256 @@ fn resolve_module_uri_from_parts(base_dir: str, parts: Vec[str], start: usize, c
     ret Option[str]::None
 }
 
+fn index_navigation_module(state: mut ServerState, doc: Document, visited: usize) ->() {
+    index_query_module(state, doc, visited, false)
+    ret()
+}
+
+// Source discovery stays in the adapter. Type and member identity stay in the
+// database, including public re-exports of a fully qualified type.
+fn associated_query_owner(state: mut ServerState, doc: Document, owner: str) -> str {
+    if owner == "" || state.analysis.associated_owner_type(doc.uri, owner).is_some() {
+        ret owner
+    }
+    let mut end = 0_usize
+    while end < owner.len() && owner.slice(end, 1_usize) != "[" {
+        end += 1_usize
+    }
+    let base = owner.slice(0_usize, end)
+    if !contains_substring(base, "::") {
+        ret owner
+    }
+    match completion_module_file_for_doc(state, doc, base) {
+        Some(path) => {
+            let target = document_for_path(state, path)
+            let visited = encore_strset_new()
+            index_navigation_module(state, target, visited)
+            encore_strset_free(visited)
+            ret target.uri + "::" + last_scope_segment(base) + owner.slice(end, owner.len() - end)
+        }
+        None => {
+            ret owner
+        }
+    }
+}
+
+fn index_query_module(state: mut ServerState, doc: Document, visited: usize, include_private: bool) ->() {
+    if !encore_strset_insert(visited, doc.uri) {
+        ret()
+    }
+    state.analysis.set_module(doc.uri, uri_to_path(doc.uri), doc.text)
+    let mut targets = Vec[ModuleImportTarget]::new()
+    for edge in doc.analysis.dependencies.all() {
+        if !include_private && !edge.is_public {
+            continue
+        }
+        for expanded in expand_import_path_targets(edge.target) {
+            let mut module_target = expanded.target
+            if expanded.wildcard && ends_with(module_target, "::*") {
+                module_target = module_target.slice(0_usize, module_target.len() - 3_usize)
+            }
+            match completion_module_file_for_doc(state, doc, module_target) {
+                Option[str]::Some(path) => {
+                    let imported = document_for_path(state, path)
+                    if !expanded.wildcard {
+                        let mut physical_name = basename_path(path)
+                        if physical_name == "mod.enq" || physical_name == "lib.enq" {
+                            physical_name = basename_path(parent_path(path))
+                        } elif ends_with(physical_name, ".enq") {
+                            physical_name = physical_name.slice(0_usize, physical_name.len() - 4_usize)
+                        }
+                        if last_scope_segment(module_target) != physical_name {
+                            let parts = split_scope_path(module_target)
+                            module_target = join_scope_parts(parts, parts.len() - 1_usize)
+                        }
+                    }
+                    targets.push(ModuleImportTarget {
+                            module_target, imported.uri
+                        }
+                        ,
+                    )
+                    index_navigation_module(state, imported, visited)
+                }
+                Option[str]::None => {
+                }
+            }
+        }
+    }
+    state.analysis.set_module_import_targets(doc.uri, targets)
+    ret()
+}
+
+fn resolved_symbol_at(state: mut ServerState, doc: Document, token: Token) -> Option[ResolvedReference] {
+    if cursor_associated_owner(doc.analysis.tokens, token.line, token.column) != ""
+    || split_scope_path(cursor_symbol_path(doc.analysis.tokens, token.line, token.column)).len() <= 1_usize {
+        let visited = encore_strset_new()
+        index_query_module(state, doc, visited, true)
+        encore_strset_free(visited)
+    }
+    ret resolved_symbol_in_index(state, doc, token)
+}
+
+// Batch reference queries prepare the document graph once, then resolve every
+// candidate against that same index instead of repeating filesystem traversal.
+fn resolved_symbol_in_index(state: mut ServerState, doc: Document, token: Token) -> Option[ResolvedReference] {
+    let owner = associated_query_owner(state, doc, cursor_associated_owner(doc.analysis.tokens, token.line, token.column))
+    if owner != "" {
+        match state.analysis.associated_owner_type(doc.uri, owner) {
+            Some(receiver) => {
+                match state.analysis.associated_member_details(doc.uri, owner, token.value) {
+                    Some(details) => {
+                        ret Option[ResolvedReference]::Some(member_definition_reference(state, details))
+                    }
+                    None => {
+                        ret Option[ResolvedReference]::None
+                    }
+                }
+            }
+            None => {
+            }
+        }
+    }
+    let path = cursor_symbol_path(doc.analysis.tokens, token.line, token.column)
+    let parts = split_scope_path(path)
+    if parts.len() <= 1_usize {
+        if cursor_member_context(doc.analysis.tokens, token.line, token.column + token.value.char_len()).is_some() {
+            match state.analysis.member_details_at(doc.uri, token.value, token.line, token.column) {
+                Some(details) => {
+                    ret Option[ResolvedReference]::Some(member_definition_reference(state, details))
+                }
+                None => {
+                    ret Option[ResolvedReference]::None
+                }
+            }
+        }
+        match state.analysis.member_declaration_at(doc.uri, token.value, token.line, token.column) {
+            Some(definition) => {
+                let details = state.analysis.member_declaration_details(definition)
+                ret Option[ResolvedReference]::Some(member_definition_reference(state, details))
+            }
+            None => {
+            }
+        }
+        if !cursor_expects_type(doc.analysis.tokens, token.line, token.column)
+        && cursor_member_context(doc.analysis.tokens, token.line, token.column + token.value.char_len()).is_none() {
+            match state.analysis.semantic_binding_at(doc.uri, token.value, token.line, token.column) {
+                Some(binding) => {
+                    // Legacy synthetic bindings do not yet carry declaration spans.
+                    // Never turn those fallback coordinates into an incorrect jump.
+                    for declaration in doc.analysis.tokens {
+                        if declaration.line == binding.line && declaration.column == binding.column
+                        && declaration.type == TokenType::IDENTIFIER && declaration.value == binding.name {
+                            ret Option[ResolvedReference]::Some(ResolvedReference {
+                                    doc.uri + "#local:" + Debug::fmt(binding.line) + ":" + Debug::fmt(binding.column),
+                                    binding.name, doc.uri, token_range(doc, declaration),
+                                    binding.name + ": " + binding.typ, Option[FrontendCallable]::None,
+                                    doc.uri + "#local:" + Debug::fmt(binding.line) + ":" + Debug::fmt(binding.column)
+                                }
+                                ,)
+                        }
+                    }
+                }
+                None => {
+                }
+            }
+        }
+        ret module_symbol_reference(state, doc.uri, token.value, false)
+    }
+    let first = parts.get(0_usize).unwrap_or("")
+    let mut target = path
+    for imported in import_requests_from_doc(doc) {
+        let local = imported.alias.unwrap_or(last_scope_segment(imported.target))
+        if !imported.wildcard && local == first {
+            target = imported.target + path.slice(first.char_len(), path.char_len() - first.char_len())
+            break
+        }
+    }
+    let request = ImportRequest {
+        "", target, Option[str]::None, false,
+        token.line, token.column, token.value.char_len()
+    }
+    match resolve_import_request_uri(state, doc, request) {
+        Option[str]::Some(uri) => {
+            let target_doc = document_for_path(state, uri_to_path(uri))
+            // URI identity isolates identically named packages in different
+            // workspaces. The frontend owns definition IDs and source spans.
+            let visited = encore_strset_new()
+            index_navigation_module(state, target_doc, visited)
+            encore_strset_free(visited)
+            ret module_symbol_reference(state, uri, token.value, target_doc.uri != doc.uri)
+        }
+        Option[str]::None => {
+        }
+    }
+    // A qualified path must never fall back to an unrelated same-named symbol.
+    ret Option[ResolvedReference]::None
+}
+
+fn member_definition_reference(state: mut ServerState, details: MemberDetails) -> ResolvedReference {
+    let definition = details.definition
+    let origin = document_for_path(state, definition.source_name())
+    let id = "member:" + definition.source_identity().key()
+    let mut signature = definition.name() + ": " + details.typ
+    let mut callable = Option[FrontendCallable]::None
+    if definition.kind() == DefinitionKind::Variant {
+        signature = details.typ + "::" + definition.name()
+    }
+    if details.is_method {
+        signature = "fn " + definition.name() + "("
+        let mut first = true
+        for param in details.params {
+            if !first {
+                signature += ", "
+            }
+            signature += param
+            first = false
+        }
+        signature += ") -> " + details.typ
+        callable = Option[FrontendCallable]::Some(FrontendCallable {
+                definition.name(), details.params,
+                Option[str]::Some(details.typ), definition.line(), definition.column(), definition.length()
+            }
+            ,)
+    }
+    let mut hover = "```encore\n" + signature + "\n```"
+    if details.documentation != "" {
+        hover += "\n\n" + details.documentation
+    }
+    ret ResolvedReference {
+        id, definition.name(), origin.uri,
+        lsp_range(origin, definition.line(), definition.column(), definition.length()), hover, callable, id
+    }
+}
+
+fn module_symbol_reference(state: mut ServerState, uri: str, name: str, public_only: bool) -> Option[ResolvedReference] {
+    let mut spaces = Vec[DefinitionNamespace]::new()
+    spaces.push(DefinitionNamespace::Value)
+    spaces.push(DefinitionNamespace::Type)
+    spaces.push(DefinitionNamespace::Trait)
+    for namespace in spaces {
+        match state.analysis.module_definition(uri, name, namespace) {
+            Some(definition) => {
+                if public_only && !definition.is_public() {
+                    continue
+                }
+                let origin = document_for_path(state, definition.source_name())
+                for symbol in origin.analysis.symbols {
+                    if symbol.line == definition.line() && symbol.column == definition.column() {
+                        let mut reference = symbol_reference(state, origin, symbol)
+                        if definition.rename_binding() != "" {
+                            reference.rename_id = definition.rename_binding()
+                        }
+                        ret Option[ResolvedReference]::Some(reference)
+                    }
+                }
+            }
+            None => {
+            }
+        }
+    }
+    ret Option[ResolvedReference]::None
+}
+
 fn resolved_symbol_by_name(state: ServerState, current_doc: Document, name: str) -> Option[ResolvedReference]
 {
     match local_symbol_reference(state, current_doc, name) {
@@ -4868,7 +5788,7 @@ fn symbol_reference(state: ServerState, doc: Document, symbol: FrontendSymbol) -
     let hover = symbol_hover_text(symbol)
     let callable = callable_by_name(doc, symbol.name)
     ret ResolvedReference {
-        id, symbol.name, doc.uri, symbol_range(doc, symbol), hover, callable
+        id, symbol.name, doc.uri, symbol_range(doc, symbol), hover, callable, id
     }
 }
 
@@ -5270,131 +6190,195 @@ fn selection_range_for_position(doc: Document, position: Json) -> Json {
     ret Json::Object(fields)
 }
 
-fn semantic_tokens_full(state: ServerState, params: Json) -> Json {
+fn clear_semantic_token_cache(state: mut ServerState, uri: str) ->() {
+    let mut retained = Vec[SemanticTokenCache]::new()
+    for entry in state.semantic_token_cache {
+        if entry.uri != uri {
+            retained.push(entry)
+        }
+    }
+    state.semantic_token_cache = retained
+    ret()
+}
+
+fn semantic_tokens_full(state: mut ServerState, params: Json) -> Json {
     let uri = request_uri(params)
+    let generation = document_generation(state, uri)
     match state.document(uri) {
-        Option[Document]::Some(doc) => {
-            if doc.analysis.tokens.len() > 400_usize {
-                let mut fields = Vec[(str, Json)]::new()
-                fields.push(field("data", Json::Array(Vec[Json]::new())))
-                ret Json::Object(fields)
+        Some(doc) => {
+            for entry in state.semantic_token_cache {
+                if entry.uri == uri && entry.generation == generation
+                && entry.token_count == doc.analysis.tokens.len()
+                && entry.symbol_count == doc.analysis.symbols.len() {
+                    ret entry.response
+                }
             }
-            let mut data = Vec[Json]::new()
+            let response = compute_semantic_tokens(state, params)
+            clear_semantic_token_cache(state, uri)
+            if !analysis_pending_for_uri(state, uri) {
+                state.semantic_token_cache.push(SemanticTokenCache {
+                        uri, generation, doc.analysis.tokens.len(), doc.analysis.symbols.len(), response
+                    }
+                    ,)
+            }
+            ret response
+        }
+        None => {
+            ret compute_semantic_tokens(state, params)
+        }
+    }
+}
+
+fn compute_semantic_tokens(state: ServerState, params: Json) -> Json {
+    let uri = request_uri(params)
+    let mut data = Vec[Json]::new()
+    match state.document(uri) {
+        Some(original) => {
+            let mut lexer = Lexer::new()
+            let tokens = lexer.tokenize_lossless(original.text)
+            let analysis = original.analysis
+            let doc = Document {
+                uri, original.text, FrontendDocument {
+                    tokens, analysis.ast, analysis.module_documentation, analysis.diagnostics,
+                    analysis.symbols, analysis.callables, analysis.dependencies, analysis.parsed
+                }
+            }
+            let symbols = encore_strmap_new()
+            let mut ordinal = 0_usize
+            for symbol in analysis.symbols {
+                if encore_strmap_get(symbols, symbol.name) == 0_usize {
+                    encore_strmap_put(symbols, symbol.name, ordinal + 1_usize)
+                }
+                ordinal += 1_usize
+            }
+            let lines = semantic_source_lines(doc.text)
+            let mut indexed_line = 0_usize
+            let mut columns = semantic_utf16_columns(lines.get(0_usize).unwrap_or(""))
             let mut previous_line = 0_usize
             let mut previous_start = 0_usize
+            let mut previous_end = 0_usize
             let mut first = true
-            let last_line = document_last_line(doc.text)
-            let mut line = 0_usize
-            let mut token_index = 0_usize
-            while line <= last_line {
-                let current_line = line_text_at(doc.text, line).unwrap_or("")
-                let comment_column = match line_comment_start(current_line) {
-                    Option[usize]::Some(value) => value
-                    Option[usize]::None => current_line.char_len() + 1_usize
+            let mut in_import = false
+            let mut formatted_string = false
+            let mut index = 0_usize
+            for token in tokens {
+                if token.type == TokenType::NEWLINE {
+                    in_import = false
                 }
-                while token_index < doc.analysis.tokens.len() {
-                    match doc.analysis.tokens.get(token_index) {
-                        Option[Token]::Some(token) => {
-                            if token.line > line {
-                                break
-                            }
-                            if token.line == line {
-                                let character_start = token.column
-                                let before_comment = character_start < comment_column
-                                if before_comment {
-                                    match semantic_token_kind(doc, token, token_index) {
-                                        Option[usize]::Some(kind) => {
-                                            let start = utf16_column(current_line, character_start)
-                                            let mut delta_line = token.line
-                                            let mut delta_start = start
-                                            if !first {
-                                                delta_line = token.line - previous_line
-                                                if delta_line == 0_usize {
-                                                    delta_start = start - previous_start
-                                                }
-                                            }
-                                            data.push(json_usize(delta_line))
-                                            data.push(json_usize(delta_start))
-                                            data.push(json_usize(utf16_len(token.value)))
-                                            data.push(json_usize(kind))
-                                            data.push(json_usize(semantic_token_modifier_bits(doc, token)))
-                                            previous_line = token.line
-                                            previous_start = start
-                                            first = false
-                                        }
-                                        Option[usize]::None => {
-                                        }
-                                    }
+                if token.type == TokenType::KW_IMPORT {
+                    in_import = true
+                }
+                if token.type == TokenType::KW_AS {
+                    in_import = false
+                }
+                // Tree-sitter owns interpolated-string syntax. Never cover its
+                // expression captures with one opaque semantic string span.
+                let prefix = token.type == TokenType::IDENTIFIER && token.value == "f"
+                && match tokens.get(index + 1_usize) {
+                    Some(next) => next.type == TokenType::STRING
+                    None => false
+                }
+                let skip = prefix ||(formatted_string && token.type == TokenType::STRING)
+                formatted_string = prefix
+                if !skip {
+                    match semantic_token_kind(doc, token, index, symbols, in_import) {
+                        Some(kind) => {
+                            let parts = semantic_source_lines(token.value)
+                            let mut part_index = 0_usize
+                            for part in parts {
+                                let line = token.line + part_index
+                                if indexed_line != line {
+                                    columns = semantic_utf16_columns(lines.get(line).unwrap_or(""))
+                                    indexed_line = line
                                 }
+                                let character = if part_index == 0_usize {
+                                    token.column
+                                } else {
+                                    0_usize
+                                }
+                                let start = columns.get(character).unwrap_or(0_usize)
+                                let length = utf16_len(part)
+                                if length > 0_usize &&(first || line > previous_line || start >= previous_end) {
+                                    let delta_line = if first {
+                                        line
+                                    } else {
+                                        line - previous_line
+                                    }
+                                    let delta_start = if first || delta_line > 0_usize {
+                                        start
+                                    } else {
+                                        start - previous_start
+                                    }
+                                    data.push(json_usize(delta_line))
+                                    data.push(json_usize(delta_start))
+                                    data.push(json_usize(length))
+                                    data.push(json_usize(kind))
+                                    data.push(json_usize(semantic_token_modifier_bits(doc, token, symbols)))
+                                    previous_line = line
+                                    previous_start = start
+                                    previous_end = start + length
+                                    first = false
+                                }
+                                part_index += 1_usize
                             }
                         }
-                        Option[Token]::None => {
+                        None => {
                         }
                     }
-                    token_index += 1_usize
                 }
-                if comment_column <= current_line.char_len() {
-                    let mut delta_line = line
-                    let lsp_comment_column = utf16_column(current_line, comment_column)
-                    let mut delta_start = lsp_comment_column
-                    if !first {
-                        delta_line = line - previous_line
-                        if delta_line == 0_usize {
-                            delta_start = lsp_comment_column - previous_start
-                        }
-                    }
-                    data.push(json_usize(delta_line))
-                    data.push(json_usize(delta_start))
-                    data.push(json_usize(utf16_len(current_line.slice(comment_column, current_line.char_len()
-                                    - comment_column,))))
-                    data.push(json_usize(10_usize))
-                    data.push(Json::Number("0"))
-                    previous_line = line
-                    previous_start = lsp_comment_column
-                    first = false
-                }
-                if line == last_line {
-                    break
-                }
-                line += 1_usize
+                index += 1_usize
             }
-
-            let mut fields = Vec[(str, Json)]::new()
-            fields.push(field("data", Json::Array(data)))
-            ret Json::Object(fields)
+            encore_strmap_free(symbols)
         }
-        Option[Document]::None => {
+        None => {
         }
     }
     let mut fields = Vec[(str, Json)]::new()
-    fields.push(field("data", Json::Array(Vec[Json]::new())))
+    fields.push(field("data", Json::Array(data)))
     ret Json::Object(fields)
 }
 
-fn line_comment_start(line_text: str) -> Option[usize] {
+fn semantic_utf16_columns(text: str) -> Vec[usize] {
+    let mut columns = Vec[usize]::new()
+    let mut units = 0_usize
+    columns.push(units)
     let mut index = 0_usize
-    let mut in_string = false
-    while index + 1_usize < line_text.char_len() {
-        match line_text.get(index) {
-            Option[str]::Some(ch) => {
-                if ch == "\"" {
-                    in_string = !in_string
-                }
-                if !in_string && ch == "/" {
-                    if line_text.get(index + 1_usize).unwrap_or("") == "/" {
-                        ret Option[usize]::Some(index)
-                    }
-                }
+    while index < text.byte_len() {
+        let byte = text.byte_at(index)
+        if byte < 128_u8 || byte >= 192_u8 {
+            units += if byte >= 240_u8 {
+                2_usize
+            } else {
+                1_usize
             }
-            Option[str]::None => {
-            }
+            columns.push(units)
         }
         index += 1_usize
     }
-    ret Option[usize]::None
+    ret columns
 }
 
-fn semantic_token_kind(doc: Document, token: Token, token_index: usize) -> Option[usize] {
+fn semantic_source_lines(text: str) -> Vec[str] {
+    let mut lines = Vec[str]::new()
+    let mut start = 0_usize
+    let mut index = 0_usize
+    while index < text.byte_len() {
+        if text.byte_at(index) == 10_u8 {
+            let end = if index > start && text.byte_at(index - 1_usize) == 13_u8 {
+                index - 1_usize
+            } else {
+                index
+            }
+            lines.push(text.slice_bytes(start, end - start))
+            start = index + 1_usize
+        }
+        index += 1_usize
+    }
+    lines.push(text.slice_bytes(start, text.byte_len() - start))
+    ret lines
+}
+
+fn semantic_token_kind(doc: Document, token: Token, token_index: usize, symbols: usize, in_import: bool) -> Option[usize] {
     if is_keyword_token(token.type) {
         ret Option[usize]::Some(0_usize)
     }
@@ -5412,22 +6396,45 @@ fn semantic_token_kind(doc: Document, token: Token, token_index: usize) -> Optio
         ret Option[usize]::Some(9_usize)
     }
     if token.type == TokenType::IDENTIFIER {
-        if token_is_import_path_identifier(doc, token_index) {
+        if in_import {
+            if semantic_type_name(token.value) {
+                ret Option[usize]::Some(2_usize)
+            }
             ret Option[usize]::Some(11_usize)
         }
-        match symbol_by_name(doc, token.value) {
-            Option[FrontendSymbol]::Some(symbol) => {
-                ret Option[usize]::Some(semantic_kind_for_symbol(symbol))
-            }
-            Option[FrontendSymbol]::None => {
+        let ordinal = encore_strmap_get(symbols, token.value)
+        if ordinal > 0_usize {
+            match doc.analysis.symbols.get(ordinal - 1_usize) {
+                Option[FrontendSymbol]::Some(symbol) => {
+                    ret Option[usize]::Some(semantic_kind_for_symbol(symbol))
+                }
+                Option[FrontendSymbol]::None => {
+                }
             }
         }
         if token_is_call(doc, token_index) {
             ret Option[usize]::Some(1_usize)
         }
-        ret Option[usize]::Some(6_usize)
+        if semantic_type_name(token.value) {
+            ret Option[usize]::Some(2_usize)
+        }
+        // Unresolved names are left to syntax highlighting, not mislabeled as variables.
+        ret Option[usize]::None
     }
     ret Option[usize]::None
+}
+
+fn semantic_type_name(name: str) -> bool {
+    if name == "bool" || name == "str" || name == "char" || name == "usize" || name == "isize"
+    || name == "u8" || name == "u16" || name == "u32" || name == "u64"
+    || name == "i8" || name == "i16" || name == "i32" || name == "i64"
+    || name == "f32" || name == "f64" {
+        ret true
+    }
+    if name.byte_len() == 0_usize {
+        ret false
+    }
+    ret name.byte_at(0_usize) >= 65_u8 && name.byte_at(0_usize) <= 90_u8
 }
 
 fn semantic_kind_for_symbol(symbol: FrontendSymbol) -> usize {
@@ -5446,86 +6453,42 @@ fn semantic_kind_for_symbol(symbol: FrontendSymbol) -> usize {
     ret 6_usize
 }
 
-fn token_is_import_path_identifier(doc: Document, token_index: usize) -> bool {
-    match doc.analysis.tokens.get(token_index) {
-        Option[Token]::Some(token) => {
-            let mut index = token_index
-            while index > 0_usize {
-                index -= 1_usize
-                match doc.analysis.tokens.get(index) {
-                    Option[Token]::Some(previous) => {
-                        if previous.line != token.line {
-                            ret false
-                        }
-                        if previous.type == TokenType::KW_AS {
-                            ret false
-                        }
-                        if previous.type == TokenType::KW_IMPORT {
-                            ret true
-                        }
-                        if import_path_scan_should_stop(previous) {
-                            ret false
-                        }
-                    }
-                    Option[Token]::None => {
-                    }
-                }
-            }
-        }
-        Option[Token]::None => {
-        }
-    }
-    ret false
-}
-
-fn import_path_scan_should_stop(token: Token) -> bool {
-    if token.type == TokenType::KW_FN {
-        ret true
-    }
-    if token.type == TokenType::KW_STRUCT {
-        ret true
-    }
-    if token.type == TokenType::KW_ENUM {
-        ret true
-    }
-    if token.type == TokenType::KW_TRAIT {
-        ret true
-    }
-    if token.type == TokenType::KW_IMPL {
-        ret true
-    }
-    ret false
-}
-
-fn semantic_token_modifier_bits(doc: Document, token: Token) -> usize {
+fn semantic_token_modifier_bits(doc: Document, token: Token, symbols: usize) -> usize {
     if token.type != TokenType::IDENTIFIER {
         ret 0_usize
     }
-    let mut index = 0_usize
-    while index < doc.analysis.symbols.len() {
-        match doc.analysis.symbols.get(index) {
+    let ordinal = encore_strmap_get(symbols, token.value)
+    if ordinal > 0_usize {
+        match doc.analysis.symbols.get(ordinal - 1_usize) {
             Option[FrontendSymbol]::Some(symbol) => {
-                if symbol.name == token.value && symbol.line == token.line {
+                if symbol.line == token.line && symbol.column == token.column {
                     ret 3_usize
                 }
             }
             Option[FrontendSymbol]::None => {
             }
         }
-        index += 1_usize
     }
     ret 0_usize
 }
 
 fn token_is_call(doc: Document, token_index: usize) -> bool {
-    match doc.analysis.tokens.get(token_index + 1_usize) {
-        Option[Token]::Some(next) => {
-            ret next.type == TokenType::LEFT_PAREN
-        }
-        Option[Token]::None => {
-            ret false
+    let mut index = token_index + 1_usize
+    while index < doc.analysis.tokens.len() {
+        match doc.analysis.tokens.get(index) {
+            Option[Token]::Some(next) => {
+                if next.type == TokenType::WHITESPACE {
+                    index += 1_usize
+                    continue
+                }
+                ret next.type == TokenType::LEFT_PAREN
+            }
+            Option[Token]::None => {
+                ret false
+            }
         }
     }
+    ret false
 }
 
 fn formatting_edits(state: mut ServerState, params: Json) -> Json {
@@ -5779,106 +6742,6 @@ fn callable_by_name(doc: Document, name: str) -> Option[FrontendCallable] {
     ret Option[FrontendCallable]::None
 }
 
-fn active_call_at_request(doc: Document, params: Json) -> Option[(str, usize)] {
-    let position = json_get(params, "position")
-    let line = json_number_usize(json_get(position, "line"), 0_usize)
-    let character = request_character_index(doc, line, json_number_usize(json_get(position, "character"),
-            0_usize,))
-    ret active_call_at(doc, line, character)
-}
-
-fn active_call_at(doc: Document, line: usize, character: usize) -> Option[(str, usize)] {
-    let tokens = tooling_tokens(doc.text)
-    let cursor = token_cursor_index_in(tokens, line, character)
-    let mut paren_depth = 0_i32
-    let mut index = cursor
-    while index > 0_usize {
-        index -= 1_usize
-        match tokens.get(index) {
-            Option[Token]::Some(token) => {
-                if token.type == TokenType::RIGHT_PAREN {
-                    paren_depth += 1_i32
-                } elif token.type == TokenType::LEFT_PAREN {
-                    if paren_depth == 0_i32 {
-                        match call_name_before_open_paren(tokens, index) {
-                            Option[str]::Some(name) => {
-                                ret Option[(str, usize)]::Some((name, active_parameter_between(tokens, index
-                                            + 1_usize, cursor,)))
-                            }
-                            Option[str]::None => {
-                                ret Option[(str, usize)]::None
-                            }
-                        }
-                    }
-                    paren_depth -= 1_i32
-                }
-            }
-            Option[Token]::None => {
-            }
-        }
-    }
-    ret Option[(str, usize)]::None
-}
-
-fn call_name_before_open_paren(tokens: Vec[Token], open_paren_index: usize) -> Option[str] {
-    if open_paren_index == 0_usize {
-        ret Option[str]::None
-    }
-    let mut index = open_paren_index
-    while index > 0_usize {
-        index -= 1_usize
-        match tokens.get(index) {
-            Option[Token]::Some(token) => {
-                if token.type == TokenType::IDENTIFIER {
-                    ret Option[str]::Some(token.value)
-                }
-                if token.type != TokenType::SCOPE {
-                    if token.type != TokenType::DOT {
-                        ret Option[str]::None
-                    }
-                }
-            }
-            Option[Token]::None => {
-            }
-        }
-    }
-    ret Option[str]::None
-}
-
-fn active_parameter_between(tokens: Vec[Token], start_index: usize, end_index: usize) -> usize {
-    let mut active = 0_usize
-    let mut paren_depth = 0_i32
-    let mut bracket_depth = 0_i32
-    let mut brace_depth = 0_i32
-    let mut index = start_index
-    while index < end_index {
-        match tokens.get(index) {
-            Option[Token]::Some(token) => {
-                if token.type == TokenType::LEFT_PAREN {
-                    paren_depth += 1_i32
-                } elif token.type == TokenType::RIGHT_PAREN {
-                    paren_depth -= 1_i32
-                } elif token.type == TokenType::LEFT_BRACKET {
-                    bracket_depth += 1_i32
-                } elif token.type == TokenType::RIGHT_BRACKET {
-                    bracket_depth -= 1_i32
-                } elif token.type == TokenType::LEFT_BRACE {
-                    brace_depth += 1_i32
-                } elif token.type == TokenType::RIGHT_BRACE {
-                    brace_depth -= 1_i32
-                } elif token.type == TokenType::COMMA && paren_depth == 0_i32 && bracket_depth == 0_i32
-                && brace_depth == 0_i32 {
-                    active += 1_usize
-                }
-            }
-            Option[Token]::None => {
-            }
-        }
-        index += 1_usize
-    }
-    ret active
-}
-
 fn token_cursor_index(doc: Document, line: usize, character: usize) -> usize {
     let mut index = 0_usize
     while index < doc.analysis.tokens.len() {
@@ -5900,26 +6763,6 @@ fn token_cursor_index(doc: Document, line: usize, character: usize) -> usize {
         index += 1_usize
     }
     ret doc.analysis.tokens.len()
-}
-
-fn token_cursor_index_in(tokens: Vec[Token], line: usize, character: usize) -> usize {
-    let mut index = 0_usize
-    while index < tokens.len() {
-        match tokens.get(index) {
-            Option[Token]::Some(token) => {
-                if token.line > line {
-                    ret index
-                }
-                if token.line == line && token.column >= character {
-                    ret index
-                }
-            }
-            Option[Token]::None => {
-            }
-        }
-        index += 1_usize
-    }
-    ret tokens.len()
 }
 
 fn symbol_hover_text(symbol: FrontendSymbol) -> str {
@@ -6046,43 +6889,15 @@ fn type_completion_requested(doc: Document, params: Json) -> bool {
     let line = json_number_usize(json_get(position, "line"), 0_usize)
     let character = request_character_index(doc, line, json_number_usize(json_get(position, "character"),
             0_usize,))
-    let mut index = token_cursor_index(doc, line, character)
-    let mut saw_type_marker = false
-    while index > 0_usize {
-        index -= 1_usize
-        match doc.analysis.tokens.get(index) {
-            Option[Token]::Some(token) => {
-                if token.type == TokenType::COLON || token.type == TokenType::ARROW {
-                    saw_type_marker = true
-                } elif token.type == TokenType::KW_FN {
-                    ret saw_type_marker
-                } elif token.type == TokenType::LEFT_BRACE || token.type == TokenType::RIGHT_BRACE {
-                    ret false
-                }
-            }
-            Option[Token]::None => {
-            }
-        }
-    }
-    ret false
+    ret cursor_expects_type(doc.analysis.tokens, line, character)
 }
 
-fn type_completion_items(state: ServerState, doc: Document, params: Json) -> Vec[Json] {
+fn type_completion_items(state: mut ServerState, doc: Document, params: Json) -> Vec[Json] {
     let mut items = Vec[Json]::new()
     push_builtin_type_items(items)
     push_visible_generic_type_items(items, doc, params)
-    push_type_symbol_items_for_doc(items, doc, "Encore type")
-    for workspace_doc in state.documents {
-        if workspace_doc.uri != doc.uri {
-            push_type_symbol_items_for_doc(items, workspace_doc, "Workspace type")
-        }
-    }
-    for workspace_doc in state.workspace_documents {
-        if workspace_doc.uri != doc.uri && !open_document_exists(state, workspace_doc.uri) {
-            push_type_symbol_items_for_doc(items, workspace_doc, "Workspace type")
-        }
-    }
-    push_imported_type_items(state, items, doc)
+    push_visible_completion_items(state, items, doc, params, true)
+    push_autoimport_items(state, items, doc, params, true)
     ret items
 }
 
@@ -6113,15 +6928,6 @@ fn push_builtin_type_items(items: mut Vec[Json]) ->() {
 
 fn is_type_symbol(symbol: FrontendSymbol) -> bool {
     ret symbol.kind == 23_usize || symbol.kind == 10_usize || symbol.kind == 11_usize
-}
-
-fn push_type_symbol_items_for_doc(items: mut Vec[Json], doc: Document, detail: str) ->() {
-    for symbol in doc.analysis.symbols {
-        if is_type_symbol(symbol) && !completion_item_exists(items, symbol.name) {
-            items.push(completion_item(symbol.name, symbol_completion_kind(symbol.kind), detail))
-        }
-    }
-    ret()
 }
 
 fn push_visible_generic_type_items(items: mut Vec[Json], doc: Document, params: Json) ->() {
@@ -6173,35 +6979,6 @@ fn push_visible_generic_type_items(items: mut Vec[Json], doc: Document, params: 
             }
         }
         index += 1_usize
-    }
-    ret()
-}
-
-fn push_imported_type_items(state: ServerState, items: mut Vec[Json], doc: Document) ->() {
-    for request in import_requests_from_doc(doc) {
-        match resolve_import_request_uri(state, doc, request) {
-            Some(uri) => {
-                let imported = match state.document(uri) {
-                    Some(open_doc) => open_doc
-                    None => Document::new(uri, read_file(uri_to_path(uri)))
-                }
-                if request.wildcard {
-                    push_type_symbol_items_for_doc(items, imported, "Imported type")
-                } else {
-                    let target_name = last_scope_segment(request.target)
-                    for symbol in imported.analysis.symbols {
-                        if symbol.name == target_name && is_type_symbol(symbol) {
-                            let label = request.alias.unwrap_or(symbol.name)
-                            if !completion_item_exists(items, label) {
-                                items.push(completion_item(label, symbol_completion_kind(symbol.kind), "Imported type"))
-                            }
-                        }
-                    }
-                }
-            }
-            None => {
-            }
-        }
     }
     ret()
 }
@@ -6292,10 +7069,15 @@ fn document_diagnostics_json(state: mut ServerState, doc: Document,
             doc.analysis, analyzer_config_for_uri(doc.uri),))
     items.extend(diagnostics_to_lsp(doc, analyzer_diagnostics))
     items.extend(diagnostics_to_lsp(doc, tolerant_import_diagnostics(state, doc)))
-    // The typed parser currently rejects incomplete source. Only enter it when
+    for graph in state.project_graphs {
+        if graph.entry == uri_to_path(doc.uri) && graph.ready {
+            items.extend(diagnostics_to_lsp(doc, graph.diagnostics))
+        }
+    }
+    // Only schedule typed checks when
     // the tolerant frontend has established that the document is syntactically
     // complete; buffers between two keystrokes keep lightweight diagnostics.
-    if include_typed && doc.analysis.diagnostics.len() == 0_usize && !source_has_incomplete_import(doc.text) {
+    if include_typed && doc.analysis.diagnostics.len() == 0_usize && doc.analysis.parsed {
         let typed_diagnostics = semantic_result_for_uri(state, doc.uri).unwrap_or(Vec[FrontendDiagnostic]::new())
         let mut typed_without_imports = Vec[FrontendDiagnostic]::new()
         for diagnostic in typed_diagnostics {
@@ -6322,26 +7104,6 @@ fn document_diagnostics_json(state: mut ServerState, doc: Document,
     ret items
 }
 
-fn source_has_incomplete_import(source: str) -> bool {
-    let mut line_start = 0_usize
-    let mut index = 0_usize
-    while index <= source.byte_len() {
-        if index == source.byte_len() || source.byte_at(index) == 10_u8 {
-            let mut line_end = index
-            if line_end > line_start && source.byte_at(line_end - 1_usize) == 13_u8 {
-                line_end -= 1_usize
-            }
-            let line = trim_spaces(source.slice_bytes(line_start, line_end - line_start))
-            if starts_with(line, "import ") && ends_with(line, "::") {
-                ret true
-            }
-            line_start = index + 1_usize
-        }
-        index += 1_usize
-    }
-    ret false
-}
-
 fn imported_symbol_resolves(state: mut ServerState, doc: Document, name: str) -> bool {
     for edge in doc.analysis.dependencies.all() {
         let mut target = edge.target
@@ -6355,7 +7117,7 @@ fn imported_symbol_resolves(state: mut ServerState, doc: Document, name: str) ->
             target = join_scope_parts(parts, parts.len() - 1_usize)
         }
         let mut items = Vec[Json]::new()
-        push_import_symbol_items(state, doc, items, target, name, 0_usize)
+        push_import_symbol_items(state, doc, items, target, name)
         if completion_item_exists(items, name) {
             ret true
         }
@@ -6538,6 +7300,16 @@ fn diagnostics_to_lsp(doc: Document, diagnostics: Vec[FrontendDiagnostic]) -> Ve
     ret items
 }
 
+fn diagnostic_source_uri(doc: Document, source_name: str) -> str {
+    if source_name == "" {
+        ret doc.uri
+    }
+    if starts_with(source_name, "file://") {
+        ret source_name
+    }
+    ret path_to_uri(source_name)
+}
+
 fn diagnostic_to_lsp(doc: Document, diagnostic: FrontendDiagnostic) -> Json {
     let mut fields = Vec[(str, Json)]::new()
     fields.push(field("range", diagnostic_primary_range(doc, diagnostic)))
@@ -6549,11 +7321,7 @@ fn diagnostic_to_lsp(doc: Document, diagnostic: FrontendDiagnostic) -> Json {
     let mut related = Vec[Json]::new()
     for label in diagnostic.labels {
         if label.kind == DiagnosticLabelKind::Secondary {
-            let uri = if label.source_name == "" {
-                doc.uri
-            } else {
-                path_to_uri(label.source_name)
-            }
+            let uri = diagnostic_source_uri(doc, label.source_name)
             let mut location = Vec[(str, Json)]::new()
             location.push(field("uri", Json::String(uri)))
             location.push(field("range", range_between(label.line, label.column, label.line, label.column
@@ -6571,14 +7339,8 @@ fn diagnostic_to_lsp(doc: Document, diagnostic: FrontendDiagnostic) -> Json {
     let mut suggestions = Vec[Json]::new()
     for suggestion in diagnostic.suggestions {
         let mut item = Vec[(str, Json)]::new()
-        item.push(field("uri", Json::String(if suggestion.source_name == "" {
-                        doc.uri
-                    } else {
-                        path_to_uri(suggestion.source_name)
-                    }
-                )))
-        item.push(field("range", range_between(suggestion.line, suggestion.column, suggestion.line, suggestion.column
-                    + max_usize(suggestion.length, 1_usize),)))
+        item.push(field("uri", Json::String(diagnostic_source_uri(doc, suggestion.source_name))))
+        item.push(field("range", lsp_range(doc, suggestion.line, suggestion.column, suggestion.length)))
         item.push(field("replacement", Json::String(suggestion.replacement)))
         item.push(field("message", Json::String(suggestion.message)))
         item.push(field("applicability", Json::String(applicability_name(suggestion.applicability))))

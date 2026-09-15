@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 
@@ -38,12 +39,30 @@ def read(process: subprocess.Popen[bytes]) -> dict:
 def response(
     process: subprocess.Popen[bytes], request_id: int, observed: list[dict] | None = None
 ) -> dict:
-    while True:
-        message = read(process)
-        if observed is not None:
-            observed.append(message)
-        if message.get("id") == request_id:
-            return message
+    # Also bound cleanup requests: a hung protocol loop must fail this test,
+    # not leave its own child running indefinitely in a finally block.
+    expired = threading.Event()
+
+    def timeout():
+        expired.set()
+        if process.poll() is None:
+            process.kill()
+
+    timer = threading.Timer(15, timeout)
+    timer.start()
+    try:
+        while True:
+            message = read(process)
+            if observed is not None:
+                observed.append(message)
+            if message.get("id") == request_id:
+                return message
+    except RuntimeError as error:
+        if expired.is_set():
+            raise TimeoutError(f'LSP request {request_id} exceeded 15 seconds') from error
+        raise
+    finally:
+        timer.cancel()
 
 
 def publishes_code(messages: list[dict], code: str) -> bool:
@@ -319,7 +338,7 @@ def main() -> None:
                 },
             )
             assert response(recovered, 8)["result"]["items"] == []
-            assert json.loads(cache_file.read_text())["schema"] == "encore-lsp-analysis-v1"
+            assert json.loads(cache_file.read_text())["schema"] == "encore-lsp-analysis-v2"
         finally:
             if recovered.poll() is None:
                 stop(recovered)

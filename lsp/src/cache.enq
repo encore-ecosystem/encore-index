@@ -11,7 +11,7 @@ import json::{Json, ParseError, field, parse, stringify}
 import std::os::{file_exists, mkdir_all, read_file, write_file_atomic}
 
 fn cache_schema() -> str {
-    ret "encore-lsp-analysis-v1"
+    ret "encore-lsp-analysis-v2"
 }
 
 pub fn load(path: str, module_name: str, source: str) -> Option[FrontendDocument] {

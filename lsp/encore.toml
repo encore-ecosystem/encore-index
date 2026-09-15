@@ -1,6 +1,6 @@
 [project]
 name = "lsp"
-version = "0.0.0"
+version = "0.1.0"
 repository = "https://github.com/encore-ecosystem/encore-index"
 encore = ">=0.0.0"
 description = "Encore language server implemented in Encore"

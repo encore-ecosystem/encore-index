@@ -1,0 +1,71 @@
+//! Converts structured analyzer suggestions into versioned LSP quick fixes.
+
+import core::option::Option
+import core::vec::Vec
+import json::{Json, field}
+import mod::protocol::{json_get, json_get_str, json_number_usize}
+
+fn before_or_equal(left: Json, right: Json) -> bool {
+    let a = json_number_usize(json_get(left, "line"), 0_usize)
+    let b = json_number_usize(json_get(right, "line"), 0_usize)
+    ret a < b ||(a == b && json_number_usize(json_get(left, "character"), 0_usize)
+        <= json_number_usize(json_get(right, "character"), 0_usize))
+}
+
+pub fn versioned_edit(uri: str, version: Json, edits: Vec[Json]) -> Json {
+    let mut document = Vec[(str, Json)]::new()
+    document.push(field("uri", Json::String(uri)))
+    document.push(field("version", version))
+    let mut change = Vec[(str, Json)]::new()
+    change.push(field("textDocument", Json::Object(document)))
+    change.push(field("edits", Json::Array(edits)))
+    let mut changes = Vec[Json]::new()
+    changes.push(Json::Object(change))
+    let mut result = Vec[(str, Json)]::new()
+    result.push(field("documentChanges", Json::Array(changes)))
+    ret Json::Object(result)
+}
+
+pub fn diagnostic_actions(uri: str, version: Json, diagnostics: Vec[Json], range: Json) -> Vec[Json] {
+    let mut actions = Vec[Json]::new()
+    for diagnostic in diagnostics {
+        let location = json_get(diagnostic, "range")
+        if !ranges_overlap(location, range) {
+            continue
+        }
+        match json_get(json_get(diagnostic, "data"), "suggestions").as_array() {
+            Option[Vec[Json]]::Some(suggestions) => {
+                for suggestion in suggestions {
+                    if json_get_str(suggestion, "uri", uri) != uri {
+                        continue
+                    }
+                    // Placeholder-bearing edits are not executable quick fixes.
+                    if json_get_str(suggestion, "applicability", "") != "machine-applicable" {
+                        continue
+                    }
+                    let mut edit = Vec[(str, Json)]::new()
+                    edit.push(field("range", json_get(suggestion, "range")))
+                    edit.push(field("newText", json_get(suggestion, "replacement")))
+                    let mut edits = Vec[Json]::new()
+                    edits.push(Json::Object(edit))
+                    let mut related = Vec[Json]::new()
+                    related.push(diagnostic)
+                    let mut action = Vec[(str, Json)]::new()
+                    action.push(field("title", json_get(suggestion, "message")))
+                    action.push(field("kind", Json::String("quickfix")))
+                    action.push(field("diagnostics", Json::Array(related)))
+                    action.push(field("edit", versioned_edit(uri, version, edits)))
+                    actions.push(Json::Object(action))
+                }
+            }
+            Option[Vec[Json]]::None => {
+            }
+        }
+    }
+    ret actions
+}
+
+pub fn ranges_overlap(left: Json, right: Json) -> bool {
+    ret before_or_equal(json_get(left, "start"), json_get(right, "end"))
+    && before_or_equal(json_get(right, "start"), json_get(left, "end"))
+}

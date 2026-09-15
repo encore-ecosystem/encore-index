@@ -25,6 +25,14 @@ Current server capabilities:
   installed package index share one resolver. Module and declaration candidates
   include their Markdown documentation and a concise documented summary.
   Parsed dependency metadata is reused in memory across completion keystrokes.
+- Scoped autoimports offer public declarations from the current project and
+  installed direct dependencies as `additionalTextEdits`. Existing bindings do
+  not receive duplicate imports; insertions preserve module/item documentation
+  and line endings. Unrelated workspace projects are not completion scope.
+- `completionItem/resolve` loads declaration documentation on demand for clients
+  supporting deferred documentation, with source-hash checks against stale items.
+- `textDocument/codeAction` exposes machine-applicable diagnostic suggestions and
+  import fixes for unknown types/names as versioned workspace edits.
 - `textDocument/documentLink` for import paths, including file targets resolved through workspace project/module discovery.
 - `textDocument/foldingRange` for brace-delimited blocks.
 - `textDocument/selectionRange` for identifier selections.
@@ -39,16 +47,30 @@ Current server capabilities:
   `core`, `std`, current-package modules and transitive path/index dependencies.
   Each open entrypoint owns an isolated immutable graph snapshot, so multi-root
   workspaces cannot mix packages with the same name.
-  The native docstring analyzer reports `missing-module-docstring` by default;
-  `missing-public-docstring` is available as an opt-in rule.
+  Editor graph loading is offline, including transitive and Git dependencies:
+  missing packages report a recoverable error asking the user to run `encore sync`.
+  Documentation rules (`missing-module-docstring` and
+  `missing-public-docstring`) are opt-in through `[lint.rules]`.
 - `textDocument/prepareCallHierarchy`, `callHierarchy/outgoingCalls`, `callHierarchy/incomingCalls` for callable symbols.
 - Dynamic watching of `encore.toml` and `encore.lock`; package changes refresh
   workspace indexing and diagnostics without restarting the server.
 
-The stdio thread owns protocol state and output. A bounded `CPU - 1` worker scheduler
+The stdio thread owns protocol state and output. A bounded worker scheduler
+defaults to half the available CPUs (rounded up), capped at four analysis tasks. It
 analyzes documents, and revision checks discard stale results. Incremental text
 sync and a short debounce keep typing responsive; cursor features use a fast
 declaration outline while deeper diagnostics are pending.
+
+Semantic highlighting has no document-size cutoff. A sequential lossless token
+pass handles multiline comments, CRLF and UTF-16 coordinates, with a name index
+instead of rescanning all declarations for every token. Results for unchanged
+document revisions are reused; edits and close/reopen invalidate them. Interpolated
+string syntax remains owned by Tree-sitter so semantic spans cannot cover embedded
+expressions with one opaque string highlight.
+
+Run `python3 tests/semantic_tokens.py target/release/lsp` for the large-document,
+Unicode and cache-invalidation contract; an optional final argument sets the number
+of generated functions (for example `2000`). The test prints request timings.
 
 Validated analysis metadata is cached per project in
 `.encore_cache/lsp/v1`. Cache files are atomically replaced and invalidated by
@@ -57,9 +79,17 @@ initialization options `jobs`, `debounceMs`, `cache`, and `cacheDir`, or with
 `ENCORE_LSP_JOBS`, `ENCORE_LSP_DEBOUNCE_MS`, `ENCORE_LSP_CACHE`, and
 `ENCORE_LSP_CACHE_DIR`.
 
-The shared frontend `AnalysisDatabase` still owns applied results and performs
-interface-aware dependant invalidation. Navigation and rename use deterministic
-frontend `ModuleId`/`SymbolId` identities.
+The shared frontend `AnalysisDatabase` owns applied results and performs
+interface-aware dependant invalidation. Navigation resolves physical declaration
+identities, including aliases, same-named types and enum variants.
+
+## Current limitations
+
+Version 0.1.0 does not claim complete semantic coverage of the language. Member
+rename is intentionally unavailable until capture-safe edits can be guaranteed.
+Enum payload signature help, complete qualified-expression type inference, and
+fully structural type propagation remain follow-up work. Implementation lookup
+and call hierarchy are less precise than declaration navigation.
 
 ## Source Layout
 
@@ -95,6 +125,10 @@ python3 tests/docstrings.py target/dev/lsp
 python3 tests/scheduler.py target/dev/lsp
 python3 tests/protocol_features.py target/dev/lsp
 python3 tests/workspace_graph.py target/dev/lsp
+python3 tests/autoimports.py target/release/lsp
+python3 tests/offline_dependencies.py target/release/lsp
+python3 tests/member_completion.py target/release/lsp
+python3 tests/code_actions.py target/release/lsp
 ```
 
 The integration tests use only the Python standard library. If future tests
