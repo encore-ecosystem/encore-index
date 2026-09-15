@@ -8,16 +8,13 @@ extern fn encore_str_line_start_byte(value: str, target_line: usize) -> usize
 pub fn utf16_len(value: str) -> usize {
     let mut units = 0_usize
     let mut index = 0_usize
-    while index < value.char_len() {
-        match value.get(index) {
-            Some(ch) => {
-                if (ch.byte_at(0_usize) as usize) >= 240_usize {
-                    units = units + 2_usize
-                } else {
-                    units = units + 1_usize
-                }
-            }
-            None => {
+    while index < value.byte_len() {
+        let byte = value.byte_at(index)
+        if byte < 128_u8 || byte >= 192_u8 {
+            units += if byte >= 240_u8 {
+                2_usize
+            } else {
+                1_usize
             }
         }
         index = index + 1_usize
@@ -28,34 +25,43 @@ pub fn utf16_len(value: str) -> usize {
 pub fn character_index_from_utf16(value: str, target_units: usize) -> usize {
     let mut units = 0_usize
     let mut index = 0_usize
-    while index < value.char_len() {
-        match value.get(index) {
-            Some(ch) => {
-                let width = if (ch.byte_at(0_usize) as usize) >= 240_usize {
-                    2_usize
-                } else {
-                    1_usize
-                }
-                if units + width > target_units {
-                    ret index
-                }
-                units = units + width
+    let mut characters = 0_usize
+    while index < value.byte_len() {
+        let byte = value.byte_at(index)
+        if byte < 128_u8 || byte >= 192_u8 {
+            let width = if byte >= 240_u8 {
+                2_usize
+            } else {
+                1_usize
             }
-            None => {
+            if units + width > target_units {
+                ret characters
             }
+            units += width
+            characters += 1_usize
         }
         index = index + 1_usize
     }
-    ret index
+    ret characters
 }
 
 pub fn utf16_column(value: str, character_index: usize) -> usize {
-    let count = if character_index < value.char_len() {
-        character_index
-    } else {
-        value.char_len()
+    let mut index = 0_usize
+    let mut characters = 0_usize
+    let mut units = 0_usize
+    while index < value.byte_len() && characters < character_index {
+        let byte = value.byte_at(index)
+        if byte < 128_u8 || byte >= 192_u8 {
+            units += if byte >= 240_u8 {
+                2_usize
+            } else {
+                1_usize
+            }
+            characters += 1_usize
+        }
+        index += 1_usize
     }
-    ret utf16_len(value.slice(0_usize, count))
+    ret units
 }
 
 pub fn line_text_at(text: str, target_line: usize) -> Option[str] {
