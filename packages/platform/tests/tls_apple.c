@@ -19,7 +19,10 @@ static char *encore_to_cstr(encore_str s) {
     if (p) { memcpy(p, s.data, s.size); p[s.size] = 0; }
     return p;
 }
-static void encore_set_net_error_cstr(const char *message) { (void)message; }
+static char last_error[256];
+static void encore_set_net_error_cstr(const char *message) {
+    snprintf(last_error, sizeof(last_error), "%s", message);
+}
 #include "../tls_apple.h"
 static encore_str text(char *p) { return (encore_str){p, strlen(p)}; }
 static int probe(int argc, char **argv) {
@@ -59,6 +62,7 @@ static int probe(int argc, char **argv) {
 }
 int main(int argc, char **argv) {
     int result = probe(argc, argv);
+    if (result) fprintf(stderr, "TLS probe stage %d failed: %s\n", result, last_error);
     /* Let cancellation completions execute under ASan before process exit. */
     sleep(1);
     return result;
