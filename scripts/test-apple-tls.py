@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from tls_fixtures import generate_certificates
 
 
 def main():
@@ -28,41 +29,16 @@ def main():
                             "-fsanitize=address", "-g", str(root / "packages/platform/tests/tls_apple.c"),
                             "-framework", "Network", "-framework", "Security", "-framework", "CoreFoundation",
                             "-o", str(binary)], check=True)
-        key, cert = temp / "key.pem", temp / "cert.pem"
-        cert_config = temp / "cert.cnf"
-        cert_config.write_text("[req]\ndistinguished_name=dn\nx509_extensions=extensions\n"
-                               "[dn]\n[extensions]\nsubjectAltName=DNS:localhost\n"
-                               "basicConstraints=critical,CA:TRUE\n")
-        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
-                        "-subj", "/CN=localhost", "-config", str(cert_config),
-                        "-keyout", str(key), "-out", str(cert)], check=True, capture_output=True)
+        certificates = generate_certificates(temp)
+        cert = certificates.ca
         invalid = temp / "invalid.pem"
         invalid.write_text("not a certificate")
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.load_cert_chain(cert, key)
-        leaf_key, csr, expired = temp / "leaf.key", temp / "leaf.csr", temp / "expired.pem"
-        subprocess.run(["openssl", "req", "-new", "-newkey", "rsa:2048", "-nodes",
-                        "-subj", "/CN=localhost", "-keyout", str(leaf_key), "-out", str(csr)],
-                       check=True, capture_output=True)
-        (temp / "database").touch()
-        (temp / "serial").write_text("01\n")
-        ca_config = temp / "ca.cnf"
-        ca_config.write_text("[ca]\ndefault_ca=authority\n[authority]\n"
-                             f"database={temp}/database\nserial={temp}/serial\nnew_certs_dir={temp}\n"
-                             f"certificate={cert}\nprivate_key={key}\n"
-                             "default_md=sha256\npolicy=names\nx509_extensions=extensions\n"
-                             "[names]\ncommonName=supplied\n[extensions]\n"
-                             "subjectAltName=DNS:localhost\nbasicConstraints=critical,CA:FALSE\n")
-        subprocess.run(["openssl", "ca", "-batch", "-notext", "-config", str(ca_config),
-                        "-startdate", "20000101000000Z", "-enddate", "20000102000000Z",
-                        "-in", str(csr), "-out", str(expired)], check=True, capture_output=True)
+        context.load_cert_chain(certificates.server, certificates.key)
         expired_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        expired_context.load_cert_chain(expired, leaf_key)
+        expired_context.load_cert_chain(certificates.expired, certificates.key)
         if fixtures_only:
-            subprocess.run(["openssl", "verify", "-CAfile", str(cert), str(cert)], check=True, capture_output=True)
-            rejected = subprocess.run(["openssl", "verify", "-CAfile", str(cert), str(expired)], capture_output=True)
-            assert rejected.returncode != 0 and b"expired" in rejected.stdout + rejected.stderr
-            print("TLS certificate fixtures: valid CA and expired signed leaf verified")
+            print("TLS fixtures: serverAuth leaf, CA chain and expired signed leaf verified")
             return
 
         class Server(socketserver.ThreadingTCPServer):

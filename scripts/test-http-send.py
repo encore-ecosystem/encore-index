@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from tls_fixtures import generate_certificates
 
 
 def main():
@@ -47,19 +48,10 @@ def main():
 
     with tempfile.TemporaryDirectory(prefix="encore-http-send-") as temporary:
         root = Path(temporary)
-        key, cert = root / "key.pem", root / "cert.pem"
-        cert_config = root / "cert.cnf"
-        cert_config.write_text("[req]\ndistinguished_name=dn\nx509_extensions=extensions\n"
-                               "[dn]\n[extensions]\nsubjectAltName=DNS:localhost\n"
-                               "basicConstraints=critical,CA:TRUE\n")
-        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048",
-                        "-nodes", "-days", "1", "-subj", "/CN=localhost",
-                        "-config", str(cert_config),
-                        "-keyout", str(key), "-out", str(cert)],
-                       check=True, capture_output=True)
+        certificates = generate_certificates(root)
         with http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server, http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler) as local:
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            context.load_cert_chain(cert, key)
+            context.load_cert_chain(certificates.server, certificates.key)
             server.socket = context.wrap_socket(server.socket, server_side=True)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
@@ -71,7 +63,7 @@ def main():
                     cwd=Path(__file__).resolve().parents[1] / "packages" / "std",
                     env={**os.environ, "ENCORE_HTTP_SEND_TEST_URL": f"https://localhost:{server.server_port}",
                          "ENCORE_HTTP_LOCAL_TEST_URL": f"http://localhost:{local.server_port}",
-                         "ENCORE_HTTP_SEND_TEST_CA": str(cert)},
+                         "ENCORE_HTTP_SEND_TEST_CA": str(certificates.ca)},
                     timeout=120, check=True)
             finally:
                 server.shutdown()

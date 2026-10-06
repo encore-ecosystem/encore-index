@@ -36,6 +36,7 @@ typedef struct {
     CFStringRef hostname;
     CFArrayRef anchors;
     _Atomic bool ready;
+    _Atomic int trust_error, network_domain, network_error;
     bool notified; /* callback queue only */
     bool read_failed, eof, poisoned;
     size_t timeout_ms;
@@ -112,6 +113,9 @@ size_t encore_tls_client_connect(encore_str host, size_t port, encore_str ca_fil
     client->connected = dispatch_semaphore_create(0);
     client->timeout_ms = timeout_ms;
     atomic_init(&client->ready, false);
+    atomic_init(&client->trust_error, 0);
+    atomic_init(&client->network_domain, 0);
+    atomic_init(&client->network_error, 0);
     client->hostname = CFStringCreateWithCString(NULL, host_c, kCFStringEncodingUTF8);
     if (ca_c[0]) client->anchors = encore_apple_load_ca(ca_c);
     bool valid = client->hostname && (!ca_c[0] || client->anchors);
@@ -138,6 +142,8 @@ size_t encore_tls_client_connect(encore_str host, size_t port, encore_str ca_fil
                     }
                     CFErrorRef error = NULL;
                     if (accepted) accepted = SecTrustEvaluateWithError(peer, &error);
+                    if (!accepted) atomic_store(&client->trust_error,
+                        error ? (int)CFErrorGetCode(error) : (int)errSecNotTrusted);
                     if (error) CFRelease(error);
                     if (policy) CFRelease(policy);
                     if (peer) CFRelease(peer);
@@ -159,7 +165,10 @@ size_t encore_tls_client_connect(encore_str host, size_t port, encore_str ca_fil
     atomic_fetch_add(&client->refs, 1);
     nw_connection_set_state_changed_handler(client->connection,
         ^(nw_connection_state_t state, nw_error_t error) {
-            (void)error;
+            if (error) {
+                atomic_store(&client->network_domain, (int)nw_error_get_error_domain(error));
+                atomic_store(&client->network_error, nw_error_get_error_code(error));
+            }
             if (!client->notified && (state == nw_connection_state_ready ||
                 state == nw_connection_state_failed || state == nw_connection_state_cancelled)) {
                 client->notified = true;
@@ -171,8 +180,13 @@ size_t encore_tls_client_connect(encore_str host, size_t port, encore_str ca_fil
     nw_connection_start(client->connection);
     bool timed_out = dispatch_semaphore_wait(client->connected, encore_tls_deadline(timeout_ms)) != 0;
     if (timed_out || !atomic_load(&client->ready)) {
+        char detail[160];
+        snprintf(detail, sizeof(detail), "%s (trust=%d, network=%d:%d)",
+            timed_out ? "TLS connect timed out" : "TLS handshake failed",
+            atomic_load(&client->trust_error), atomic_load(&client->network_domain),
+            atomic_load(&client->network_error));
         encore_tls_close((size_t)(uintptr_t)client);
-        encore_set_net_error_cstr(timed_out ? "TLS connect timed out" : "TLS handshake failed"); return 0;
+        encore_set_net_error_cstr(detail); return 0;
     }
     return (size_t)(uintptr_t)client;
 }
