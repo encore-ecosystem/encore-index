@@ -48,9 +48,13 @@ def main():
     with tempfile.TemporaryDirectory(prefix="encore-http-send-") as temporary:
         root = Path(temporary)
         key, cert = root / "key.pem", root / "cert.pem"
+        cert_config = root / "cert.cnf"
+        cert_config.write_text("[req]\ndistinguished_name=dn\nx509_extensions=extensions\n"
+                               "[dn]\n[extensions]\nsubjectAltName=DNS:localhost\n"
+                               "basicConstraints=critical,CA:TRUE\n")
         subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048",
                         "-nodes", "-days", "1", "-subj", "/CN=localhost",
-                        "-addext", "subjectAltName=DNS:localhost",
+                        "-config", str(cert_config),
                         "-keyout", str(key), "-out", str(cert)],
                        check=True, capture_output=True)
         with http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server, http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler) as local:
