@@ -220,6 +220,7 @@ struct ServerState {
     resolve_completion_documentation: bool
     autoimport_scopes: Vec[AutoimportScope]
     supports_document_changes: bool
+    private_query_modules: Vec[str]
 }
 
 struct SemanticTokenCache {
@@ -271,7 +272,8 @@ impl for ServerState {
             Vec[SemanticTokenCache]::new(),
             false,
             Vec[AutoimportScope]::new(),
-            false
+            false,
+            Vec[str]::new()
         }
     }
 
@@ -3463,7 +3465,7 @@ fn hover_result(state: mut ServerState, params: Json) -> Json {
                                 Option[str]::None => {
                                     match resolved_symbol_at(state, doc, token) {
                                         Option[ResolvedReference]::Some(reference) => {
-                                            value = reference.hover
+                                            value = reference.hover + callable_safety_hover(state, reference)
                                         }
                                         Option[ResolvedReference]::None => {
                                         }
@@ -3490,6 +3492,48 @@ fn hover_result(state: mut ServerState, params: Json) -> Json {
         }
     }
     ret Json::Null
+}
+
+fn callable_safety_hover(state: mut ServerState, reference: ResolvedReference) -> str {
+    if reference.callable.is_none() {
+        ret ""
+    }
+    let origin = document_for_path(state, uri_to_path(reference.uri))
+    let visited = encore_strset_new()
+    index_query_module(state, origin, visited, true)
+    encore_strset_free(visited)
+    let selected = json_get(reference.range, "start")
+    let selected_line = json_number_usize(json_get(selected, "line"), 0_usize)
+    let selected_column = json_number_usize(json_get(selected, "character"), 0_usize)
+    for symbol in origin.analysis.symbols {
+        if symbol.kind != 12_usize || symbol.line != selected_line {
+            continue
+        }
+        let start = json_get(symbol_range(origin, symbol), "start")
+        if json_number_usize(json_get(start, "character"), 0_usize) != selected_column {
+            continue
+        }
+        match state.analysis.symbol_id_for(origin.uri, symbol) {
+            Some(id) => {
+                match state.analysis.function_safety(id) {
+                    Some(effect) => {
+                        if effect.asserted_safe {
+                            ret "\n\nSafety: **safe** — explicit `#attr(safe)` contract; the author accepts responsibility for internal unsafe operations."
+                        }
+                        if effect.is_unsafe() {
+                            ret "\n\nSafety: **unsafe** — inferred from the body or calls; propagates to callers without `#attr(safe)`."
+                        }
+                        ret "\n\nSafety: **safe** — no unsafe effect inferred."
+                    }
+                    None => {
+                    }
+                }
+            }
+            None => {
+            }
+        }
+    }
+    ret ""
 }
 
 fn import_module_hover(state: mut ServerState, doc: Document, token: Token) -> Option[str] {
@@ -5527,9 +5571,15 @@ fn index_query_module(state: mut ServerState, doc: Document, visited: usize, inc
         ret()
     }
     state.analysis.set_module(doc.uri, uri_to_path(doc.uri), doc.text)
+    // Once a body query requires private imports, navigation must not replace
+    // its complete graph with a public-only graph and invalidate every cache.
+    if include_private && !contains_string(state.private_query_modules, doc.uri) {
+        state.private_query_modules.push(doc.uri)
+    }
+    let complete = contains_string(state.private_query_modules, doc.uri)
     let mut targets = Vec[ModuleImportTarget]::new()
     for edge in doc.analysis.dependencies.all() {
-        if !include_private && !edge.is_public {
+        if !complete && !edge.is_public {
             continue
         }
         for expanded in expand_import_path_targets(edge.target) {

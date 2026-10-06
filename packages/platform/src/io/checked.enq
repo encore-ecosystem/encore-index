@@ -1,0 +1,223 @@
+//! Checked buffered streams and errors shared by standard IO and filesystem APIs.
+import core::iter::{Iterator, IntoIterator}
+import core::ops::ContextManager
+import core::option::Option
+import core::panic::panic
+import core::result::Result
+
+extern fn encore_file_error_code() -> i32
+extern fn encore_file_error_kind() -> i32
+extern fn encore_file_error_message() -> str
+extern fn encore_file_at_eof() -> bool
+extern fn encore_file_open(path: str, writing: bool) -> u64
+extern fn encore_file_close(id: u64) -> bool
+extern fn encore_file_read(id: u64, size: usize) -> str
+extern fn encore_file_read_all(id: u64) -> str
+extern fn encore_file_read_line(id: u64) -> str
+extern fn encore_file_write(id: u64, data: str) -> bool
+extern fn encore_file_flush(id: u64) -> bool
+extern fn encore_checked_input(prompt: str) -> str
+
+pub enum IoErrorKind {
+    Other NotFound PermissionDenied Closed InvalidInput Busy UnexpectedEof
+}
+
+/// OS error code, portable category, and a human-readable explanation.
+pub struct IoError {
+    kind: IoErrorKind code: i32 message: str
+}
+
+#attr(safe)
+fn last_error() -> IoError {
+    let kind = match encore_file_error_kind() {
+        1 => IoErrorKind::NotFound
+        2 => IoErrorKind::PermissionDenied
+        3 => IoErrorKind::Closed
+        4 => IoErrorKind::InvalidInput
+        5 => IoErrorKind::Busy
+        _ => IoErrorKind::Other
+    }
+    ret IoError {
+        kind, encore_file_error_code(), encore_file_error_message()
+    }
+}
+
+/// A buffered file. Copies share a cursor and close state.
+/// Use with-contexts or close explicitly. Reading after close returns Closed.
+pub struct File {
+    id: u64
+}
+
+impl for File {
+    #attr(safe)
+    pub fn open(path: str) -> Result[Self, IoError] {
+        let id = encore_file_open(path, false)
+        if id == 0 {
+            ret Result::Err(last_error())
+        }
+        ret Result::Ok(Self {
+                id
+            }
+        )
+    }
+    /// Creates or truncates a file.
+    #attr(safe)
+    pub fn create(path: str) -> Result[Self, IoError] {
+        let id = encore_file_open(path, true)
+        if id == 0 {
+            ret Result::Err(last_error())
+        }
+        ret Result::Ok(Self {
+                id
+            }
+        )
+    }
+    /// Reads up to size bytes; an empty successful read means EOF (unless size is zero).
+    #attr(safe)
+    pub fn read(self: Self, size: usize) -> Result[str, IoError] {
+        let data = encore_file_read(self.id, size)
+        if encore_file_error_code() != 0 {
+            ret Result::Err(last_error())
+        }
+        ret Result::Ok(data)
+    }
+    /// Reads the remaining bytes with amortized linear buffer growth, including non-seekable streams.
+    #attr(safe)
+    pub fn read_all(self: Self) -> Result[str, IoError] {
+        let data = encore_file_read_all(self.id)
+        if encore_file_error_code() != 0 {
+            ret Result::Err(last_error())
+        }
+        ret Result::Ok(data)
+    }
+    /// Reads one line, removing LF or CRLF. None means EOF, Some("") an empty line.
+    #attr(safe)
+    pub fn read_line(self: Self) -> Result[Option[str], IoError] {
+        let data = encore_file_read_line(self.id)
+        if encore_file_error_code() != 0 {
+            ret Result::Err(last_error())
+        }
+        if encore_file_at_eof() {
+            ret Result::Ok(Option[str]::None)
+        }
+        ret Result::Ok(Option[str]::Some(data))
+    }
+    #attr(safe)
+    pub fn write_all(self: Self, data: str) -> Result[(), IoError] {
+        if !encore_file_write(self.id, data) {
+            ret Result::Err(last_error())
+        }
+        ret Result::Ok(())
+    }
+    #attr(safe)
+    pub fn flush(self: Self) -> Result[(), IoError] {
+        if !encore_file_flush(self.id) {
+            ret Result::Err(last_error())
+        }
+        ret Result::Ok(())
+    }
+    /// Idempotent. Returns Busy if another thread is currently using the stream.
+    #attr(safe)
+    pub fn close(self: Self) -> Result[(), IoError] {
+        if !encore_file_close(self.id) {
+            ret Result::Err(last_error())
+        }
+        ret Result::Ok(())
+    }
+    /// A lazy iterator; it does not take ownership of the open file.
+    pub fn lines(self: Self) -> Lines {
+        ret Lines {
+            self, false
+        }
+    }
+}
+
+impl ContextManager for File {
+    pub fn with_enter(self: Self) -> Self {
+        ret self
+    }
+    pub fn with_exit(self: Self) -> bool {
+        ret self.close().is_ok()
+    }
+}
+
+/// Yields one Result per line, then stops after EOF or the first error.
+/// Keep the File in a with-context so early loop exits also close it.
+pub struct Lines {
+    file: File done: bool
+}
+
+impl for Lines {
+    pub fn iter(self: Self) -> Self {
+        ret self
+    }
+    pub fn into_iter(self: Self) -> Self {
+        ret self
+    }
+}
+
+impl Iterator[Result[str, IoError]] for Lines {
+    pub fn next(self: Self) ->(Self, Option[Result[str, IoError]]) {
+        if self.done {
+            ret(self, Option[Result[str, IoError]]::None)
+        }
+        match self.file.read_line() {
+            Result::Ok(line) => {
+                match line {
+                    Option::Some(value) => {
+                        ret(self, Option[Result[str, IoError]]::Some(Result[str, IoError]::Ok(value)))
+                    }
+                    Option::None => {
+                        ret(Self {
+                                self.file, true
+                            }
+                            , Option[Result[str, IoError]]::None,)
+                    }
+                }
+            }
+            Result::Err(error) => {
+                ret(Self {
+                        self.file, true
+                    }
+                    , Option[Result[str, IoError]]::Some(Result[str, IoError]::Err(error)),)
+            }
+        }
+    }
+}
+
+impl IntoIterator[Result[str, IoError], Lines] for Lines {
+    pub fn into_iter(self: Self) -> Self {
+        ret self
+    }
+}
+
+/// Prints and flushes prompt, then reads a line. EOF is UnexpectedEof.
+#attr(safe)
+pub fn try_input(prompt: str) -> Result[str, IoError] {
+    let data = encore_checked_input(prompt)
+    if encore_file_error_code() != 0 {
+        ret Result::Err(last_error())
+    }
+    if encore_file_at_eof() {
+        ret Result::Err(IoError {
+                IoErrorKind::UnexpectedEof, 0, "end of input"
+            }
+            ,
+        )
+    }
+    ret Result::Ok(data)
+}
+
+/// Python-style convenience input. EOF and IO failure panic; use try_input to recover.
+#attr(safe)
+pub fn input(prompt: str) -> str {
+    match try_input(prompt) {
+        Result::Ok(line) => {
+            ret line
+        }
+        Result::Err(error) => {
+            panic("input: " + error.message)
+        }
+    }
+    ret ""
+}

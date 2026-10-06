@@ -1,0 +1,62 @@
+//! Coroutine spill slots transfer existing owners instead of leaking copies.
+import core::option::Option
+import ehirlib::{Directive, FnDirective, Instruction, parse_module_text, lower_coroutines}
+
+fn balanced(function: FnDirective) -> bool {
+    for block in function.blocks {
+        let mut index = 0_usize
+        for instruction in block.instructions {
+            match instruction {
+                Instruction::Store(item) => {
+                    match block.instructions.get(index + 1_usize) {
+                        Some(next) => {
+                            match next {
+                                Instruction::Drop(release) => {
+                                    if release.value.name != item.src.name {
+                                        ret false
+                                    }
+                                }
+                                _ => {
+                                    ret false
+                                }
+                            }
+                        }
+                        _ => {
+                            ret false
+                        }
+                    }
+                }
+                _ => {
+                }
+            }
+            index += 1_usize
+        }
+    }
+    ret true
+}
+
+fn main() -> u32 {
+    let source = "async fn flow(first: FirstFuture, keep: str) -> str {\n  $entry:\n    result: str = await first\n    drop keep: str\n    ret result: str\n}\n"
+    let module = lower_coroutines(parse_module_text("coroutine_slot_ownership", source))
+    let mut polls = 0_usize
+    for directive in module.directives {
+        match directive {
+            Directive::Impl(implementation) => {
+                for method in implementation.methods {
+                    if method.name == "poll" {
+                        polls += 1_usize
+                        if !balanced(method) {
+                            ret 1_u32
+                        }
+                    }
+                }
+            }
+            _ => {
+            }
+        }
+    }
+    if polls != 1_usize {
+        ret 2_u32
+    }
+    ret 0_u32
+}

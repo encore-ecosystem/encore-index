@@ -1,0 +1,50 @@
+//! Sends authenticated requests only to a disposable local TLS test server.
+import core::result::Result
+import core::vec::Vec
+import std::http::{HttpClient, HttpClientConfig, HttpRequest, HttpResponse, Url}
+import std::os::env
+import std::time::perf_counter_ms
+
+fn main() -> u32 {
+    let base = env("ENCORE_HTTP_SEND_TEST_URL").unwrap_or("")
+    if base == "" {
+        ret 0_u32
+    }
+    let ca = env("ENCORE_HTTP_SEND_TEST_CA").unwrap_or("")
+    let client = HttpClient::with_config(HttpClientConfig::default().with_ca_file(ca).with_max_body_size(64_usize).with_timeout_ms(1000_usize))
+    let url = Url::parse(base + "/echo").unwrap_or(Url::empty())
+    for method in vec!["POST", "PUT", "DELETE"] {
+        let response = client.send(HttpRequest::new(method, url).with_header("Authorization", "Bearer disposable-test").with_body("payload")).unwrap_or(HttpResponse::empty())
+        if response.status() != 200_u16 || response.body() != method + ":payload" {
+            ret 1_u32
+        }
+    }
+    let redirect = Url::parse(base + "/redirect").unwrap_or(Url::empty())
+    let response = client.send(HttpRequest::new("POST", redirect).with_header("Authorization", "Bearer disposable-test")).unwrap_or(HttpResponse::empty())
+    if response.status() != 302_u16 {
+        ret 2_u32
+    }
+    if !client.send(HttpRequest::get(url).with_header("Authorization", "x\r\nInjected: yes")).is_err() {
+        ret 3_u32
+    }
+    let oversized = Url::parse(base + "/oversized").unwrap_or(Url::empty())
+    if !client.send(HttpRequest::get(oversized)).is_err() {
+        ret 4_u32
+    }
+    let untrusted = HttpClient::new()
+    if !untrusted.send(HttpRequest::get(url)).is_err() {
+        ret 5_u32
+    }
+    let local = env("ENCORE_HTTP_LOCAL_TEST_URL").unwrap_or("")
+    if local != "" {
+        let local_url = Url::parse(local + "/echo").unwrap_or(Url::empty())
+        let result = client.send(HttpRequest::new("POST", local_url).with_body("local")).unwrap_or(HttpResponse::empty())
+        if result.body() != "POST:local" { ret 6_u32 }
+        let slow = Url::parse(local + "/slow").unwrap_or(Url::empty())
+        let start = perf_counter_ms()
+        let bounded = HttpClient::with_config(HttpClientConfig::default().with_timeout_ms(200_usize))
+        if !bounded.send(HttpRequest::get(slow)).is_err() || perf_counter_ms() - start > 1500_u64 { ret 7_u32 }
+    }
+    if !Url::parse("http://localhost.evil.invalid/").is_err() || !Url::parse("http://192.0.2.1/").is_err() || !Url::parse("http://127.0.0.1@evil.invalid/").is_err() { ret 8_u32 }
+    ret 0_u32
+}

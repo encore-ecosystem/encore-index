@@ -1,0 +1,181 @@
+//! Checked integer parsing. Whitespace and separators are rejected.
+import core::cast::Numeric
+import core::option::Option
+import core::result::Result
+
+pub enum ParseIntError {
+    Empty InvalidRadix InvalidDigit Overflow
+}
+
+/// Implemented by integer types accepted by parse and parse_radix.
+pub trait Integer {
+    fn from_digits(self: Self, text: str, radix: u32) -> Result[Self, ParseIntError]
+}
+
+/// Parses a decimal integer. The result type selects the target integer type.
+pub fn parse[T: Integer + Numeric](text: str) -> Result[T, ParseIntError] {
+    ret(0_u8 as T).from_digits(text, 10)
+}
+
+/// Parses base 2 through 36, or radix 0 to detect 0x, 0o, and 0b prefixes.
+pub fn parse_radix[T: Integer + Numeric](text: str, radix: u32) -> Result[T, ParseIntError] {
+    ret(0_u8 as T).from_digits(text, radix)
+}
+
+fn magnitude(text: str, radix: u32, positive_limit: u64, negative_limit: u64) -> Result[(u64, bool), ParseIntError] {
+    if radix != 0 &&(radix < 2 || radix > 36) {
+        ret Result::Err(ParseIntError::InvalidRadix)
+    }
+    if text.byte_len() == 0 {
+        ret Result::Err(ParseIntError::Empty)
+    }
+    let mut index = 0_usize
+    let first = text.get_byte(0).unwrap_or(0)
+    let negative = first == 45
+    if negative || first == 43 {
+        index = 1
+    }
+    if index == text.byte_len() {
+        ret Result::Err(ParseIntError::Empty)
+    }
+    if negative && negative_limit == 0 {
+        ret Result::Err(ParseIntError::Overflow)
+    }
+    let limit = if negative {
+        negative_limit
+    } else {
+        positive_limit
+    }
+    let mut base = radix
+    if base == 0 {
+        base = 10
+        if text.get_byte(index).unwrap_or(255) == 48 {
+            let prefix = text.get_byte(index + 1).unwrap_or(0)
+            if prefix == 120 || prefix == 88 {
+                base = 16
+            } elif prefix == 111 || prefix == 79 {
+                base = 8
+            } elif prefix == 98 || prefix == 66 {
+                base = 2
+            }
+            if base != 10 {
+                index += 2
+            }
+        }
+    }
+    if index == text.byte_len() {
+        ret Result::Err(ParseIntError::Empty)
+    }
+    let mut value = 0_u64
+    while index < text.byte_len() {
+        let byte = text.get_byte(index).unwrap_or(255)
+        let digit = if byte >= 48 && byte <= 57 {
+            (byte - 48) as u64
+        } elif byte >= 65 && byte <= 90 {
+            (byte - 65 + 10) as u64
+        } elif byte >= 97 && byte <= 122 {
+            (byte - 97 + 10) as u64
+        } else {
+            255_u64
+        }
+        if digit >= base as u64 {
+            ret Result::Err(ParseIntError::InvalidDigit)
+        }
+        if value > limit /(base as u64) ||(value == limit /(base as u64) && digit > limit %(base as u64)) {
+            ret Result::Err(ParseIntError::Overflow)
+        }
+        value = value *(base as u64) + digit
+        index += 1
+    }
+    ret Result::Ok((value, negative))
+}
+
+impl Integer for u8 {
+    pub fn from_digits(self: Self, text: str, radix: u32) -> Result[u8, ParseIntError] {
+        let parsed = magnitude(text, radix, 255_u64, 0_u64)?
+
+        ret Result::Ok(parsed.0 as u8)
+    }
+}
+
+impl Integer for u16 {
+    pub fn from_digits(self: Self, text: str, radix: u32) -> Result[u16, ParseIntError] {
+        let parsed = magnitude(text, radix, 65535_u64, 0_u64)?
+
+        ret Result::Ok(parsed.0 as u16)
+    }
+}
+
+impl Integer for u32 {
+    pub fn from_digits(self: Self, text: str, radix: u32) -> Result[u32, ParseIntError] {
+        let parsed = magnitude(text, radix, 4294967295_u64, 0_u64)?
+
+        ret Result::Ok(parsed.0 as u32)
+    }
+}
+
+impl Integer for u64 {
+    pub fn from_digits(self: Self, text: str, radix: u32) -> Result[u64, ParseIntError] {
+        let parsed = magnitude(text, radix, 18446744073709551615_u64, 0_u64)?
+
+        ret Result::Ok(parsed.0 as u64)
+    }
+}
+
+impl Integer for usize {
+    pub fn from_digits(self: Self, text: str, radix: u32) -> Result[usize, ParseIntError] {
+        let parsed = magnitude(text, radix, 18446744073709551615_u64, 0_u64)?
+
+        ret Result::Ok(parsed.0 as usize)
+    }
+}
+
+impl Integer for i8 {
+    pub fn from_digits(self: Self, text: str, radix: u32) -> Result[i8, ParseIntError] {
+        let parsed = magnitude(text, radix, 127_u64, 128_u64)?
+        if parsed.1 {
+            ret Result::Ok((0_u64 - parsed.0) as i8)
+        }
+        ret Result::Ok(parsed.0 as i8)
+    }
+}
+
+impl Integer for i16 {
+    pub fn from_digits(self: Self, text: str, radix: u32) -> Result[i16, ParseIntError] {
+        let parsed = magnitude(text, radix, 32767_u64, 32768_u64)?
+        if parsed.1 {
+            ret Result::Ok((0_u64 - parsed.0) as i16)
+        }
+        ret Result::Ok(parsed.0 as i16)
+    }
+}
+
+impl Integer for i32 {
+    pub fn from_digits(self: Self, text: str, radix: u32) -> Result[i32, ParseIntError] {
+        let parsed = magnitude(text, radix, 2147483647_u64, 2147483648_u64)?
+        if parsed.1 {
+            ret Result::Ok((0_u64 - parsed.0) as i32)
+        }
+        ret Result::Ok(parsed.0 as i32)
+    }
+}
+
+impl Integer for i64 {
+    pub fn from_digits(self: Self, text: str, radix: u32) -> Result[i64, ParseIntError] {
+        let parsed = magnitude(text, radix, 9223372036854775807_u64, 9223372036854775808_u64)?
+        if parsed.1 {
+            ret Result::Ok((0_u64 - parsed.0) as i64)
+        }
+        ret Result::Ok(parsed.0 as i64)
+    }
+}
+
+impl Integer for isize {
+    pub fn from_digits(self: Self, text: str, radix: u32) -> Result[isize, ParseIntError] {
+        let parsed = magnitude(text, radix, 9223372036854775807_u64, 9223372036854775808_u64)?
+        if parsed.1 {
+            ret Result::Ok((0_u64 - parsed.0) as isize)
+        }
+        ret Result::Ok(parsed.0 as isize)
+    }
+}

@@ -1,0 +1,111 @@
+import core::testing::assert
+import std::dict::{Dict, Hashable}
+import std::num::{parse, parse_radix, Integer, ParseIntError}
+import std::set::Set
+import std::time::{Duration, Instant}
+
+fn main() -> u32 {
+    if !assert(parse[u16]("65535").unwrap_or(0) == 65535) {
+        ret 1
+    }
+    if !assert(parse[u16]("65536").is_err()) {
+        ret 2
+    }
+    if !assert(parse[i64]("-9223372036854775808").unwrap_or(0) ==( - 9223372036854775807_i64 - 1)) {
+        ret 3
+    }
+    if !assert(parse[u64]("18446744073709551615").unwrap_or(0) == 18446744073709551615_u64) {
+        ret 4
+    }
+    if !assert(parse[u64]("18446744073709551616").is_err()) {
+        ret 5
+    }
+    if !assert(parse_radix[u16]("0xff", 0).unwrap_or(0) == 255) {
+        ret 6
+    }
+    if !assert(parse_radix[u8]("ff", 16).unwrap_or(0) == 255) {
+        ret 7
+    }
+    if !assert(parse[u32]("").is_err() && parse[u32]("12x").is_err() && parse[u32]("-1").is_err()) {
+        ret 8
+    }
+    let mut a = Set[str]::new()
+    let mut b = Set[str]::new()
+    if !assert(a.insert("a") && !a.insert("a")) {
+        ret 9
+    }
+    a.insert("b")
+    b.insert("b")
+    b.insert("c")
+    if !assert(a.union(b).len() == 3 && a.intersection(b).len() == 1 && a.difference(b).contains("a")) {
+        ret 10
+    }
+    if !assert(a.remove("b") && !a.remove("b")) {
+        ret 11
+    }
+    let d = Duration::from_millis(1500)
+    if !assert(d.as_secs() == 1 && d.subsec_nanos() == 500000000) {
+        ret 12
+    }
+    if !assert(d.checked_add(d).unwrap_or(Duration::from_secs(0)).as_secs() == 3) {
+        ret 13
+    }
+    if !assert(Duration::from_secs(18446744073709551615).as_nanos().is_none()) {
+        ret 14
+    }
+    let start = Instant::now()
+    if !assert(Instant::now().duration_since(start).is_some()) {
+        ret 15
+    }
+    if !assert(parse[i8]("-128").unwrap_or(0) == - 128_i8 && parse[i8]("127").unwrap_or(0) == 127) {
+        ret 16
+    }
+    if !assert(parse[i8]("-129").is_err() && parse[i8]("128").is_err()) {
+        ret 17
+    }
+    if !assert(parse[i16]("-32768").is_ok() && parse[i16]("32768").is_err()) {
+        ret 18
+    }
+    if !assert(parse[i32]("-2147483648").is_ok() && parse[i32]("2147483648").is_err()) {
+        ret 19
+    }
+    if !assert(parse[u32]("4294967295").is_ok() && parse[u32]("4294967296").is_err()) {
+        ret 20
+    }
+    if !assert(parse[usize]("18446744073709551615").is_ok() && parse[isize]("9223372036854775808").is_err()) {
+        ret 21
+    }
+    if !assert(parse_radix[u8]("0b11111111", 0).unwrap_or(0) == 255 && parse_radix[u8]("0o377", 0).unwrap_or(0) == 255) {
+        ret 22
+    }
+    if !assert(parse_radix[u8]("Z", 36).unwrap_or(0) == 35 && parse_radix[i8]("-0X80", 0).unwrap_or(0) == - 128_i8) {
+        ret 23
+    }
+    if !assert(parse_radix[u8]("1", 1).is_err() && parse_radix[u8]("1", 37).is_err()) {
+        ret 24
+    }
+    if !assert(parse[u8]("+").is_err() && parse_radix[u8]("0x", 0).is_err()) {
+        ret 25
+    }
+    if !assert(parse[u8](" 1").is_err() && parse[u8]("1_0").is_err() && parse[u8]("١").is_err()) {
+        ret 26
+    }
+    let max = Duration::from_secs(18446744073709551615)
+    if !assert(max.checked_add(Duration::from_secs(1)).is_none() && max.as_millis().is_none()) {
+        ret 27
+    }
+    let almost = max.checked_add(Duration::from_nanos(999999999)).unwrap_or(Duration::from_secs(0))
+    if !assert(almost.checked_add(Duration::from_nanos(1)).is_none()) {
+        ret 28
+    }
+    if !assert(Duration::from_secs(1).checked_sub(Duration::from_nanos(1)).unwrap_or(Duration::from_secs(0)).as_nanos().unwrap_or(0) == 999999999) {
+        ret 29
+    }
+    if !assert(Duration::from_secs(0).checked_sub(Duration::from_nanos(1)).is_none()) {
+        ret 30
+    }
+    if !assert(d.checked_sub(d).unwrap_or(d).is_zero()) {
+        ret 31
+    }
+    ret 0
+}

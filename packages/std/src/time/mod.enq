@@ -1,3 +1,112 @@
 //! Provides clocks, counters, and sleeping.
 
 pub import platform::time:: *
+
+import core::option::Option
+
+/// Nonnegative duration, normalized as seconds and a fractional nanosecond part.
+pub struct Duration {
+    seconds: u64 nanoseconds: u32
+}
+
+impl for Duration {
+    pub fn from_secs(value: u64) -> Self {
+        ret Self {
+            value, 0
+        }
+    }
+    pub fn from_millis(value: u64) -> Self {
+        ret Self {
+            value / 1000,((value % 1000) * 1000000) as u32
+        }
+    }
+    pub fn from_nanos(value: u64) -> Self {
+        ret Self {
+            value / 1000000000,(value % 1000000000) as u32
+        }
+    }
+    pub fn as_secs(self: Self) -> u64 {
+        ret self.seconds
+    }
+    pub fn subsec_nanos(self: Self) -> u32 {
+        ret self.nanoseconds
+    }
+    pub fn as_secs_f64(self: Self) -> f64 {
+        ret self.seconds as f64 + self.nanoseconds as f64 / 1000000000.0
+    }
+    pub fn is_zero(self: Self) -> bool {
+        ret self.seconds == 0 && self.nanoseconds == 0
+    }
+    /// Returns None when the total cannot be represented by u64.
+    pub fn as_nanos(self: Self) -> Option[u64] {
+        let fraction = self.nanoseconds as u64
+        if self.seconds >(18446744073709551615_u64 - fraction) / 1000000000 {
+            ret Option::None
+        }
+        ret Option::Some(self.seconds * 1000000000 + fraction)
+    }
+    pub fn as_millis(self: Self) -> Option[u64] {
+        let fraction =(self.nanoseconds / 1000000) as u64
+        if self.seconds >(18446744073709551615_u64 - fraction) / 1000 {
+            ret Option::None
+        }
+        ret Option::Some(self.seconds * 1000 + fraction)
+    }
+    pub fn checked_add(self: Self, other: Self) -> Option[Self] {
+        let nanos = self.nanoseconds + other.nanoseconds
+        let carry =(nanos / 1000000000) as u64
+        if other.seconds > 18446744073709551615_u64 - self.seconds {
+            ret Option::None
+        }
+        let seconds = self.seconds + other.seconds
+        if carry > 18446744073709551615_u64 - seconds {
+            ret Option::None
+        }
+        ret Option::Some(Self {
+                seconds + carry, nanos % 1000000000
+            }
+            ,
+        )
+    }
+    pub fn checked_sub(self: Self, other: Self) -> Option[Self] {
+        if self.seconds < other.seconds ||(self.seconds == other.seconds && self.nanoseconds < other.nanoseconds) {
+            ret Option::None
+        }
+        if self.nanoseconds < other.nanoseconds {
+            ret Option::Some(Self {
+                    self.seconds - other.seconds - 1, self.nanoseconds + 1000000000 - other.nanoseconds
+                }
+                ,
+            )
+        }
+        ret Option::Some(Self {
+                self.seconds - other.seconds, self.nanoseconds - other.nanoseconds
+            }
+            ,
+        )
+    }
+}
+
+/// An opaque monotonic clock reading, unrelated to wall-clock time.
+pub struct Instant {
+    ticks: u64
+}
+
+impl for Instant {
+    #attr(safe)
+    pub fn now() -> Self {
+        ret Self {
+            perf_counter_ns()
+        }
+    }
+    pub fn duration_since(self: Self, earlier: Self) -> Option[Duration] {
+        if self.ticks < earlier.ticks {
+            ret Option::None
+        }
+        ret Option::Some(Duration::from_nanos(self.ticks - earlier.ticks))
+    }
+    /// Saturates to zero if the platform clock unexpectedly moves backwards.
+    pub fn elapsed(self: Self) -> Duration {
+        ret Instant::now().duration_since(self).unwrap_or(Duration::from_secs(0))
+    }
+}

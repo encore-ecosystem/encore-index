@@ -1,0 +1,76 @@
+import core::ops::ContextManager
+import core::option::Option
+import core::result::Result
+import core::testing::assert
+import std::fs::{read, write, remove_file}
+import std::io::{File, IoError}
+
+fn exercise() -> Result[u32, IoError] {
+    let path = "target/checked-io-fixture.txt"
+    write(path, "привет\r\n\nlast")?
+    if !assert(read(path)? == "привет\r\n\nlast") {
+        ret Result::Ok(1)
+    }
+    let file = File::open(path)?
+    with file as stream {
+        if !assert(stream.read_line()?.unwrap_or("missing") == "привет") {
+            ret Result::Ok(2)
+        }
+        if !assert(stream.read_line()?.unwrap_or("missing") == "") {
+            ret Result::Ok(3)
+        }
+        if !assert(stream.read_line()?.unwrap_or("missing") == "last") {
+            ret Result::Ok(4)
+        }
+        if !assert(stream.read_line()?.is_none()) {
+            ret Result::Ok(5)
+        }
+    }
+    if !assert(file.read(1).is_err() && file.close().is_ok()) {
+        ret Result::Ok(6)
+    }
+    let next = File::open(path)?
+    with next as stream {
+        let mut count = 0_usize
+        for line in stream.lines() {
+            let value = line? count += 1
+        }
+        if !assert(count == 3) {
+            ret Result::Ok(7)
+        }
+    }
+    let mut large = "0123456789привет\n"
+    for i in 0..17 {
+        large = large + large
+    }
+    write(path, large)?
+    if !assert(read(path)? == large) {
+        ret Result::Ok(9)
+    }
+    let partial = File::open(path)?
+    with partial as stream {
+        if !assert(stream.read(10)? == "0123456789") {
+            ret Result::Ok(10)
+        }
+        let rest = stream.read_all()?
+        if !assert("0123456789" + rest == large && stream.read_all()? == "") {
+            ret Result::Ok(11)
+        }
+    }
+    if !assert(partial.read_all().is_err()) {
+        ret Result::Ok(12)
+    }
+    write(path, "")?
+    if !assert(read(path)? == "") {
+        ret Result::Ok(13)
+    }
+    remove_file(path)
+    if !assert(read(path).is_err()) {
+        ret Result::Ok(8)
+    }
+    ret Result::Ok(0)
+}
+
+fn main() -> u32 {
+    ret exercise().unwrap_or(99)
+}
