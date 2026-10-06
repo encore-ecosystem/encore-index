@@ -4,7 +4,11 @@ import core::testing::assert
 import ehirlib::{Directive, Variable, parse_module_text, analyze_await_liveness}
 
 fn contains_value(values: Vec[Variable], name: str) -> bool {
-    for value in values { if value.name == name { ret true } }
+    for value in values {
+        if value.name == name {
+            ret true
+        }
+    }
     ret false
 }
 
@@ -16,30 +20,86 @@ fn main() -> u32 {
             match directive {
                 Directive::Function(function) => {
                     let sites = analyze_await_liveness(function)
-                    if !assert(sites.len() == 2_usize) { ret 1_u32 }
+                    if !assert(sites.len() == 2_usize) {
+                        ret 1_u32
+                    }
                     match sites.get(0_usize) {
                         Some(first) => {
-                            if !assert(first.block == "entry") { ret 2_u32 }
-                            if !assert(first.instruction == 0_usize) { ret 3_u32 }
-                            if !assert(first.values.len() == 2_usize) { ret 4_u32 }
-                            if !assert(contains_value(first.values, "keep")) { ret 5_u32 }
-                            if !assert(contains_value(first.values, "second")) { ret 6_u32 }
+                            if !assert(first.block == "entry") {
+                                ret 2_u32
+                            }
+                            if !assert(first.instruction == 0_usize) {
+                                ret 3_u32
+                            }
+                            if !assert(first.values.len() == 2_usize) {
+                                ret 4_u32
+                            }
+                            if !assert(contains_value(first.values, "keep")) {
+                                ret 5_u32
+                            }
+                            if !assert(contains_value(first.values, "second")) {
+                                ret 6_u32
+                            }
                         }
-                        None => { ret 7_u32 }
+                        None => {
+                            ret 7_u32
+                        }
                     }
                     match sites.get(1_usize) {
                         Some(second) => {
-                            if !assert(second.instruction == 2_usize) { ret 8_u32 }
-                            if !assert(second.values.len() == 1_usize) { ret 9_u32 }
-                            if !assert(contains_value(second.values, "partial")) { ret 10_u32 }
+                            if !assert(second.instruction == 2_usize) {
+                                ret 8_u32
+                            }
+                            if !assert(second.values.len() == 1_usize) {
+                                ret 9_u32
+                            }
+                            if !assert(contains_value(second.values, "partial")) {
+                                ret 10_u32
+                            }
                         }
-                        None => { ret 11_u32 }
+                        None => {
+                            ret 11_u32
+                        }
                     }
                 }
-                _ => { ret 12_u32 }
+                _ => {
+                    ret 12_u32
+                }
             }
         }
-        _ => { ret 12_u32 }
+        _ => {
+            ret 12_u32
+        }
+    }
+    let tags = "async fn tags(future: ReadyFuture, result: Result[str, str]) -> bool {\n  $entry:\n    value: u32 = await future\n    is_ok: bool = ieq result, Ok\n    ret is_ok: bool\n}\n"
+    let tags_module = parse_module_text("coroutine_tags", tags)
+    match tags_module.directives.get(0_usize) {
+        Some(directive) => {
+            match directive {
+                Directive::Function(function) => {
+                    let sites = analyze_await_liveness(function)
+                    match sites.get(0_usize) {
+                        Some(site) => {
+                            if site.values.len() != 1_usize {
+                                ret 13_u32
+                            }
+                            if !contains_value(site.values, "result") {
+                                ret 14_u32
+                            }
+                        }
+                        None => {
+                            ret 15_u32
+                        }
+                    }
+                }
+                _ => {
+                    ret 16_u32
+                }
+            }
+        }
+        None => {
+            ret 17_u32
+        }
     }
     ret 0_u32
 }

@@ -1,6 +1,9 @@
 //! Provides filesystem operations.
 
+import core::ops::ContextManager
 import core::option::Option
+import core::result::Result
+import platform::io::checked::IoError
 import std::os::file_exists
 import std::os::mkdir
 import std::os::mkdir_all
@@ -8,6 +11,27 @@ import std::os::read_file
 import std::os::write_file
 import std::string::String
 import std::vec::Vec
+pub import platform::io::checked::File
+
+/// Reads a file in chunks. Unlike legacy read_to_str, reports open/read/close errors.
+pub fn read(path: str) -> Result[str, IoError] {
+    let file = File::open(path)?
+    with file as stream {
+        let data = stream.read_all()?
+        stream.close()?
+        ret Result::Ok(data)
+    }
+}
+
+/// Writes a complete file and checks close-time errors as well as write errors.
+pub fn write(path: str, data: str) -> Result[(), IoError] {
+    let file = File::create(path)?
+    with file as stream {
+        stream.write_all(data)?
+        stream.close()?
+        ret Result::Ok(())
+    }
+}
 
 extern fn encore_fs_remove_file(path: str) -> i32
 extern fn encore_fs_read_dir(path: str) -> str

@@ -1,0 +1,57 @@
+//! Physical and promoted stores cannot infer ownership from variable spelling.
+import core::fmt::Debug
+import ehirlib::parse_module_text
+import refrain::codegen::emit_ir
+
+fn verify(slot: str, escape: bool, large: bool) -> bool {
+    let mut source = "extern fn observe(slot: str*) -> ()\nfn transfer(value: str) -> str {\n  $entry:\n"
+    if large {
+        // Exceed the bounded promotion budget without changing the owning
+        // slot's semantics. This exercises the real large-function fallback.
+        source = source + "    zero: usize = capprim 0_usize\n"
+        let mut i = 0_usize
+        while i < 150_usize {
+            let n = Debug::fmt(i)
+            source = source + "    pad_" + n + ": usize* = salloc usize\n"
+            source = source + "    store zero, pad_" + n + "\n"
+            source = source + "    read_" + n + ": usize = load pad_" + n + "\n"
+            i += 1_usize
+        }
+    }
+    source = source + "    " + slot + ": str* = salloc str\n    store value, " + slot + "\n"
+    source = source + "    drop value: str\n"
+    if escape {
+        source = source + "    ignored: () = call observe(" + slot + ")\n"
+    }
+    source = source + "    result: str = load " + slot + "\n    ret result: str\n}\n"
+    let ir = emit_ir(parse_module_text("store_ownership_parity", source))
+    if !ir.contains("call void @encore_str_retain(i8* %value)") {
+        ret false
+    }
+    if !ir.contains("call void @encore_str_drop(i8* %value)") {
+        ret false
+    }
+    let physical = ir.contains("%" + slot + " = alloca i8*")
+    ret physical ==(escape || large)
+}
+fn main() -> u32 {
+    if !verify("ordinary_slot", false, false) {
+        ret 1_u32
+    }
+    if !verify("scratch_iter_slot", false, false) {
+        ret 2_u32
+    }
+    if !verify("ordinary_slot", true, false) {
+        ret 3_u32
+    }
+    if !verify("scratch_iter_slot", true, false) {
+        ret 4_u32
+    }
+    if !verify("ordinary_slot", false, true) {
+        ret 5_u32
+    }
+    if !verify("scratch_iter_slot", false, true) {
+        ret 6_u32
+    }
+    ret 0_u32
+}

@@ -18,6 +18,16 @@ fn main() -> u32 {
     if !assert(default_port.port() == 443_usize && default_port.target() == "/") { ret 6_u32 }
     if !assert(Url::parse("http://example.com").is_err()) { ret 7_u32 }
     if !assert(Url::parse("https://user@example.com/private").is_err()) { ret 8_u32 }
+    if !assert(Url::parse("https://example.com/\r\nInjected:yes").is_err()) { ret 25_u32 }
+    let post = HttpRequest::new("POST", default_port).with_body("abc").with_header("Authorization", "Bearer example")
+    if !assert(post.validate().is_ok() && post.encode().contains("Content-Length: 3\r\n")) { ret 26_u32 }
+    if !assert(HttpRequest::new("POST", default_port).encode().contains("Content-Length: 0\r\n")) { ret 27_u32 }
+    if !assert(HttpRequest::get(default_port).with_header("Authorization", "x\r\nInjected: yes").validate().is_err()) { ret 28_u32 }
+    if !assert(HttpRequest::get(default_port).with_header("Content-Length", "10").validate().is_err()) { ret 29_u32 }
+    if !assert(HttpRequest::get(default_port).with_header("Transfer-Encoding", "chunked").encode() == "") { ret 30_u32 }
+    if !assert(HttpRequest::new("GET\r\nX", default_port).validate().is_err()) { ret 31_u32 }
+    if !assert(HttpRequest::get(default_port).with_header("X-A", "1").with_header("x-a", "2").validate().is_err()) { ret 32_u32 }
+    if !assert(parse_http_response("HTTP/1.1 200 OK\r\nContent-Length: 18446744073709551616\r\n\r\n", 64_usize).is_err()) { ret 33_u32 }
 
     let request = HttpRequest::get(url).with_header("Accept", "application/octet-stream")
     let encoded = request.encode()

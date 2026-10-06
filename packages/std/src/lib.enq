@@ -9,6 +9,7 @@ pub import refrain::future
 pub import refrain::io
 pub import refrain::math
 pub import refrain::net
+pub import refrain::num
 pub import refrain::ops
 pub import refrain::option
 pub import refrain::os
@@ -16,6 +17,7 @@ pub import refrain::path
 pub import refrain::process
 pub import refrain::random
 pub import refrain::result
+pub import refrain::set
 pub import refrain::string
 pub import refrain::thread
 pub import refrain::time

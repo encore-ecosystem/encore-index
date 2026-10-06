@@ -1,0 +1,61 @@
+//! Deadline-bounded IPv4 loopback streams for local HTTP services.
+import core::result::Result
+
+extern fn encore_http_loopback_connect(port: usize, timeout_ms: usize) -> usize
+extern fn encore_http_loopback_read(handle: usize, max: usize) -> str
+extern fn encore_http_loopback_failed(handle: usize) -> bool
+extern fn encore_http_loopback_write(handle: usize, data: str) -> i32
+extern fn encore_http_loopback_close(handle: usize) -> i32
+
+/// A nonblocking native socket with one deadline, never using DNS.
+pub struct LoopbackStream {
+    handle: usize
+}
+impl for LoopbackStream {
+    /// Connects to 127.0.0.1. The deadline covers connect and all subsequent I/O.
+    pub fn connect(port: usize, timeout_ms: usize) -> Result[LoopbackStream, str] {
+        let handle = unsafe {
+            encore_http_loopback_connect(port, timeout_ms)
+        }
+        if handle == 0_usize {
+            ret Result::Err("loopback HTTP connection failed")
+        }
+        ret Result::Ok(Self {
+                handle
+            }
+        )
+    }
+    /// Reads bytes, distinguishing a clean EOF from timeout or failure.
+    pub fn read(self: Self, max: usize) -> Result[str, str] {
+        let data = unsafe {
+            encore_http_loopback_read(self.handle, max)
+        }
+        if unsafe {
+            encore_http_loopback_failed(self.handle)
+        }
+        {
+            ret Result::Err("loopback HTTP read failed or timed out")
+        }
+        ret Result::Ok(data)
+    }
+    /// Writes all bytes within the original deadline.
+    pub fn write_all(self: Self, data: str) -> Result[usize, str] {
+        let count = unsafe {
+            encore_http_loopback_write(self.handle, data)
+        }
+        if count < 0_i32 {
+            ret Result::Err("loopback HTTP write failed or timed out")
+        }
+        ret Result::Ok(count as usize)
+    }
+    /// Closes the socket once all I/O has finished.
+    pub fn close(self: Self) -> Result[bool, str] {
+        let result = unsafe {
+            encore_http_loopback_close(self.handle)
+        }
+        if result != 0_i32 {
+            ret Result::Err("loopback HTTP close failed")
+        }
+        ret Result::Ok(true)
+    }
+}

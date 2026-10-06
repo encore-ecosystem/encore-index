@@ -443,7 +443,7 @@ fn make_start_block(function: FnDirective, build: mut CoroutineBuild, future_nam
         let loaded = build_fresh(build, "start_arg", parameter.typ)
         instructions.push(getfield(loaded, payload, untyped_var(usize_text(field_index))))
         instructions.push(retain_value(loaded))
-        instructions.push(store(loaded, slot_for(build, parameter.name)))
+        store_coroutine_value(instructions, loaded, slot_for(build, parameter.name))
         field_index = field_index + 1_usize
     }
     instructions.push(drop_value(payload))
@@ -470,7 +470,7 @@ fn make_resume_block(build: mut CoroutineBuild, site: AwaitLiveness, future_name
     let child = build_fresh(build, "resume_child", child_type)
     instructions.push(getfield(child, payload, untyped_var("0")))
     instructions.push(retain_value(child))
-    instructions.push(store(child, child_slot(site_index, child_type)))
+    store_coroutine_value(instructions, child, child_slot(site_index, child_type))
     let mut field_index = 1_usize
     for value in site.values {
         let original_type = required_type_or_usize(value)
@@ -480,10 +480,10 @@ fn make_resume_block(build: mut CoroutineBuild, site: AwaitLiveness, future_name
         if is_stack_value(build, value.name) {
             let restored_slot = build_fresh(build, "resume_stack", original_type)
             instructions.push(salloc(restored_slot, captured_value_type(build, value)))
-            instructions.push(store(loaded, restored_slot))
-            instructions.push(store(restored_slot, slot_for(build, value.name)))
+            store_coroutine_value(instructions, loaded, restored_slot)
+            store_coroutine_value(instructions, restored_slot, slot_for(build, value.name))
         } else {
-            instructions.push(store(loaded, slot_for(build, value.name)))
+            store_coroutine_value(instructions, loaded, slot_for(build, value.name))
         }
         field_index = field_index + 1_usize
     }
@@ -522,7 +522,7 @@ fn make_site_ready_block(build: mut CoroutineBuild, site: AwaitLiveness, site_in
     instructions.push(getfield(output, step, untyped_var("Ready")))
     instructions.push(retain_value(output))
     instructions.push(drop_value(step))
-    instructions.push(store(output, slot_for(build, output.name)))
+    store_coroutine_value(instructions, output, slot_for(build, output.name))
     let segment = site_segment(build, site) + 1_usize
     ret block(site_ready_label(site_index), instructions, br_term(body_label(site.block, segment)))
 }
@@ -574,7 +574,7 @@ fn lower_body_block(build: mut CoroutineBuild, source: Block, future_name: str) 
                     Instruction::Await(item) => {
                         let site_index = site_index_at(build, source.name, instruction_index)
                         let loaded_future = read_value(build, instructions, item.future, "await_input")
-                        instructions.push(store(loaded_future, child_slot(site_index, required_type_or_usize(item.future))))
+                        store_coroutine_value(instructions, loaded_future, child_slot(site_index, required_type_or_usize(item.future)))
                         out.push(block(body_label(source.name, segment), instructions, br_term(site_poll_label(site_index))))
                         instructions = Vec[Instruction]::new()
                         segment = segment + 1_usize
@@ -686,7 +686,7 @@ fn normalize_instruction(build: mut CoroutineBuild, instruction: Instruction) ->
     match coroutine_instruction_output(lowered) {
         Some(value) => {
             if has_definition(build, value.name) {
-                out.push(store(value, slot_for(build, value.name)))
+                store_coroutine_value(out, value, slot_for(build, value.name))
             }
         }
         None => {
@@ -746,7 +746,7 @@ fn make_edge_blocks(function: FnDirective, build: mut CoroutineBuild) -> Vec[Blo
                                     match phi_value_for_predecessor(item, source.name) {
                                         Some(value) => {
                                             let loaded = read_value(build, instructions, value, "phi_edge")
-                                            instructions.push(store(loaded, slot_for(build, item.out.name)))
+                                            store_coroutine_value(instructions, loaded, slot_for(build, item.out.name))
                                         }
                                         None => {
                                         }
@@ -834,6 +834,24 @@ fn add_unique_string(values: mut Vec[str], value: str) ->() {
 
 fn edge_label(source: str, target: str) -> str {
     ret "__async_edge_" + source + "_to_" + target
+}
+
+fn store_coroutine_value(out: mut Vec[Instruction], value: Variable, slot: Variable) ->() {
+    // These slots replace SSA values; they must not introduce another owner.
+    // Raw stack stores retain their source (also after local-to-SSA promotion),
+    // so release the source edge after transferring it into the synthetic slot.
+    out.push(store(value, slot))
+    match value.typ {
+        Some(typ) => {
+            if typ.representation != RepresentationKind::Raw &&
+            typ.representation != RepresentationKind::LocalPlace {
+                out.push(drop_value(value))
+            }
+        }
+        None => {
+        }
+    }
+    ret()
 }
 
 fn read_value(build: mut CoroutineBuild, out: mut Vec[Instruction], value: Variable, purpose: str) -> Variable {
@@ -1071,6 +1089,7 @@ fn usize_text(value: usize) -> str {
 }
 
 pub fn analyze_await_liveness(function: FnDirective) -> Vec[AwaitLiveness] {
+    let definitions = collect_definitions(function)
     let mut states = Vec[BlockLiveness]::new()
     for block_item in function.blocks {
         states.push(BlockLiveness {
@@ -1122,9 +1141,20 @@ pub fn analyze_await_liveness(function: FnDirective) -> Vec[AwaitLiveness] {
                         Some(instruction) => {
                             match instruction {
                                 Instruction::Await(item) => {
-                                    let mut captured = live_after_instruction(block_item, instruction_index, state_live_out(states, block_item.name))
-                                    remove_name(captured, item.out.name)
-                                    remove_name(captured, item.future.name)
+                                    let live = live_after_instruction(block_item, instruction_index, state_live_out(states, block_item.name))
+                                    let mut captured = Vec[Variable]::new()
+                                    // Enum tags and other symbolic operands are not local values.
+                                    // Capture only real definitions, preserving their declared types.
+                                    for value in live {
+                                        if value.name != item.out.name && value.name != item.future.name {
+                                            for definition in definitions {
+                                                if definition.name == value.name {
+                                                    captured.push(definition)
+                                                    break
+                                                }
+                                            }
+                                        }
+                                    }
                                     sites.push(AwaitLiveness {
                                             block_item.name, instruction_index, item.out, item.future, captured
                                         }

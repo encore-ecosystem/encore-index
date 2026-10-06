@@ -10,12 +10,15 @@ import tempfile
 from protocol_features import request, send
 
 
-def run_case(binary, root, dependency, *, transitive=False, cached=False):
+def run_case(binary, root, dependency, *, transitive=False, cached=False, default_index=None):
     root.mkdir()
     (root / 'src').mkdir()
     registry = root / 'registry'
     checksum = 'a' * 64
-    package = registry / 'packages' / 'editor_fixture' / ('1.0.0-' + checksum)
+    cache_root = registry
+    if default_index:
+        cache_root = registry / 'sources' / (default_index.encode().hex() + '-index')
+    package = cache_root / 'packages' / 'editor_fixture' / ('1.0.0-' + checksum)
     if cached:
         (package / 'src').mkdir(parents=True)
         (package / 'encore.toml').write_text(
@@ -26,7 +29,8 @@ def run_case(binary, root, dependency, *, transitive=False, cached=False):
             'version = 2\n[[packages]]\nname = "editor_fixture"\n'
             'ref = "index@editor_fixture"\nversion = "1.0.0"\n'
             'archive = "https://invalid.example/editor_fixture.tar.gz"\n'
-            f'checksum = "{checksum}"\n')
+            f'checksum = "{checksum}"\n'
+            + (f'registry = "{default_index}"\n' if default_index else ''))
     if transitive:
         nested = root / 'nested'
         (nested / 'src').mkdir(parents=True)
@@ -50,6 +54,10 @@ def run_case(binary, root, dependency, *, transitive=False, cached=False):
         command.chmod(0o755)
     env = {**os.environ, 'PATH': str(commands) + os.pathsep + os.environ['PATH'],
            'ENCORE_REGISTRY_CACHE': str(registry), 'EDITOR_COMMAND_MARKER': str(marker)}
+    env.pop('ENCORE_INDEX_URL', None)
+    env.pop('ENCORE_DEFAULT_INDEX', None)
+    if default_index:
+        env['ENCORE_DEFAULT_INDEX'] = default_index
     before = {p.relative_to(root): p.read_bytes() for p in root.rglob('*') if p.is_file()}
     process = subprocess.Popen([str(binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, env=env)
@@ -91,7 +99,11 @@ def main():
         run_case(binary, root / 'git', 'git@https://invalid.example/encore-editor-fixture/not-installed.git')
         run_case(binary, root / 'installed', 'index@editor_fixture', cached=True)
         run_case(binary, root / 'installed-transitive', 'index@editor_fixture', transitive=True, cached=True)
-    print('offline dependency graphs: 5 scenarios passed')
+        run_case(binary, root / 'default-index', 'index@editor_fixture', cached=True,
+                 default_index='http://127.0.0.1:8137/index')
+        run_case(binary, root / 'default-index-transitive', 'index@editor_fixture', cached=True,
+                 transitive=True, default_index='http://127.0.0.1:8137/index')
+    print('offline dependency graphs: 7 scenarios passed')
 
 
 if __name__ == '__main__':

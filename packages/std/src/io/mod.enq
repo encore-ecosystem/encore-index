@@ -1,3 +1,4 @@
 //! Provides console and stream input/output helpers.
 
 pub import platform::io:: *
+pub import platform::io::checked::{File, Lines, IoError, IoErrorKind, input, try_input}

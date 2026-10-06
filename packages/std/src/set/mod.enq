@@ -1,0 +1,86 @@
+//! Sets sharing the dictionary's current linear-storage implementation.
+import std::dict::{Dict, Hashable}
+import std::ops::Eq
+import std::vec::Vec
+
+/// A mutable set. Copies share storage; clone creates an independent set.
+pub struct Set[T] {
+    entries: Dict[T, bool]
+}
+
+impl[T: Hashable + Eq] for Set[T] {
+    pub fn new() -> Self {
+        ret Self {
+            Dict[T, bool]::new()
+        }
+    }
+    pub fn with_capacity(capacity: usize) -> Self {
+        ret Self {
+            Dict[T, bool]::with_capacity(capacity)
+        }
+    }
+    pub fn len(self: Self) -> usize {
+        ret self.entries.len()
+    }
+    pub fn is_empty(self: Self) -> bool {
+        ret self.entries.is_empty()
+    }
+    pub fn contains(self: Self, value: T) -> bool {
+        ret self.entries.contains_key(value)
+    }
+    /// Returns true only when a new value was added.
+    pub fn insert(self: mut Self, value: T) -> bool {
+        ret self.entries.insert(value, true).is_none()
+    }
+    pub fn remove(self: mut Self, value: T) -> bool {
+        ret self.entries.remove(value).is_some()
+    }
+    pub fn clear(self: mut Self) ->() {
+        self.entries.clear()
+    }
+    pub fn reserve(self: mut Self, additional: usize) ->() {
+        self.entries.reserve(additional)
+    }
+    /// Returns an independent snapshot with unspecified order.
+    pub fn values(self: Self) -> Vec[T] {
+        ret self.entries.keys()
+    }
+    pub fn clone(self: Self) -> Self {
+        ret Self {
+            self.entries.clone()
+        }
+    }
+    pub fn union(self: Self, other: Self) -> Self {
+        let mut out = self.clone()
+        for value in other.values() {
+            out.insert(value)
+        }
+        ret out
+    }
+    pub fn intersection(self: Self, other: Self) -> Self {
+        let mut out = Set[T]::new()
+        for value in self.values() {
+            if other.contains(value) {
+                out.insert(value)
+            }
+        }
+        ret out
+    }
+    pub fn difference(self: Self, other: Self) -> Self {
+        let mut out = Set[T]::new()
+        for value in self.values() {
+            if !other.contains(value) {
+                out.insert(value)
+            }
+        }
+        ret out
+    }
+    pub fn is_subset(self: Self, other: Self) -> bool {
+        for value in self.values() {
+            if !other.contains(value) {
+                ret false
+            }
+        }
+        ret true
+    }
+}

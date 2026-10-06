@@ -1,0 +1,71 @@
+//! Stores credentials in the user's OS keyring. Never falls back to files.
+import core::option::Option
+import core::result::Result
+
+extern fn encore_secret_store(operation: i32, key: str, value: str) -> str
+
+/// Distinguishes absent services, locked stores, user denial and backend errors.
+pub enum StoreError {
+    Unavailable Locked Denied InvalidInput Backend
+}
+
+fn valid(value: str, maximum: usize) -> bool {
+    if value == "" || value.len() > maximum {
+        ret false
+    }
+    let mut i = 0_usize
+    while i < value.len() {
+        if value.byte_at(i) < 32_u8 || value.byte_at(i) == 127_u8 {
+            ret false
+        }
+        i += 1_usize
+    }
+    ret true
+}
+
+fn call(operation: i32, key: str, value: str) -> Result[Option[str], StoreError] {
+    if !valid(key, 1024_usize) ||(operation == 1_i32 && !valid(value, 2048_usize)) {
+        ret Result::Err(StoreError::InvalidInput)
+    }
+    let reply = unsafe {
+        encore_secret_store(operation, key, value)
+    }
+    if reply == "" {
+        ret Result::Err(StoreError::Backend)
+    }
+    ret match reply.slice(0_usize, 1_usize) {
+        "0" => Result::Ok(Option[str]::Some(reply.slice(1_usize, reply.len() - 1_usize)))
+        "1" => Result::Ok(Option[str]::None)
+        "2" => Result::Err(StoreError::Unavailable)
+        "3" => Result::Err(StoreError::Locked)
+        "4" => Result::Err(StoreError::Denied)
+        "5" => Result::Err(StoreError::InvalidInput)
+        _ => Result::Err(StoreError::Backend)
+    }
+}
+
+/// Reads a credential. None means absent, not a failed or locked backend.
+pub fn get(key: str) -> Result[Option[str], StoreError] {
+    ret call(0_i32, key, "")
+}
+
+/// Replaces one credential in the OS store.
+pub fn set(key: str, value: str) -> Result[bool, StoreError] {
+    ret match call(1_i32, key, value) {
+        Result::Ok(_) => Result::Ok(true)
+        Result::Err(error) => Result::Err(error)
+    }
+}
+
+/// Removes one credential. An already absent credential is success.
+pub fn delete(key: str) -> Result[bool, StoreError] {
+    ret match call(2_i32, key, "") {
+        Result::Ok(_) => Result::Ok(true)
+        Result::Err(error) => Result::Err(error)
+    }
+}
+
+#attr(test)
+fn rejects_invalid_keys_before_backend() -> bool {
+    ret get("").is_err() && get("index\nother").is_err() && set("index", "").is_err()
+}

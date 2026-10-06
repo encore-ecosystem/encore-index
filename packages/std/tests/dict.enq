@@ -1,6 +1,21 @@
 import core::option::Option
-import core::testing::*
+import core::testing:: *
 import std::dict::{Dict, Hashable}
+import std::ops::Eq
+
+struct Colliding {
+    id: u32
+}
+impl Hashable for Colliding {
+    fn hash(self: Self) -> u64 {
+        ret 7
+    }
+}
+impl Eq[Colliding] for Colliding {
+    fn op(self: Self, other: Self) -> bool {
+        ret self.id == other.id
+    }
+}
 
 fn main() -> u32 {
     let mut dict = Dict[str, u32]::new()
@@ -9,15 +24,15 @@ fn main() -> u32 {
     }
 
     let mut zero_cap = Dict[str, u32]::with_capacity(0_usize)
-    zero_cap = zero_cap.insert("usable", 5_u32)
+    zero_cap.insert("usable", 5_u32)
     if !assert(zero_cap.len() == 1_usize) {
         ret 1_u32
     }
 
-    dict = dict.insert("alpha", 1_u32)
-    dict = dict.insert("beta", 2_u32)
-    dict = dict.insert("gamma", 3_u32)
-    dict = dict.insert("alpha", 10_u32)
+    dict.insert("alpha", 1_u32)
+    dict.insert("beta", 2_u32)
+    dict.insert("gamma", 3_u32)
+    dict.insert("alpha", 10_u32)
 
     if !assert(dict.len() == 3_usize) {
         ret 1_u32
@@ -41,8 +56,7 @@ fn main() -> u32 {
     }
 
     let removed = dict.remove("beta")
-    dict = removed.0
-    match removed.1 {
+    match removed {
         Option[u32]::Some(value) => {
             if !assert(value == 2_u32) {
                 ret 1_u32
@@ -65,8 +79,8 @@ fn main() -> u32 {
     }
 
     let mut by_id = Dict[u32, str]::with_capacity(4_usize)
-    by_id = by_id.insert(7_u32, "seven")
-    by_id = by_id.insert(9_u32, "nine")
+    by_id.insert(7_u32, "seven")
+    by_id.insert(9_u32, "nine")
     match by_id.get(9_u32) {
         Option[str]::Some(value) => {
             if !assert(value == "nine") {
@@ -78,5 +92,95 @@ fn main() -> u32 {
         }
     }
 
-    ret 0_u32
+    let shared = dict
+    for i in 0..256 {
+        dict.insert(f "key-{i}", i as u32)
+    }
+    if !assert(shared.len() == 256) {
+        ret 1
+    }
+    for i in 0..256 {
+        if !assert(dict.get(f "key-{i}").unwrap_or(999) == i as u32) {
+            ret 1
+        }
+    }
+    for i in 0..128 {
+        dict.remove(f "key-{i}")
+    }
+    if !assert(shared.len() == 128 && !shared.contains_key("key-0")) {
+        ret 8
+    }
+    let snapshot = dict.items()
+    for i in 128..256 {
+        if !assert(dict.get(f "key-{i}").unwrap_or(999) == i as u32) {
+            ret 1
+        }
+    }
+    let mut cloned = dict.clone()
+    cloned.clear()
+    if !assert(dict.len() == 128 && cloned.is_empty()) {
+        ret 1
+    }
+    if !assert(dict.items().len() == 128 && dict.keys().len() == 128 && dict.values().len() == 128) {
+        ret 1
+    }
+    let mut collisions = Dict[Colliding, u32]::new()
+    for i in 0..128 {
+        collisions.insert(Colliding {
+                i as u32
+            }
+            , i as u32,)
+    }
+    for i in 0..64 {
+        collisions.remove(Colliding {
+                i as u32
+            }
+        )
+    }
+    for i in 64..128 {
+        let key = Colliding {
+            i as u32
+        }
+        if !assert(collisions.get(key).unwrap_or(999) == i as u32) {
+            ret 2
+        }
+    }
+    let replaced = Colliding {
+        100
+    }
+    if !assert(collisions.insert(replaced, 999).unwrap_or(0) == 100) {
+        ret 3
+    }
+    if !assert(collisions.len() == 64 && collisions.get(replaced).unwrap_or(0) == 999) {
+        ret 4
+    }
+    for i in 0..64 {
+        collisions.insert(Colliding {
+                i as u32
+            }
+            , i as u32,)
+    }
+    collisions.reserve(512)
+    let missing = Colliding {
+        999
+    }
+    if !assert(collisions.len() == 128 && !collisions.contains_key(missing)) {
+        ret 5
+    }
+    for i in 0..128 {
+        let key = Colliding {
+            i as u32
+        }
+        if !assert(collisions.remove(key).is_some()) {
+            ret 6
+        }
+    }
+    if !assert(collisions.is_empty()) {
+        ret 7
+    }
+    dict.clear()
+    if !assert(shared.is_empty() && snapshot.len() == 128) {
+        ret 9
+    }
+    ret 0
 }

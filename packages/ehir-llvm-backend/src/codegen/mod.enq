@@ -975,6 +975,36 @@ fn append_lowered_drop_pair(builder: usize, drop_function: LLVMFunction, retain_
     ret any
 }
 
+// Positional aggregates have no source struct directive, but their elements
+// participate in the same root ownership and graph-edge traversal as fields.
+fn positional_aggregate_fields(concrete: frozen Type) -> Vec[Parameter] {
+    let mut fields = Vec[Parameter]::new()
+    let mut index = 0_usize
+    if has_prefix(concrete.name, "__tuple_") {
+        for item_type in concrete.generics {
+            fields.push(param("_" + Debug::fmt(index), item_type))
+            index += 1_usize
+        }
+    } elif has_prefix(concrete.name, "__array_") && concrete.generics.len() == 1_usize {
+        let mut count = 0_usize
+        let mut digit = 8_usize
+        while digit < concrete.name.len() {
+            let ch = concrete.name.byte_at(digit)
+            if ch < 48_u8 || ch > 57_u8 {
+                backend_invariant_error("invalid array type '" + concrete.name + "'")
+            }
+            count = count * 10_usize +(ch - 48_u8) as usize
+            digit += 1_usize
+        }
+        let element = required_generic_type(concrete, 0_usize)
+        while index < count {
+            fields.push(param("_" + Debug::fmt(index), element))
+            index += 1_usize
+        }
+    }
+    ret fields
+}
+
 fn append_lowered_drop_functions(builder: usize, directives: frozen Vec[Directive], concrete_types: frozen Vec[Type],
     seen: usize, emitted: bool, declaration_builder: usize,) -> bool {
     let mut any = emitted
@@ -1027,13 +1057,9 @@ fn append_lowered_drop_functions(builder: usize, directives: frozen Vec[Directiv
             any = append_lowered_drop_pair(builder, lower_heap_drop_function(concrete),
                 lower_heap_retain_function(concrete), seen, any, declaration_builder,)
         }
-        if has_prefix("" + concrete.name, "__tuple_") {
-            let mut fields = Vec[Parameter]::new()
-            let mut index = 0_usize
-            for item_type in concrete.generics {
-                fields.push(param("_" + Debug::fmt(index), item_type))
-                index = index + 1_usize
-            }
+        if concrete.representation == RepresentationKind::Inline &&
+        (has_prefix(concrete.name, "__tuple_") || has_prefix(concrete.name, "__array_")) {
+            let fields = positional_aggregate_fields(concrete)
             any = append_lowered_drop_pair(builder, lower_struct_drop_function(Vec[Type]::new(), fields, concrete),
                 lower_struct_retain_function(Vec[Type]::new(), fields, concrete), seen, any,
                 declaration_builder,)
@@ -1158,13 +1184,9 @@ fn append_lowered_edge_functions(builder: usize, directives: frozen Vec[Directiv
         }
     }
     for concrete in concrete_types {
-        if has_prefix(concrete.name, "__tuple_") {
-            let mut fields = Vec[Parameter]::new()
-            let mut index = 0_usize
-            for item_type in concrete.generics {
-                fields.push(param("_" + Debug::fmt(index), item_type))
-                index += 1_usize
-            }
+        if concrete.representation == RepresentationKind::Inline &&
+        (has_prefix(concrete.name, "__tuple_") || has_prefix(concrete.name, "__array_")) {
+            let fields = positional_aggregate_fields(concrete)
             any = append_lowered_edge_pair(builder,
                 lower_struct_edge_function(Vec[Type]::new(), fields, concrete, true),
                 lower_struct_edge_function(Vec[Type]::new(), fields, concrete, false),
@@ -4079,6 +4101,10 @@ fn lower_instruction(instruction: frozen Instruction, instruction_scope: str) ->
             match value.payload {
                 Option[Variable]::Some(payload) => {
                     let ehir_payload_type = required_variable_type(payload)
+                    if ehir_payload_type.name == "()" || ehir_payload_type.name == "void" {
+                        instructions.push(llvm_inst_insertvalue(out, tag_out, const_text("null", ptr_type(i8_type())), "1"))
+                        ret instructions
+                    }
                     let payload_type = lower_type(ehir_payload_type)
                     let payload_ptr_type = ptr_type(payload_type)
                     let safe_name = sanitize_symbol(enum_data.out.name) + "_payload"
@@ -4133,9 +4159,9 @@ fn lower_instruction(instruction: frozen Instruction, instruction_scope: str) ->
             match dst_var.typ {
                 Option[Type]::Some(dst_type) => {
                     if dst_type.representation == RepresentationKind::Raw {
-                        if str_ends_with(dst_var.name, "_iter_slot") {
-                            ret vec_singleton(llvm_inst_store(value, ptr))
-                        }
+                        // Slot spelling must not change ownership. Keep the
+                        // same retaining store semantics as EHIR promotion;
+                        // producers express transfers with an explicit drop.
                         let mut instructions = lower_retain_value(value, required_variable_type(src_var))
                         instructions.push(llvm_inst_store(value, ptr))
                         ret instructions
@@ -4159,6 +4185,11 @@ fn lower_instruction(instruction: frozen Instruction, instruction_scope: str) ->
             let field_var: Variable = getfield_data.field
             let out_name: str = out_var.name
             let out_type: Type = required_variable_type(out_var)
+
+            // Unit payloads carry only the enum discriminant, not a value.
+            if out_type.name == "()" || out_type.name == "void" {
+                ret Vec[LLVMInstruction]::new()
+            }
 
             let out_value: LLVMValue = lower_variable(out_var)
             let source_type = required_variable_type(src_var)
@@ -5245,7 +5276,7 @@ fn lower_plain_type(type_name: str) -> LLVMType {
 
 fn is_aggregate_ehir_type(typ: frozen Type) -> bool {
     let name = typ.name
-    if name == "bool" || name == "u1" || name == "str" || name == "void" {
+    if name == "bool" || name == "u1" || name == "str" || name == "void" || name == "()" {
         ret false
     }
     if name == "u8" || name == "u16" || name == "u32" || name == "u64" || name == "usize" {
@@ -5279,6 +5310,9 @@ fn is_numeric_ehir_type(typ: frozen Type) -> bool {
 fn enum_payload_is_inline(typ: frozen Type) -> bool {
     if typ.representation != RepresentationKind::Inline {
         ret false
+    }
+    if typ.name == "()" || typ.name == "void" {
+        ret true
     }
     if typ.name == "bool" || typ.name == "u1" {
         ret true

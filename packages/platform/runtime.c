@@ -76,6 +76,7 @@ extern encore_str encore_from_cstr_copy(const char *value);
 extern char *encore_str_data(encore_str value);
 extern size_t encore_str_size(encore_str value);
 extern char *encore_to_cstr(encore_str value);
+#include "checked_io.h"
 typedef struct {
 #ifdef _WIN32
     CRITICAL_SECTION lock;
@@ -1450,6 +1451,8 @@ bool encore_tls_read_failed(size_t handle) { (void)handle; return true; }
 int32_t encore_tls_write(size_t handle, encore_str data) { (void)handle; (void)data; return -1; }
 int32_t encore_tls_close(size_t handle) { (void)handle; return 0; }
 #endif
+
+#include "loopback_http.h"
 
 int32_t encore_proc_exit(int32_t code) {
     /* The Encore standard library also exports a function named `exit`.
