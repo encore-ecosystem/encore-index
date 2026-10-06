@@ -107,6 +107,10 @@ fn main() -> u32 {
     for i in 0..128 {
         dict.remove(f "key-{i}")
     }
+    if !assert(shared.len() == 128 && !shared.contains_key("key-0")) {
+        ret 8
+    }
+    let snapshot = dict.items()
     for i in 128..256 {
         if !assert(dict.get(f "key-{i}").unwrap_or(999) == i as u32) {
             ret 1
@@ -173,6 +177,10 @@ fn main() -> u32 {
     }
     if !assert(collisions.is_empty()) {
         ret 7
+    }
+    dict.clear()
+    if !assert(shared.is_empty() && snapshot.len() == 128) {
+        ret 9
     }
     ret 0
 }

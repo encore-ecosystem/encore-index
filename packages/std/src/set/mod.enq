@@ -1,4 +1,4 @@
-//! Hash sets sharing the dictionary implementation.
+//! Sets sharing the dictionary's current linear-storage implementation.
 import std::dict::{Dict, Hashable}
 import std::ops::Eq
 import std::vec::Vec

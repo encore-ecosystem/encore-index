@@ -1,6 +1,5 @@
-//! Provides hashable keys and hash maps.
+//! Provides hashable keys and a linear dictionary.
 
-import core::panic::panic
 import std::ops::Eq
 import std::option::Option
 import std::vec::Vec
@@ -91,147 +90,133 @@ impl Hashable for isize {
     }
 }
 
-struct DictStorage[K, V] {
-    slots: Vec[Option[(K, V)]]
-    occupied: Vec[bool]
-    len: usize
-    used: usize
+/// A linear dictionary backed by a vector of key/value pairs.
+/// Copies share storage; clone creates an independent collection.
+/// Lookup, insertion and removal are O(n). Hash-table storage is deferred.
+pub struct Dict[K, V] {
+    entries: Vec[(K, V)]
 }
 
-/// Mutable hash table. Copies share storage; clone creates an independent table.
-/// Equal keys must have equal, stable hashes. Order is unspecified.
-/// This hash table is not hardened against malicious hash collisions.
-pub struct Dict[K, V] { storage: DictStorage[K, V]<H> }
-
 impl[K: Hashable + Eq, V] for Dict[K, V] {
-    pub fn new() -> Self { ret Dict[K, V]::with_capacity(0) }
+    pub fn new() -> Self {
+        ret Self::with_capacity(16)
+    }
     pub fn with_capacity(capacity: usize) -> Self {
-        let mut count = 8_usize
-        while count - count / 4 < capacity {
-            if count > 9223372036854775807_usize { panic("dictionary capacity overflow") }
-            count *= 2
+        ret Self {
+            Vec[(K, V)]::with_capacity(capacity)
         }
-        let mut slots = Vec[Option[(K, V)]]::with_capacity(count)
-        let mut occupied = Vec[bool]::with_capacity(count)
-        for i in 0..count {
-            slots.push(Option[(K, V)]::None)
-            occupied.push(false)
-        }
-        ret Self { DictStorage[K, V]<H>{slots, occupied, 0, 0} }
     }
-    pub fn len(self: Self) -> usize { ret self.storage.len }
-    pub fn is_empty(self: Self) -> bool { ret self.len() == 0 }
+    pub fn len(self: Self) -> usize {
+        ret self.entries.len()
+    }
+    pub fn is_empty(self: Self) -> bool {
+        ret self.entries.is_empty()
+    }
     pub fn capacity(self: Self) -> usize {
-        let count = self.storage.slots.len()
-        ret count - count / 4
+        ret self.entries.capacity()
     }
-    fn position(self: Self, key: K) -> usize {
-        let count = self.storage.slots.len()
-        let mut index = (key.hash() as usize) % count
-        let mut vacant = count
-        for step in 0..count {
-            match self.storage.slots.get(index).unwrap_or(Option[(K, V)]::None) {
-                Option::Some(entry) => { if entry.0 == key { ret index } }
+    pub fn reserve(self: mut Self, additional: usize) ->() {
+        self.entries.reserve(additional)
+    }
+    pub fn clear(self: mut Self) ->() {
+        self.entries.clear()
+    }
+
+    fn find_entry(self: Self, key: K) -> Option[usize] {
+        for i in 0..self.entries.len() {
+            match self.entries.get(i) {
+                Option::Some(entry) => {
+                    if entry.0 == key {
+                        ret Option::Some(i)
+                    }
+                }
                 Option::None => {
-                    if vacant == count { vacant = index }
-                    if !self.storage.occupied.get(index).unwrap_or(false) { ret vacant }
                 }
             }
-            index = (index + 1) % count
         }
-        ret vacant
+        ret Option::None
     }
     pub fn get(self: Self, key: K) -> Option[V] {
-        match self.storage.slots.get(self.position(key)).unwrap_or(Option[(K, V)]::None) {
-            Option::Some(entry) => { ret Option[V]::Some(entry.1) }
-            Option::None => { ret Option[V]::None }
+        match self.find_entry(key) {
+            Option::Some(i) => {
+                match self.entries.get(i) {
+                    Option::Some(entry) => {
+                        ret Option::Some(entry.1)
+                    }
+                    Option::None => {
+                    }
+                }
+            }
+            Option::None => {
+            }
         }
+        ret Option::None
     }
     pub fn contains_key(self: Self, key: K) -> bool {
-        ret self.storage.slots.get(self.position(key)).unwrap_or(Option[(K, V)]::None).is_some()
+        ret self.find_entry(key).is_some()
     }
-    /// Reserves additional entries; all shared handles observe the new storage.
-    pub fn reserve(self: mut Self, additional: usize) -> () {
-        if additional > 18446744073709551615_usize - self.len() { panic("dictionary capacity overflow") }
-        let required = self.len() + additional
-        if required <= self.capacity() && self.storage.used < self.capacity() { ret () }
-        let mut replacement = Dict[K, V]::with_capacity(required)
-        for slot in self.storage.slots {
-            match slot {
-                Option::Some(entry) => { replacement.insert(entry.0, entry.1) }
-                Option::None => {}
-            }
-        }
-        self.storage.slots = replacement.storage.slots
-        self.storage.occupied = replacement.storage.occupied
-        self.storage.used = self.storage.len
-    }
-    /// Inserts or replaces a value and returns the previous value.
+
+    /// Inserts or replaces a value, returning the previous value.
     pub fn insert(self: mut Self, key: K, value: V) -> Option[V] {
         let old = self.get(key)
-        if old.is_none() { self.reserve(1) }
-        let index = self.position(key)
-        if !self.storage.occupied.get(index).unwrap_or(false) {
-            self.storage.occupied.set(index, true)
-            self.storage.used += 1
+        match self.find_entry(key) {
+            Option::Some(i) => {
+                self.entries.set(i,(key, value))
+            }
+            Option::None => {
+                self.entries.push((key, value))
+            }
         }
-        self.storage.slots.set(index, Option[(K, V)]::Some((key, value)))
-        if old.is_none() { self.storage.len += 1 }
         ret old
     }
+    /// Removes a value in place so every shared copy observes the change.
     pub fn remove(self: mut Self, key: K) -> Option[V] {
-        let index = self.position(key)
-        match self.storage.slots.get(index).unwrap_or(Option[(K, V)]::None) {
-            Option::Some(entry) => {
-                self.storage.slots.set(index, Option[(K, V)]::None)
-                self.storage.len -= 1
-                ret Option[V]::Some(entry.1)
+        match self.find_entry(key) {
+            Option::Some(i) => {
+                let old = self.get(key)
+                let mut cursor = i + 1
+                while cursor < self.entries.len() {
+                    match self.entries.get(cursor) {
+                        Option::Some(entry) => {
+                            self.entries.set(cursor - 1, entry)
+                        }
+                        Option::None => {
+                        }
+                    }
+                    cursor += 1
+                }
+                self.entries.pop()
+                ret old
             }
-            Option::None => { ret Option[V]::None }
+            Option::None => {
+                ret Option::None
+            }
         }
     }
-    pub fn clear(self: mut Self) -> () {
-        for index in 0..self.storage.slots.len() {
-            self.storage.slots.set(index, Option[(K, V)]::None)
-            self.storage.occupied.set(index, false)
-        }
-        self.storage.len = 0
-        self.storage.used = 0
-    }
-    /// Returns an independent snapshot, safe to iterate while modifying the table.
     pub fn items(self: Self) -> Vec[(K, V)] {
         let mut out = Vec[(K, V)]::with_capacity(self.len())
-        for slot in self.storage.slots {
-            match slot {
-                Option::Some(entry) => { out.push(entry) }
-                Option::None => {}
-            }
+        for entry in self.entries {
+            out.push(entry)
         }
         ret out
     }
     pub fn keys(self: Self) -> Vec[K] {
         let mut out = Vec[K]::with_capacity(self.len())
-        for slot in self.storage.slots {
-            match slot {
-                Option::Some(entry) => { out.push(entry.0) }
-                Option::None => {}
-            }
+        for entry in self.entries {
+            out.push(entry.0)
         }
         ret out
     }
     pub fn values(self: Self) -> Vec[V] {
         let mut out = Vec[V]::with_capacity(self.len())
-        for slot in self.storage.slots {
-            match slot {
-                Option::Some(entry) => { out.push(entry.1) }
-                Option::None => {}
-            }
+        for entry in self.entries {
+            out.push(entry.1)
         }
         ret out
     }
     pub fn clone(self: Self) -> Self {
-        let mut out = Dict[K, V]::with_capacity(self.len())
-        for entry in self.items() { out.insert(entry.0, entry.1) }
-        ret out
+        ret Self {
+            self.items()
+        }
     }
 }
