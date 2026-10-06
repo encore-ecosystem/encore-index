@@ -179,8 +179,8 @@ static encore_str backend(int op, const char *key, const char *value) {
 }
 #elif defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
-#include <wincred.h>
 #include <windows.h>
+#include <wincred.h>
 static encore_str backend(int op, const char *key, const char *value) {
   wchar_t target[1200] = L"Encore.Registry:";
   if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, key, -1, target + 16,
