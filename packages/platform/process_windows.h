@@ -1,4 +1,41 @@
 /* Private child handles and cwd: never mutate the parent's CRT descriptors. */
+#include <fcntl.h>
+#include <stdatomic.h>
+#include <wchar.h>
+
+/* CREATE_NEW reserves the name atomically; DELETE_ON_CLOSE also covers errors
+   and abnormal process termination. Unlike CRT tmpfile[_s], this uses the
+   user's temp directory and does not require writing to the drive root. */
+static FILE *encore_windows_capture_file(void) {
+    DWORD required = GetTempPathW(0, NULL);
+    if (required == 0 || required > UINT32_MAX - 80) return NULL;
+    size_t capacity = (size_t)required + 80;
+    wchar_t *path = calloc(capacity, sizeof(wchar_t));
+    if (path == NULL) return NULL;
+    DWORD length = GetTempPathW(required, path);
+    if (length == 0 || length >= required) { free(path); return NULL; }
+    static _Atomic unsigned long long sequence = 0;
+    HANDLE handle = INVALID_HANDLE_VALUE;
+    for (unsigned int attempt = 0; attempt < 256; attempt += 1) {
+        unsigned long long nonce = atomic_fetch_add(&sequence, 1);
+        int written = swprintf(path + length, capacity - length,
+            L"encore-capture-%lu-%llu-%llu.tmp", (unsigned long)GetCurrentProcessId(),
+            (unsigned long long)GetTickCount64(), nonce);
+        if (written < 0 || (size_t)written >= capacity - length) break;
+        handle = CreateFileW(path, GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, CREATE_NEW,
+            FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, NULL);
+        if (handle != INVALID_HANDLE_VALUE || GetLastError() != ERROR_FILE_EXISTS) break;
+    }
+    free(path);
+    if (handle == INVALID_HANDLE_VALUE) return NULL;
+    int descriptor = _open_osfhandle((intptr_t)handle, _O_RDWR | _O_BINARY);
+    if (descriptor < 0) { CloseHandle(handle); return NULL; }
+    FILE *stream = _fdopen(descriptor, "w+b");
+    if (stream == NULL) _close(descriptor);
+    return stream;
+}
+
 static wchar_t *encore_process_utf16(const char *text) {
     int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text, -1, NULL, 0);
     if (size <= 0) return NULL;
