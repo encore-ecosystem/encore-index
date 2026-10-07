@@ -1520,7 +1520,7 @@ encore_str encore_proc_command_output_parts(encore_str program, size_t raw_args,
     }
 
 #ifdef _WIN32
-    FILE *capture = tmpfile();
+    FILE *capture = encore_windows_capture_file();
     if (capture == NULL) {
         encore_proc_free_argv(argv, args_len);
         free(cwd_c);
