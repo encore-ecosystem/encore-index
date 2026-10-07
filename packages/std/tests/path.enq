@@ -1,4 +1,4 @@
-import core::testing::*
+import core::testing:: *
 import std::os::{home_dir, path_separator}
 import std::path::Path
 
@@ -17,6 +17,21 @@ fn main() -> u32 {
         ret 1_u32
     }
     if !assert(p.join("/var/log").as_str() == sep + "var" + sep + "log") {
+        ret 1_u32
+    }
+
+    // Drive-rooted dependencies replace the base even when it is on another
+    // drive. Both slash forms must behave like direct Path construction.
+    let windows_dependency = "D:/a/encore/encore-index/packages/std"
+    let windows_native_dependency = "D:\\a\\encore\\encore-index\\packages\\std"
+    let temp_base = Path::new("C:/Users/runner/Temp/encore-input")
+    let absolute_dependency = Path::new(windows_dependency)
+    if !assert(absolute_dependency.is_absolute())
+    || !assert(temp_base.join(windows_dependency).as_str() == absolute_dependency.as_str())
+    || !assert(temp_base.join(windows_native_dependency).as_str() == absolute_dependency.as_str())
+    || !assert(temp_base.join_path(absolute_dependency).as_str() == absolute_dependency.as_str())
+    || !assert(Path::new("").join(windows_dependency).as_str() == absolute_dependency.as_str())
+    || !assert(temp_base.join("relative/src").as_str() == temp_base.as_str() + sep + "relative" + sep + "src") {
         ret 1_u32
     }
 

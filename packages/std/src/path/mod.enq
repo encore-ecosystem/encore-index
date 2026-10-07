@@ -128,7 +128,7 @@ impl for Path {
             ret self
         }
 
-        if is_separator(part.byte_at(0_usize)) {
+        if is_separator(part.byte_at(0_usize)) || has_drive_prefix(part) {
             ret Path::new(part)
         }
 
