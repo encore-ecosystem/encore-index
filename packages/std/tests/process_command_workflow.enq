@@ -1,22 +1,50 @@
+import core::option::Option
 import core::testing:: *
+import std::io::{print, eprint}
+import std::os::{argv, cwd, executable_path}
+import std::path::Path
 import std::process::Command
 
 fn main() -> u32 {
-    let captured = Command::new("sh")
-    .arg("-c")
-    .arg("printf zodiac; exit 7")
-    .output()
-    if !assert(captured.code() == 7_i32) || !assert(captured.text() == "zodiac") {
+    match argv(1_usize) {
+        Option::Some(mode) => {
+            if mode == "capture-child" {
+                print("zodiac")
+                eprint("stderr")
+                ret 7_u32
+            }
+            if mode == "cwd-child" {
+                print(cwd())
+                ret 0_u32
+            }
+            ret 99_u32
+        }
+        Option::None => {
+        }
+    }
+    // Use the same executable as the child: no shell, PATH or line-ending assumptions.
+    let executable = executable_path()
+    let captured = Command::new(executable).arg("capture-child").output()
+    if !assert(captured.code() == 7_i32) || !assert(captured.text() == "zodiacstderr") {
         ret 1_u32
     }
-
-    let parent = Command::new("pwd").output()
-    if !assert(parent.success()) || !assert(parent.text().len() > 1_usize) {
+    let parent = Command::new(executable).arg("cwd-child").output()
+    if !assert(parent.success()) || !assert(parent.text() == cwd()) {
         ret 1_u32
     }
-    let expected = parent.text().slice(0_usize, parent.text().len() - 1_usize) + "/src\n"
-    let located = Command::new("pwd").cwd("src").output()
-    if !assert(located.success()) || !assert(located.text() == expected) {
+    let located = Command::new(executable).arg("cwd-child").cwd("src").output()
+    let expected = Path::new(parent.text()).join("src")
+    if !assert(located.success()) || !assert(Path::new(located.text()).as_str() == expected.as_str()) {
+        ret 1_u32
+    }
+    let unchanged = Command::new(executable).arg("cwd-child").output()
+    if !assert(unchanged.text() == parent.text()) {
+        ret 1_u32
+    }
+    if !assert(!Command::new(executable).cwd("encore-missing-working-directory").output().success()) {
+        ret 1_u32
+    }
+    if !assert(!Command::new("encore-missing-executable").output().success()) {
         ret 1_u32
     }
     ret 0_u32

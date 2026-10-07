@@ -1505,6 +1505,10 @@ static char **encore_proc_make_argv(encore_str program, size_t raw_args, size_t 
     return argv;
 }
 
+#ifdef _WIN32
+#include "process_windows.h"
+#endif
+
 encore_str encore_proc_command_output_parts(encore_str program, size_t raw_args, size_t args_len, encore_str cwd) {
     g_proc_output_status = -1;
     char **argv = encore_proc_make_argv(program, raw_args, args_len);
@@ -1516,27 +1520,13 @@ encore_str encore_proc_command_output_parts(encore_str program, size_t raw_args,
     }
 
 #ifdef _WIN32
-    /* Windows support keeps the current directory unchanged. A non-empty cwd
-       is rejected until the CreateProcessW implementation lands. */
-    if (cwd_c[0] != '\0') {
-        encore_proc_free_argv(argv, args_len);
-        free(cwd_c);
-        return encore_empty_str();
-    }
     FILE *capture = tmpfile();
     if (capture == NULL) {
         encore_proc_free_argv(argv, args_len);
         free(cwd_c);
         return encore_empty_str();
     }
-    int capture_fd = _fileno(capture), saved_stdout = _dup(1), saved_stderr = _dup(2);
-    if (capture_fd >= 0 && saved_stdout >= 0 && saved_stderr >= 0 &&
-        _dup2(capture_fd, 1) == 0 && _dup2(capture_fd, 2) == 0) {
-        g_proc_output_status = encore_windows_spawn_wait(argv[0], argv);
-    }
-    fflush(stdout); fflush(stderr);
-    if (saved_stdout >= 0) { _dup2(saved_stdout, 1); _close(saved_stdout); }
-    if (saved_stderr >= 0) { _dup2(saved_stderr, 2); _close(saved_stderr); }
+    g_proc_output_status = encore_windows_capture(argv, cwd_c, capture);
     fseek(capture, 0, SEEK_END);
     long captured_size = ftell(capture);
     rewind(capture);
