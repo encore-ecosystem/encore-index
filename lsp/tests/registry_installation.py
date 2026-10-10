@@ -31,8 +31,11 @@ def main():
             f'checksum = "{checksum}"\narchive = "{index}/sample.tar.gz"\nregistry = "{index}"\n')
         cache = root / 'cache'
         package = cache / 'sources' / (index.encode().hex() + '-index') / 'packages/sample' / ('1.0.0-' + checksum)
+        environment = {key: value for key, value in os.environ.items()
+                       if key not in ('ENCORE_INDEX_URL', 'ENCORE_DEFAULT_INDEX')}
+        environment['ENCORE_REGISTRY_CACHE'] = str(cache)
         process = subprocess.Popen([str(Path(sys.argv[1]).resolve())],
-            env={**os.environ, 'ENCORE_REGISTRY_CACHE': str(cache)},
+            env=environment,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         pid = process.pid
         number = 0
