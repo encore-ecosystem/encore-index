@@ -21,6 +21,7 @@ def process_usage(pid):
     stat = (root / 'stat').read_text().split(') ', 1)[1].split()
     return {'rss_mib': round(int(status['VmRSS'].split()[0]) / 1024, 2),
             'peak_mib': round(int(status['VmHWM'].split()[0]) / 1024, 2),
+            'threads': int(status['Threads']),
             'cpu_s': round((int(stat[11]) + int(stat[12])) / os.sysconf('SC_CLK_TCK'), 3)}
 
 
@@ -30,12 +31,14 @@ def main():
     parser.add_argument('root', type=Path)
     parser.add_argument('--samples', type=int, default=5)
     parser.add_argument('--max-warm-ms', type=float)
+    parser.add_argument('--repeat-requests', type=int, default=0)
+    parser.add_argument('--max-rss-growth-percent', type=float)
     parser.add_argument('--settle-seconds', type=float, default=0,
                         help='allow initial background work before measuring queries')
     parser.add_argument('--idle-samples', type=int, default=1,
                         help='number of two-second idle CPU/RSS samples after queries')
     args = parser.parse_args()
-    if args.samples < 1 or args.idle_samples < 1:
+    if args.samples < 1 or args.idle_samples < 1 or args.repeat_requests < 0:
         parser.error('sample counts must be positive')
     if not 0 <= args.settle_seconds <= 60:
         parser.error('settle delay must be between zero and 60 seconds')
@@ -69,6 +72,7 @@ def main():
         if args.settle_seconds:
             time.sleep(args.settle_seconds)
             print(json.dumps({'phase': 'settled', **process_usage(process.pid)}), flush=True)
+        warm_queries = []
         for name, method, needle, word in [
             ('import_definition', 'textDocument/definition', 'import std::vec::Vec', 'Vec'),
             ('field_hover', 'textDocument/hover', 'document.tokens', 'tokens'),
@@ -88,6 +92,7 @@ def main():
                     'start': {'line': max(0, position['line'] - 10), 'character': 0},
                     'end': {'line': position['line'] + 10, 'character': 0}}}
             samples = []
+            warm_queries.append((method, params))
             for sample in range(args.samples + 1):
                 started = time.monotonic()
                 result = call(method, params)
@@ -112,9 +117,22 @@ def main():
                     print(json.dumps({'phase': name, 'cold_ms': round(elapsed, 2),
                                       **process_usage(process.pid)}), flush=True)
             print(json.dumps({'phase': name, 'median_ms': round(statistics.median(samples), 2),
+                              'p95_ms': round(sorted(samples)[max(0, (95 * len(samples) + 99) // 100 - 1)], 2),
                               'max_ms': round(max(samples), 2), **process_usage(process.pid)}), flush=True)
             if args.max_warm_ms is not None:
-                assert statistics.median(samples) <= args.max_warm_ms, (name, samples)
+                assert sorted(samples)[max(0, (95 * len(samples) + 99) // 100 - 1)] <= args.max_warm_ms, (name, samples)
+        if args.repeat_requests:
+            before = process_usage(process.pid)
+            for index in range(args.repeat_requests):
+                method, params = warm_queries[index % len(warm_queries)]
+                assert call(method, params)
+            after = process_usage(process.pid)
+            if before.get('rss_mib'):
+                growth = (after['rss_mib'] / before['rss_mib'] - 1) * 100
+                print(json.dumps({'phase': 'repeat_requests', 'requests': args.repeat_requests,
+                                  'rss_growth_percent': round(growth, 2), **after}), flush=True)
+                if args.max_rss_growth_percent is not None:
+                    assert growth <= args.max_rss_growth_percent, (before, after)
         for sample in range(args.idle_samples):
             before = process_usage(process.pid)
             time.sleep(2)

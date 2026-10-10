@@ -30,6 +30,7 @@ extern fn encore_self_update_commit(staged_root: str, install_root: str, new_exe
 extern fn encore_self_update_apply(parent_pid: usize, staged_root: str, install_root: str, workspace: str, helper_path: str) -> i32
 
 /// Performs the `argc` operation.
+#attr(safe)
 pub fn argc() -> usize {
     unsafe {
         ret encore_os_argc()
@@ -37,6 +38,7 @@ pub fn argc() -> usize {
 }
 
 /// Performs the `argv` operation.
+#attr(safe)
 pub fn argv(index: usize) -> Option[str] {
     if index >= argc() {
         ret Option[str]::None
@@ -66,6 +68,7 @@ pub fn args() -> Vec[str] {
 }
 
 /// Performs the `cwd` operation.
+#attr(safe)
 pub fn cwd() -> str {
     unsafe {
         ret encore_os_cwd()
@@ -73,6 +76,7 @@ pub fn cwd() -> str {
 }
 
 /// Performs the `home_dir` operation.
+#attr(safe)
 pub fn home_dir() -> str {
     unsafe {
         ret encore_os_home_dir()
@@ -80,6 +84,7 @@ pub fn home_dir() -> str {
 }
 
 /// Performs the `core_dir` operation.
+#attr(safe)
 pub fn core_dir() -> str {
     unsafe {
         ret encore_os_core_dir()
@@ -87,6 +92,7 @@ pub fn core_dir() -> str {
 }
 
 /// Performs the `arch_name` operation.
+#attr(safe)
 pub fn arch_name() -> str {
     unsafe {
         ret encore_os_arch()
@@ -94,6 +100,7 @@ pub fn arch_name() -> str {
 }
 
 /// Performs the `env` operation.
+#attr(safe)
 pub fn env(name: str) -> Option[str] {
     let value = unsafe {
         encore_os_getenv(name)
@@ -105,6 +112,7 @@ pub fn env(name: str) -> Option[str] {
 }
 
 /// Returns the absolute path of the running executable when the OS exposes it.
+#attr(safe)
 pub fn executable_path() -> str {
     unsafe {
         ret encore_os_executable_path()
@@ -148,6 +156,7 @@ pub fn path_separator() -> str {
 }
 
 /// Reads file from the underlying resource.
+#attr(safe)
 pub fn read_file(path: str) -> str {
     unsafe {
         ret encore_fs_read_file(path)
@@ -155,6 +164,7 @@ pub fn read_file(path: str) -> str {
 }
 
 /// Writes file to the underlying resource.
+#attr(safe)
 pub fn write_file(path: str, contents: str) -> i32 {
     unsafe {
         ret encore_fs_write_file(path, contents)
@@ -162,6 +172,7 @@ pub fn write_file(path: str, contents: str) -> i32 {
 }
 
 /// Writes a complete file and atomically replaces the destination.
+#attr(safe)
 pub fn write_file_atomic(path: str, contents: str) -> i32 {
     unsafe {
         ret encore_fs_write_file_atomic(path, contents)
@@ -169,6 +180,7 @@ pub fn write_file_atomic(path: str, contents: str) -> i32 {
 }
 
 /// Performs the `file_exists` operation.
+#attr(safe)
 pub fn file_exists(path: str) -> bool {
     unsafe {
         ret encore_fs_status(path) == 0_i32
@@ -176,6 +188,7 @@ pub fn file_exists(path: str) -> bool {
 }
 
 /// Returns whether directory.
+#attr(safe)
 pub fn is_directory(path: str) -> bool {
     unsafe {
         ret encore_fs_is_directory(path)
@@ -183,6 +196,7 @@ pub fn is_directory(path: str) -> bool {
 }
 
 /// Removes file.
+#attr(safe)
 pub fn remove_file(path: str) -> i32 {
     unsafe {
         ret encore_fs_remove_file(path)
@@ -190,6 +204,7 @@ pub fn remove_file(path: str) -> i32 {
 }
 
 /// Performs the `copy_file` operation.
+#attr(safe)
 pub fn copy_file(source: str, destination: str) -> i32 {
     unsafe {
         ret encore_fs_copy_file(source, destination)
@@ -197,6 +212,7 @@ pub fn copy_file(source: str, destination: str) -> i32 {
 }
 
 /// Updates executable.
+#attr(safe)
 pub fn set_executable(path: str) -> i32 {
     unsafe {
         ret encore_fs_set_executable(path)
@@ -204,6 +220,7 @@ pub fn set_executable(path: str) -> i32 {
 }
 
 /// Performs the `mkdir` operation.
+#attr(safe)
 pub fn mkdir(path: str) -> i32 {
     unsafe {
         ret encore_fs_mkdir(path)
@@ -211,6 +228,7 @@ pub fn mkdir(path: str) -> i32 {
 }
 
 /// Performs the `mkdir_all` operation.
+#attr(safe)
 pub fn mkdir_all(path: str) -> i32 {
     unsafe {
         ret encore_fs_mkdir_all(path)
@@ -218,6 +236,7 @@ pub fn mkdir_all(path: str) -> i32 {
 }
 
 /// Reads dir from the underlying resource.
+#attr(safe)
 pub fn read_dir(path: str) -> Vec[str] {
     let raw = unsafe {
         encore_fs_read_dir(path)
@@ -226,6 +245,7 @@ pub fn read_dir(path: str) -> Vec[str] {
 }
 
 /// Recursively removes one directory tree without following directory links.
+#attr(safe)
 pub fn remove_dir_all(path: str) -> i32 {
     unsafe {
         ret encore_fs_remove_dir_all(path)
@@ -234,6 +254,7 @@ pub fn remove_dir_all(path: str) -> i32 {
 
 /// Computes the lowercase SHA-256 digest of one file, or an empty string when
 /// the file cannot be read.
+#attr(safe)
 pub fn file_sha256(path: str) -> str {
     unsafe {
         ret encore_fs_sha256(path)
@@ -243,6 +264,7 @@ pub fn file_sha256(path: str) -> str {
 /// Atomically activates a staged Encore installation. On Windows this starts
 /// a detached helper and returns 1; on Unix it completes synchronously and
 /// returns 0. Negative values report a failed transaction.
+#attr(safe)
 pub fn commit_self_update(staged_root: str, install_root: str, new_executable: str, workspace: str) -> i32 {
     unsafe {
         ret encore_self_update_commit(staged_root, install_root, new_executable, workspace)
@@ -250,6 +272,7 @@ pub fn commit_self_update(staged_root: str, install_root: str, new_executable: s
 }
 
 /// Internal entrypoint used only by the detached Windows update helper.
+#attr(safe)
 pub fn apply_self_update(parent_pid: usize, staged_root: str, install_root: str, workspace: str, helper_path: str) -> i32 {
     unsafe {
         ret encore_self_update_apply(parent_pid, staged_root, install_root, workspace, helper_path)

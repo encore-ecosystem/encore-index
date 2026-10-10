@@ -546,7 +546,11 @@ int32_t encore_io_write(int32_t fd, encore_str value) {
     return 0;
 }
 
-static char g_net_last_error[256] = {0};
+#if defined(_WIN32) && defined(_MSC_VER)
+__declspec(thread) static char g_net_last_error[256] = {0};
+#else
+static _Thread_local char g_net_last_error[256] = {0};
+#endif
 
 static void encore_set_net_error_cstr(const char *msg) {
     if (msg == NULL) {
@@ -575,19 +579,22 @@ encore_str encore_net_last_error(void) {
 }
 
 #ifdef _WIN32
-static bool g_winsock_initialized = false;
+static INIT_ONCE encore_winsock_once = INIT_ONCE_STATIC_INIT;
+static int encore_winsock_status = 0;
+
+static BOOL CALLBACK encore_winsock_init_once(PINIT_ONCE once, PVOID parameter, PVOID *context) {
+    (void)once; (void)parameter; (void)context;
+    WSADATA wsa_data;
+    encore_winsock_status = WSAStartup(MAKEWORD(2, 2), &wsa_data);
+    return TRUE;
+}
 
 static bool encore_net_init(void) {
-    if (g_winsock_initialized) {
-        return true;
-    }
-    WSADATA wsa_data;
-    int rc = WSAStartup(MAKEWORD(2, 2), &wsa_data);
-    if (rc != 0) {
-        encore_set_net_error_code("WSAStartup failed", rc);
+    if (!InitOnceExecuteOnce(&encore_winsock_once, encore_winsock_init_once, NULL, NULL)) return false;
+    if (encore_winsock_status != 0) {
+        encore_set_net_error_code("WSAStartup failed", encore_winsock_status);
         return false;
     }
-    g_winsock_initialized = true;
     return true;
 }
 
@@ -802,6 +809,9 @@ encore_str encore_net_tcp_read(int32_t fd, size_t max) {
     if (max == 0) {
         return encore_empty_str();
     }
+    /* recv on Windows takes an int, and the public byte count is i32. Bound
+     * both platforms before adding the terminator or narrowing the request. */
+    if (max > (size_t)INT_MAX) max = INT_MAX;
     char *buffer = malloc(max + 1);
     if (buffer == NULL) {
         encore_set_net_error_cstr("alloc failed");
@@ -833,6 +843,7 @@ int32_t encore_net_tcp_write(int32_t fd, encore_str data) {
         encore_set_net_error_cstr("invalid data");
         return -1;
     }
+    if (len > (size_t)INT_MAX) len = INT_MAX;
 #ifdef _WIN32
     int n = send((SOCKET)fd, bytes, (int)len, 0);
     if (n < 0) {
@@ -1596,7 +1607,6 @@ int32_t encore_proc_run_args(encore_str program, encore_str *args, size_t len, s
     return encore_proc_run_args_parts(program, (size_t)(uintptr_t)args, len);
 }
 
-static bool g_args_initialized = false;
 static size_t g_argc = 0;
 static char **g_argv = NULL;
 
@@ -1612,11 +1622,7 @@ static void encore_free_args(void) {
     g_argc = 0;
 }
 
-static void encore_init_args(void) {
-    if (g_args_initialized) {
-        return;
-    }
-    g_args_initialized = true;
+static void encore_init_args_once(void) {
     atexit(encore_free_args);
 
 #ifdef _WIN32
@@ -1743,6 +1749,23 @@ static void encore_init_args(void) {
 
     free(buffer);
 }
+
+#ifdef _WIN32
+static INIT_ONCE encore_args_once = INIT_ONCE_STATIC_INIT;
+static BOOL CALLBACK encore_args_init_callback(PINIT_ONCE once, PVOID parameter, PVOID *context) {
+    (void)once; (void)parameter; (void)context;
+    encore_init_args_once();
+    return TRUE;
+}
+static void encore_init_args(void) {
+    (void)InitOnceExecuteOnce(&encore_args_once, encore_args_init_callback, NULL, NULL);
+}
+#else
+static pthread_once_t encore_args_once = PTHREAD_ONCE_INIT;
+static void encore_init_args(void) {
+    (void)pthread_once(&encore_args_once, encore_init_args_once);
+}
+#endif
 
 size_t encore_os_argc(void) {
     encore_init_args();

@@ -12,6 +12,10 @@ extern fn encore_thread_is_finished(token: usize) -> bool
 
 impl[T] for JoinHandle[T] {
     /// Returns whether the native worker has completed without consuming the handle.
+    ///
+    /// # Safety
+    /// The token must belong to a live compiler-created spawn handle, not an
+    /// arbitrary or already joined native task.
     pub fn is_finished(self: Self) -> bool {
         unsafe {
             ret encore_thread_is_finished(self.token)
@@ -20,6 +24,7 @@ impl[T] for JoinHandle[T] {
 }
 
 /// Performs the `available_parallelism` operation.
+#attr(safe)
 pub fn available_parallelism() -> usize {
     unsafe {
         ret encore_thread_available_parallelism()

@@ -13,7 +13,8 @@ fn main() -> u32 {
     if !assert(llvm_ir.contains("inttoptr i64 %zero to i8*")) { ret 2_u32 }
     if !assert(llvm_ir.contains("getelementptr i8, i8* null, i64 1")) { ret 3_u32 }
     if !assert(llvm_ir.contains("ptrtoint i8* %next_size_ptr to i64")) { ret 4_u32 }
-    if !assert(llvm_ir.contains("mul i64 %count, %next_size")) { ret 5_u32 }
+    if !assert(llvm_ir.contains("call i8* @__ehir_hrealloc_array(i8* %next_raw_src, i64 %count, i64 %next_size)")) { ret 5_u32 }
+    if !assert(!llvm_ir.contains("mul i64 %count, %next_size")) { ret 60_u32 }
     if !assert(llvm_ir.contains("private unnamed_addr constant [6 x i8] c\"hello\\00\"")) { ret 6_u32 }
     if !assert(llvm_ir.contains("define void @__drop_Named")) { ret 7_u32 }
     if !assert(llvm_ir.contains("define void @__drop_Maybe_str")) { ret 8_u32 }

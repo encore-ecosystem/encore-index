@@ -1,0 +1,107 @@
+//! Bounded responses tied to each document's dependency graph and editor epoch.
+
+import core::option::Option
+import core::vec::Vec
+import json::{Json, stringify}
+
+struct Entry {
+    key: str
+    response: Json
+    dependency_revision: str
+    bytes: usize
+}
+
+#attr(test)
+fn query_cache_revision_contract() -> bool {
+    let mut cache = QueryCache::new()
+    cache.put("hover:first", Json::Bool(true), "first:1", 1)
+    cache.put("hover:second", Json::Bool(false), "second:1", 1)
+    if cache.get("hover:first", "first:1", 1).is_none() {
+        ret false
+    }
+    if cache.get("hover:second", "second:1", 1).is_none() {
+        ret false
+    }
+    if cache.get("hover:first", "first:2", 1).is_some() {
+        ret false
+    }
+    cache.put("hover:first", Json::Bool(false), "first:2", 1)
+    if cache.entries.len() != 2 {
+        ret false
+    }
+    if cache.get("hover:first", "first:2", 1).is_none() {
+        ret false
+    }
+    ret cache.get("hover:first", "first:2", 2).is_none() && cache.entries.len() == 0
+}
+
+pub struct QueryCache {
+    editor_revision: usize
+    entries: Vec[Entry]
+    bytes: usize
+}
+
+impl for QueryCache {
+    pub fn new() -> Self {
+        ret Self {
+            0, Vec[Entry]::new(), 0
+        }
+    }
+
+    pub fn clear(self: mut Self) ->() {
+        self.entries = Vec[Entry]::new()
+        self.bytes = 0
+    }
+
+    fn validate(self: mut Self, editor_revision: usize) ->() {
+        if self.editor_revision != editor_revision {
+            self.clear()
+            self.editor_revision = editor_revision
+        }
+    }
+
+    pub fn get(self: mut Self, key: str, dependency_revision: str, editor_revision: usize) -> Option[Json] {
+        self.validate(editor_revision)
+        for entry in self.entries {
+            if entry.key == key && entry.dependency_revision == dependency_revision {
+                ret Option[Json]::Some(entry.response)
+            }
+        }
+        ret Option[Json]::None
+    }
+
+    pub fn put(self: mut Self, key: str, response: Json, dependency_revision: str, editor_revision: usize) ->() {
+        self.validate(editor_revision)
+        let bytes = key.byte_len() + stringify(response).byte_len() + dependency_revision.byte_len()
+        // Large reference lists must not retain a second workspace-sized graph.
+        if bytes > 65536 {
+            ret()
+        }
+        let mut index = 0_usize
+        for entry in self.entries {
+            if entry.key == key {
+                if self.bytes - entry.bytes + bytes > 1048576 {
+                    self.clear()
+                    break
+                }
+                self.bytes = self.bytes - entry.bytes + bytes
+                self.entries.set(index, Entry {
+                        key, response, dependency_revision, bytes
+                    }
+                    ,
+                )
+                ret()
+            }
+            index += 1_usize
+        }
+        if self.entries.len() >= 128 || self.bytes + bytes > 1048576 {
+            self.clear()
+        }
+        self.entries.push(Entry {
+                key, response, dependency_revision, bytes
+            }
+            ,
+        )
+        self.bytes += bytes
+    }
+}

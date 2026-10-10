@@ -22,6 +22,7 @@ pub struct TcpListener {
     fd: i32
 }
 
+#attr(safe)
 fn last_error() -> str {
     unsafe {
         ret encore_net_last_error()
@@ -42,6 +43,7 @@ impl for TcpStream {
     ///
     /// # Errors
     /// Returns the platform networking error when connection fails.
+    #attr(safe)
     pub fn connect(addr: str) -> Result[TcpStream, str] {
         unsafe {
             let fd = encore_net_tcp_connect(addr)
@@ -56,6 +58,7 @@ impl for TcpStream {
     }
 
     /// Reads at most `max` bytes from the connection.
+    #attr(safe)
     pub fn read(self: TcpStream, max: usize) -> Result[str, str] {
         if max == 0_usize {
             ret Result[str, str]::Ok("")
@@ -67,6 +70,7 @@ impl for TcpStream {
     }
 
     /// Writes `data` and returns the number of bytes accepted.
+    #attr(safe)
     pub fn write(self: TcpStream, data: str) -> Result[i32, str] {
         unsafe {
             let n = encore_net_tcp_write(self.fd, data)
@@ -78,6 +82,7 @@ impl for TcpStream {
     }
 
     /// Closes the underlying socket.
+    #attr(safe)
     pub fn close(self: TcpStream) -> Result[bool, str] {
         unsafe {
             let code = encore_net_tcp_close(self.fd)
@@ -94,6 +99,7 @@ impl for TcpListener {
     ///
     /// # Errors
     /// Returns the platform networking error when binding fails.
+    #attr(safe)
     pub fn bind(addr: str) -> Result[TcpListener, str] {
         unsafe {
             let fd = encore_net_tcp_bind(addr)
@@ -108,6 +114,7 @@ impl for TcpListener {
     }
 
     /// Blocks until the next incoming connection is accepted.
+    #attr(safe)
     pub fn accept(self: TcpListener) -> Result[TcpStream, str] {
         unsafe {
             let fd = encore_net_tcp_accept(self.fd)
@@ -122,6 +129,7 @@ impl for TcpListener {
     }
 
     /// Closes the listening socket.
+    #attr(safe)
     pub fn close(self: TcpListener) -> Result[bool, str] {
         unsafe {
             let code = encore_net_tcp_close(self.fd)

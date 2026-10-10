@@ -57,6 +57,7 @@ pub fn fs_write(path: str, contents: str) -> i32 {
 }
 
 /// Removes a file and returns the platform status code.
+#attr(safe)
 pub fn remove_file(path: str) -> i32 {
     unsafe {
         ret encore_fs_remove_file(path)
@@ -74,6 +75,7 @@ pub fn create_dir_all(path: str) -> i32 {
 }
 
 /// Returns the names contained directly in a directory.
+#attr(safe)
 pub fn read_dir(path: str) -> Vec[str] {
     let raw = unsafe {
         encore_fs_read_dir(path)

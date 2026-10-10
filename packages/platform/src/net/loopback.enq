@@ -13,6 +13,7 @@ pub struct LoopbackStream {
 }
 impl for LoopbackStream {
     /// Connects to 127.0.0.1. The deadline covers connect and all subsequent I/O.
+    #attr(safe)
     pub fn connect(port: usize, timeout_ms: usize) -> Result[LoopbackStream, str] {
         let handle = unsafe {
             encore_http_loopback_connect(port, timeout_ms)
@@ -26,6 +27,9 @@ impl for LoopbackStream {
         )
     }
     /// Reads bytes, distinguishing a clean EOF from timeout or failure.
+    ///
+    /// # Safety
+    /// Use a live native handle exclusively; closing any copy invalidates it.
     pub fn read(self: Self, max: usize) -> Result[str, str] {
         let data = unsafe {
             encore_http_loopback_read(self.handle, max)
@@ -39,6 +43,9 @@ impl for LoopbackStream {
         ret Result::Ok(data)
     }
     /// Writes all bytes within the original deadline.
+    ///
+    /// # Safety
+    /// Use a live native handle exclusively; closing any copy invalidates it.
     pub fn write_all(self: Self, data: str) -> Result[usize, str] {
         let count = unsafe {
             encore_http_loopback_write(self.handle, data)
@@ -49,6 +56,9 @@ impl for LoopbackStream {
         ret Result::Ok(count as usize)
     }
     /// Closes the socket once all I/O has finished.
+    ///
+    /// # Safety
+    /// Close exactly once and do not use any copy afterwards.
     pub fn close(self: Self) -> Result[bool, str] {
         let result = unsafe {
             encore_http_loopback_close(self.handle)
