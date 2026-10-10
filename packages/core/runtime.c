@@ -106,6 +106,7 @@ void __ehir_hfree(void *ptr);
 
 static void *encore_heap_alloc(size_t bytes) {
     if (bytes == 0) bytes = 1;
+    if (bytes > SIZE_MAX - sizeof(encore_heap_block)) return NULL;
     encore_heap_block *block = malloc(sizeof(encore_heap_block) + bytes);
     if (block == NULL) return NULL;
     block->meta.capacity = bytes;
@@ -116,6 +117,7 @@ static void *encore_heap_alloc(size_t bytes) {
 void *__ehir_hrealloc(void *ptr, size_t bytes) {
     if (ptr == NULL) return encore_heap_alloc(bytes);
     if (bytes == 0) bytes = 1;
+    if (bytes > SIZE_MAX - sizeof(encore_heap_block)) return NULL;
     encore_heap_block *block = ((encore_heap_block *)ptr) - 1;
     if (bytes <= block->meta.capacity) return ptr;
     if (atomic_load_explicit(&block->meta.refs, memory_order_acquire) == 1) {
@@ -129,6 +131,25 @@ void *__ehir_hrealloc(void *ptr, size_t bytes) {
     memcpy(next, ptr, block->meta.capacity);
     atomic_fetch_sub_explicit(&block->meta.refs, 1, memory_order_acq_rel);
     return next;
+}
+
+/* Vec publishes a capacity only after allocation succeeds. Never let element
+ * counts wrap into a smaller byte allocation or publish a NULL buffer. */
+void *__ehir_hrealloc_array(void *pointer, size_t count, size_t element_size) {
+    if (element_size != 0 && count > (SIZE_MAX - sizeof(encore_heap_block)) / element_size) {
+        fputs("panic: Vec capacity overflow\n", stderr);
+        exit(EXIT_FAILURE);
+    }
+    void *next = __ehir_hrealloc(pointer, count * element_size);
+    if (next == NULL) {
+        fputs("panic: Vec allocation failed\n", stderr);
+        exit(EXIT_FAILURE);
+    }
+    return next;
+}
+
+size_t encore_word_bits(void) {
+    return sizeof(size_t) * CHAR_BIT;
 }
 
 void __ehir_hfree(void *ptr) {
@@ -1095,6 +1116,7 @@ encore_str encore_str_concat(encore_str lhs, encore_str rhs) {
     size_t rhs_len = encore_str_size(rhs);
     char *lhs_data = encore_str_data(lhs);
     char *rhs_data = encore_str_data(rhs);
+    if (lhs_len == SIZE_MAX || rhs_len > SIZE_MAX - lhs_len - 1) return encore_empty_str();
     size_t total_len = lhs_len + rhs_len;
     char *buffer = malloc(total_len + 1);
     if (buffer == NULL) {

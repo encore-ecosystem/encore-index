@@ -396,7 +396,7 @@ fn main() -> u32 {
             contents = hover["contents"]
             value = contents["value"]
             assert contents["kind"] == "markdown"
-            assert "```encore\nfn connect\n```" in value, value
+            assert "```encore\nfn connect(host: str, timeout: u32) -> u32\n```" in value, value
             assert "Opens a connection." in value, value
             assert "# Errors" in value, value
 

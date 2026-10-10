@@ -1,7 +1,17 @@
 //! Defines Encore operator traits and primitive implementations.
 
 import core::option::Option
+import core::panic::panic
 pub import core::iter:: *
+
+extern fn encore_word_bits() -> usize
+
+#attr(safe)
+fn word_bits() -> usize {
+    unsafe {
+        ret encore_word_bits()
+    }
+}
 
 /// Defines the behavior required by `Add` implementations.
 pub trait Add[Rhs] {
@@ -108,6 +118,7 @@ extern fn encore_str_range_eq_ignore_ascii_case(value: str, start: usize, range_
 extern fn encore_str_find_byte_from(value: str, needle: u8, start: usize) -> usize
 
 impl Add[str] for str {
+    #attr(safe)
     fn op(self: str, other: str) -> str {
         unsafe {
             ret encore_str_concat(self, other)
@@ -117,6 +128,7 @@ impl Add[str] for str {
 
 impl for str {
     /// Finds the first byte substring at or after `start`, returning `len()` when absent.
+    #attr(safe)
     pub fn find_from(self: str, needle: str, start: usize) -> usize {
         unsafe {
             ret encore_str_find_from(self, needle, start)
@@ -124,6 +136,7 @@ impl for str {
     }
 
     /// Compares ASCII text without allocating lowercase copies.
+    #attr(safe)
     pub fn eq_ignore_ascii_case(self: str, other: str) -> bool {
         unsafe {
             ret encore_str_eq_ignore_ascii_case(self, other)
@@ -131,6 +144,7 @@ impl for str {
     }
 
     /// Compares a byte range with another string without creating a slice.
+    #attr(safe)
     pub fn range_eq(self: str, start: usize, range_len: usize, other: str) -> bool {
         unsafe {
             ret encore_str_range_eq(self, start, range_len, other)
@@ -138,6 +152,7 @@ impl for str {
     }
 
     /// Compares a byte range as ASCII without creating a slice.
+    #attr(safe)
     pub fn range_eq_ignore_ascii_case(self: str, start: usize, range_len: usize, other: str) -> bool {
         unsafe {
             ret encore_str_range_eq_ignore_ascii_case(self, start, range_len, other)
@@ -145,6 +160,7 @@ impl for str {
     }
 
     /// Finds one byte at or after `start`, returning `len()` when absent.
+    #attr(safe)
     pub fn find_byte_from(self: str, needle: u8, start: usize) -> usize {
         unsafe {
             ret encore_str_find_byte_from(self, needle, start)
@@ -152,6 +168,7 @@ impl for str {
     }
 
     /// Returns the len of this value.
+    #attr(safe)
     pub fn len(self: str) -> usize {
         // Raw string length in bytes.
         unsafe {
@@ -165,6 +182,7 @@ impl for str {
     }
 
     /// Returns the char len of this value.
+    #attr(safe)
     pub fn char_len(self: str) -> usize {
         unsafe {
             ret encore_str_char_len(self)
@@ -172,6 +190,7 @@ impl for str {
     }
 
     /// Returns get when it is available.
+    #attr(safe)
     pub fn get(self: str, n: usize) -> Option[str] {
         if n >= self.char_len() {
             ret Option[str]::None
@@ -182,6 +201,7 @@ impl for str {
     }
 
     /// Returns get byte when it is available.
+    #attr(safe)
     pub fn get_byte(self: str, n: usize) -> Option[u8] {
         if n >= self.len() {
             ret Option[u8]::None
@@ -209,6 +229,7 @@ impl for str {
     }
 
     /// Performs the `slice` operation.
+    #attr(safe)
     pub fn slice(self: str, start: usize, slice_len: usize) -> str {
         // Character-based slice.
         unsafe {
@@ -217,6 +238,7 @@ impl for str {
     }
 
     /// Performs the `slice_bytes` operation.
+    #attr(safe)
     pub fn slice_bytes(self: str, start: usize, slice_len: usize) -> str {
         // Byte-based slice for raw-string use-cases.
         unsafe {
@@ -307,6 +329,7 @@ impl Ne[str] for str {
 
 impl Eq[bool] for bool {
     /// Applies this operator implementation.
+    #attr(safe)
     pub fn op(self: bool, other: bool) -> bool {
         ehir {
             result: bool = ieq self: bool, other: bool
@@ -317,6 +340,7 @@ impl Eq[bool] for bool {
 
 impl Ne[bool] for bool {
     /// Applies this operator implementation.
+    #attr(safe)
     pub fn op(self: bool, other: bool) -> bool {
         ehir {
             result: bool = neq self: bool, other: bool
@@ -326,6 +350,7 @@ impl Ne[bool] for bool {
 }
 
 impl Add[u8] for u8 {
+    #attr(safe)
     pub fn op(self: u8, other: u8) -> u8 {
         ehir {
             result: u8 = add self: u8, other: u8
@@ -334,6 +359,7 @@ impl Add[u8] for u8 {
     }
 }
 impl Sub[u8] for u8 {
+    #attr(safe)
     pub fn op(self: u8, other: u8) -> u8 {
         ehir {
             result: u8 = sub self: u8, other: u8
@@ -342,6 +368,7 @@ impl Sub[u8] for u8 {
     }
 }
 impl Mul[u8] for u8 {
+    #attr(safe)
     pub fn op(self: u8, other: u8) -> u8 {
         ehir {
             result: u8 = mul self: u8, other: u8
@@ -350,7 +377,12 @@ impl Mul[u8] for u8 {
     }
 }
 impl Div[u8] for u8 {
+    #attr(safe)
     pub fn op(self: u8, other: u8) -> u8 {
+        if other == 0_u8 {
+            panic("integer division by zero")
+            ret 0_u8
+        }
         ehir {
             result: u8 = div self: u8, other: u8
         }
@@ -358,7 +390,12 @@ impl Div[u8] for u8 {
     }
 }
 impl Rem[u8] for u8 {
+    #attr(safe)
     pub fn op(self: u8, other: u8) -> u8 {
+        if other == 0_u8 {
+            panic("integer division by zero")
+            ret 0_u8
+        }
         ehir {
             result: u8 = mod self: u8, other: u8
         }
@@ -375,6 +412,7 @@ impl Pow[u8] for u8 {
 }
 
 impl Add[u16] for u16 {
+    #attr(safe)
     pub fn op(self: u16, other: u16) -> u16 {
         ehir {
             result: u16 = add self: u16, other: u16
@@ -383,6 +421,7 @@ impl Add[u16] for u16 {
     }
 }
 impl Sub[u16] for u16 {
+    #attr(safe)
     pub fn op(self: u16, other: u16) -> u16 {
         ehir {
             result: u16 = sub self: u16, other: u16
@@ -391,6 +430,7 @@ impl Sub[u16] for u16 {
     }
 }
 impl Mul[u16] for u16 {
+    #attr(safe)
     pub fn op(self: u16, other: u16) -> u16 {
         ehir {
             result: u16 = mul self: u16, other: u16
@@ -399,7 +439,12 @@ impl Mul[u16] for u16 {
     }
 }
 impl Div[u16] for u16 {
+    #attr(safe)
     pub fn op(self: u16, other: u16) -> u16 {
+        if other == 0_u16 {
+            panic("integer division by zero")
+            ret 0_u16
+        }
         ehir {
             result: u16 = div self: u16, other: u16
         }
@@ -407,7 +452,12 @@ impl Div[u16] for u16 {
     }
 }
 impl Rem[u16] for u16 {
+    #attr(safe)
     pub fn op(self: u16, other: u16) -> u16 {
+        if other == 0_u16 {
+            panic("integer division by zero")
+            ret 0_u16
+        }
         ehir {
             result: u16 = mod self: u16, other: u16
         }
@@ -424,6 +474,7 @@ impl Pow[u16] for u16 {
 }
 
 impl Add[u32] for u32 {
+    #attr(safe)
     pub fn op(self: u32, other: u32) -> u32 {
         ehir {
             result: u32 = add self: u32, other: u32
@@ -432,6 +483,7 @@ impl Add[u32] for u32 {
     }
 }
 impl Sub[u32] for u32 {
+    #attr(safe)
     pub fn op(self: u32, other: u32) -> u32 {
         ehir {
             result: u32 = sub self: u32, other: u32
@@ -440,6 +492,7 @@ impl Sub[u32] for u32 {
     }
 }
 impl Mul[u32] for u32 {
+    #attr(safe)
     pub fn op(self: u32, other: u32) -> u32 {
         ehir {
             result: u32 = mul self: u32, other: u32
@@ -448,7 +501,12 @@ impl Mul[u32] for u32 {
     }
 }
 impl Div[u32] for u32 {
+    #attr(safe)
     pub fn op(self: u32, other: u32) -> u32 {
+        if other == 0_u32 {
+            panic("integer division by zero")
+            ret 0_u32
+        }
         ehir {
             result: u32 = div self: u32, other: u32
         }
@@ -456,7 +514,12 @@ impl Div[u32] for u32 {
     }
 }
 impl Rem[u32] for u32 {
+    #attr(safe)
     pub fn op(self: u32, other: u32) -> u32 {
+        if other == 0_u32 {
+            panic("integer division by zero")
+            ret 0_u32
+        }
         ehir {
             result: u32 = mod self: u32, other: u32
         }
@@ -473,6 +536,7 @@ impl Pow[u32] for u32 {
 }
 
 impl Add[u64] for u64 {
+    #attr(safe)
     pub fn op(self: u64, other: u64) -> u64 {
         ehir {
             result: u64 = add self: u64, other: u64
@@ -481,6 +545,7 @@ impl Add[u64] for u64 {
     }
 }
 impl Sub[u64] for u64 {
+    #attr(safe)
     pub fn op(self: u64, other: u64) -> u64 {
         ehir {
             result: u64 = sub self: u64, other: u64
@@ -489,6 +554,7 @@ impl Sub[u64] for u64 {
     }
 }
 impl Mul[u64] for u64 {
+    #attr(safe)
     pub fn op(self: u64, other: u64) -> u64 {
         ehir {
             result: u64 = mul self: u64, other: u64
@@ -497,7 +563,12 @@ impl Mul[u64] for u64 {
     }
 }
 impl Div[u64] for u64 {
+    #attr(safe)
     pub fn op(self: u64, other: u64) -> u64 {
+        if other == 0_u64 {
+            panic("integer division by zero")
+            ret 0_u64
+        }
         ehir {
             result: u64 = div self: u64, other: u64
         }
@@ -505,7 +576,12 @@ impl Div[u64] for u64 {
     }
 }
 impl Rem[u64] for u64 {
+    #attr(safe)
     pub fn op(self: u64, other: u64) -> u64 {
+        if other == 0_u64 {
+            panic("integer division by zero")
+            ret 0_u64
+        }
         ehir {
             result: u64 = mod self: u64, other: u64
         }
@@ -522,6 +598,7 @@ impl Pow[u64] for u64 {
 }
 
 impl Add[usize] for usize {
+    #attr(safe)
     pub fn op(self: usize, other: usize) -> usize {
         ehir {
             result: usize = add self: usize, other: usize
@@ -530,6 +607,7 @@ impl Add[usize] for usize {
     }
 }
 impl Sub[usize] for usize {
+    #attr(safe)
     pub fn op(self: usize, other: usize) -> usize {
         ehir {
             result: usize = sub self: usize, other: usize
@@ -538,6 +616,7 @@ impl Sub[usize] for usize {
     }
 }
 impl Mul[usize] for usize {
+    #attr(safe)
     pub fn op(self: usize, other: usize) -> usize {
         ehir {
             result: usize = mul self: usize, other: usize
@@ -546,7 +625,12 @@ impl Mul[usize] for usize {
     }
 }
 impl Div[usize] for usize {
+    #attr(safe)
     pub fn op(self: usize, other: usize) -> usize {
+        if other == 0_usize {
+            panic("integer division by zero")
+            ret 0_usize
+        }
         ehir {
             result: usize = div self: usize, other: usize
         }
@@ -554,7 +638,12 @@ impl Div[usize] for usize {
     }
 }
 impl Rem[usize] for usize {
+    #attr(safe)
     pub fn op(self: usize, other: usize) -> usize {
+        if other == 0_usize {
+            panic("integer division by zero")
+            ret 0_usize
+        }
         ehir {
             result: usize = mod self: usize, other: usize
         }
@@ -571,6 +660,7 @@ impl Pow[usize] for usize {
 }
 
 impl Add[i8] for i8 {
+    #attr(safe)
     pub fn op(self: i8, other: i8) -> i8 {
         ehir {
             result: i8 = add self: i8, other: i8
@@ -579,6 +669,7 @@ impl Add[i8] for i8 {
     }
 }
 impl Sub[i8] for i8 {
+    #attr(safe)
     pub fn op(self: i8, other: i8) -> i8 {
         ehir {
             result: i8 = sub self: i8, other: i8
@@ -587,6 +678,7 @@ impl Sub[i8] for i8 {
     }
 }
 impl Mul[i8] for i8 {
+    #attr(safe)
     pub fn op(self: i8, other: i8) -> i8 {
         ehir {
             result: i8 = mul self: i8, other: i8
@@ -595,7 +687,16 @@ impl Mul[i8] for i8 {
     }
 }
 impl Div[i8] for i8 {
+    #attr(safe)
     pub fn op(self: i8, other: i8) -> i8 {
+        if other == 0_i8 {
+            panic("integer division by zero")
+            ret 0_i8
+        }
+        if other == - 1_i8 && self < 0_i8 && self == 0_i8 - self {
+            panic("integer division overflow")
+            ret 0_i8
+        }
         ehir {
             result: i8 = div self: i8, other: i8
         }
@@ -603,7 +704,15 @@ impl Div[i8] for i8 {
     }
 }
 impl Rem[i8] for i8 {
+    #attr(safe)
     pub fn op(self: i8, other: i8) -> i8 {
+        if other == 0_i8 {
+            panic("integer division by zero")
+            ret 0_i8
+        }
+        if other == - 1_i8 {
+            ret 0_i8
+        }
         ehir {
             result: i8 = mod self: i8, other: i8
         }
@@ -620,6 +729,7 @@ impl Pow[i8] for i8 {
 }
 
 impl Add[i16] for i16 {
+    #attr(safe)
     pub fn op(self: i16, other: i16) -> i16 {
         ehir {
             result: i16 = add self: i16, other: i16
@@ -628,6 +738,7 @@ impl Add[i16] for i16 {
     }
 }
 impl Sub[i16] for i16 {
+    #attr(safe)
     pub fn op(self: i16, other: i16) -> i16 {
         ehir {
             result: i16 = sub self: i16, other: i16
@@ -636,6 +747,7 @@ impl Sub[i16] for i16 {
     }
 }
 impl Mul[i16] for i16 {
+    #attr(safe)
     pub fn op(self: i16, other: i16) -> i16 {
         ehir {
             result: i16 = mul self: i16, other: i16
@@ -644,7 +756,16 @@ impl Mul[i16] for i16 {
     }
 }
 impl Div[i16] for i16 {
+    #attr(safe)
     pub fn op(self: i16, other: i16) -> i16 {
+        if other == 0_i16 {
+            panic("integer division by zero")
+            ret 0_i16
+        }
+        if other == - 1_i16 && self < 0_i16 && self == 0_i16 - self {
+            panic("integer division overflow")
+            ret 0_i16
+        }
         ehir {
             result: i16 = div self: i16, other: i16
         }
@@ -652,7 +773,15 @@ impl Div[i16] for i16 {
     }
 }
 impl Rem[i16] for i16 {
+    #attr(safe)
     pub fn op(self: i16, other: i16) -> i16 {
+        if other == 0_i16 {
+            panic("integer division by zero")
+            ret 0_i16
+        }
+        if other == - 1_i16 {
+            ret 0_i16
+        }
         ehir {
             result: i16 = mod self: i16, other: i16
         }
@@ -669,6 +798,7 @@ impl Pow[i16] for i16 {
 }
 
 impl Add[i32] for i32 {
+    #attr(safe)
     pub fn op(self: i32, other: i32) -> i32 {
         ehir {
             result: i32 = add self: i32, other: i32
@@ -677,6 +807,7 @@ impl Add[i32] for i32 {
     }
 }
 impl Sub[i32] for i32 {
+    #attr(safe)
     pub fn op(self: i32, other: i32) -> i32 {
         ehir {
             result: i32 = sub self: i32, other: i32
@@ -685,6 +816,7 @@ impl Sub[i32] for i32 {
     }
 }
 impl Mul[i32] for i32 {
+    #attr(safe)
     pub fn op(self: i32, other: i32) -> i32 {
         ehir {
             result: i32 = mul self: i32, other: i32
@@ -693,7 +825,16 @@ impl Mul[i32] for i32 {
     }
 }
 impl Div[i32] for i32 {
+    #attr(safe)
     pub fn op(self: i32, other: i32) -> i32 {
+        if other == 0_i32 {
+            panic("integer division by zero")
+            ret 0_i32
+        }
+        if other == - 1_i32 && self < 0_i32 && self == 0_i32 - self {
+            panic("integer division overflow")
+            ret 0_i32
+        }
         ehir {
             result: i32 = div self: i32, other: i32
         }
@@ -701,7 +842,15 @@ impl Div[i32] for i32 {
     }
 }
 impl Rem[i32] for i32 {
+    #attr(safe)
     pub fn op(self: i32, other: i32) -> i32 {
+        if other == 0_i32 {
+            panic("integer division by zero")
+            ret 0_i32
+        }
+        if other == - 1_i32 {
+            ret 0_i32
+        }
         ehir {
             result: i32 = mod self: i32, other: i32
         }
@@ -718,6 +867,7 @@ impl Pow[i32] for i32 {
 }
 
 impl Add[i64] for i64 {
+    #attr(safe)
     pub fn op(self: i64, other: i64) -> i64 {
         ehir {
             result: i64 = add self: i64, other: i64
@@ -726,6 +876,7 @@ impl Add[i64] for i64 {
     }
 }
 impl Sub[i64] for i64 {
+    #attr(safe)
     pub fn op(self: i64, other: i64) -> i64 {
         ehir {
             result: i64 = sub self: i64, other: i64
@@ -734,6 +885,7 @@ impl Sub[i64] for i64 {
     }
 }
 impl Mul[i64] for i64 {
+    #attr(safe)
     pub fn op(self: i64, other: i64) -> i64 {
         ehir {
             result: i64 = mul self: i64, other: i64
@@ -742,7 +894,16 @@ impl Mul[i64] for i64 {
     }
 }
 impl Div[i64] for i64 {
+    #attr(safe)
     pub fn op(self: i64, other: i64) -> i64 {
+        if other == 0_i64 {
+            panic("integer division by zero")
+            ret 0_i64
+        }
+        if other == - 1_i64 && self < 0_i64 && self == 0_i64 - self {
+            panic("integer division overflow")
+            ret 0_i64
+        }
         ehir {
             result: i64 = div self: i64, other: i64
         }
@@ -750,7 +911,15 @@ impl Div[i64] for i64 {
     }
 }
 impl Rem[i64] for i64 {
+    #attr(safe)
     pub fn op(self: i64, other: i64) -> i64 {
+        if other == 0_i64 {
+            panic("integer division by zero")
+            ret 0_i64
+        }
+        if other == - 1_i64 {
+            ret 0_i64
+        }
         ehir {
             result: i64 = mod self: i64, other: i64
         }
@@ -767,6 +936,7 @@ impl Pow[i64] for i64 {
 }
 
 impl Add[isize] for isize {
+    #attr(safe)
     pub fn op(self: isize, other: isize) -> isize {
         ehir {
             result: isize = add self: isize, other: isize
@@ -775,6 +945,7 @@ impl Add[isize] for isize {
     }
 }
 impl Sub[isize] for isize {
+    #attr(safe)
     pub fn op(self: isize, other: isize) -> isize {
         ehir {
             result: isize = sub self: isize, other: isize
@@ -783,6 +954,7 @@ impl Sub[isize] for isize {
     }
 }
 impl Mul[isize] for isize {
+    #attr(safe)
     pub fn op(self: isize, other: isize) -> isize {
         ehir {
             result: isize = mul self: isize, other: isize
@@ -791,7 +963,16 @@ impl Mul[isize] for isize {
     }
 }
 impl Div[isize] for isize {
+    #attr(safe)
     pub fn op(self: isize, other: isize) -> isize {
+        if other == 0_isize {
+            panic("integer division by zero")
+            ret 0_isize
+        }
+        if other == - 1_isize && self < 0_isize && self == 0_isize - self {
+            panic("integer division overflow")
+            ret 0_isize
+        }
         ehir {
             result: isize = div self: isize, other: isize
         }
@@ -799,7 +980,15 @@ impl Div[isize] for isize {
     }
 }
 impl Rem[isize] for isize {
+    #attr(safe)
     pub fn op(self: isize, other: isize) -> isize {
+        if other == 0_isize {
+            panic("integer division by zero")
+            ret 0_isize
+        }
+        if other == - 1_isize {
+            ret 0_isize
+        }
         ehir {
             result: isize = mod self: isize, other: isize
         }
@@ -816,6 +1005,7 @@ impl Pow[isize] for isize {
 }
 
 impl Add[f32] for f32 {
+    #attr(safe)
     pub fn op(self: f32, other: f32) -> f32 {
         ehir {
             result: f32 = add self: f32, other: f32
@@ -824,6 +1014,7 @@ impl Add[f32] for f32 {
     }
 }
 impl Sub[f32] for f32 {
+    #attr(safe)
     pub fn op(self: f32, other: f32) -> f32 {
         ehir {
             result: f32 = sub self: f32, other: f32
@@ -832,6 +1023,7 @@ impl Sub[f32] for f32 {
     }
 }
 impl Mul[f32] for f32 {
+    #attr(safe)
     pub fn op(self: f32, other: f32) -> f32 {
         ehir {
             result: f32 = mul self: f32, other: f32
@@ -840,6 +1032,7 @@ impl Mul[f32] for f32 {
     }
 }
 impl Div[f32] for f32 {
+    #attr(safe)
     pub fn op(self: f32, other: f32) -> f32 {
         ehir {
             result: f32 = div self: f32, other: f32
@@ -868,6 +1061,7 @@ impl Pow[i32] for f32 {
 }
 
 impl Add[f64] for f64 {
+    #attr(safe)
     pub fn op(self: f64, other: f64) -> f64 {
         ehir {
             result: f64 = add self: f64, other: f64
@@ -876,6 +1070,7 @@ impl Add[f64] for f64 {
     }
 }
 impl Sub[f64] for f64 {
+    #attr(safe)
     pub fn op(self: f64, other: f64) -> f64 {
         ehir {
             result: f64 = sub self: f64, other: f64
@@ -884,6 +1079,7 @@ impl Sub[f64] for f64 {
     }
 }
 impl Mul[f64] for f64 {
+    #attr(safe)
     pub fn op(self: f64, other: f64) -> f64 {
         ehir {
             result: f64 = mul self: f64, other: f64
@@ -892,6 +1088,7 @@ impl Mul[f64] for f64 {
     }
 }
 impl Div[f64] for f64 {
+    #attr(safe)
     pub fn op(self: f64, other: f64) -> f64 {
         ehir {
             result: f64 = div self: f64, other: f64
@@ -920,7 +1117,12 @@ impl Pow[i32] for f64 {
 }
 
 impl Shl[u8] for u8 {
+    #attr(safe)
     pub fn op(self: u8, other: u8) -> u8 {
+        if (other as usize) >= 8_usize {
+            panic("integer shift out of range")
+            ret 0_u8
+        }
         ehir {
             result: u8 = shl self: u8, other: u8
         }
@@ -928,7 +1130,12 @@ impl Shl[u8] for u8 {
     }
 }
 impl Shr[u8] for u8 {
+    #attr(safe)
     pub fn op(self: u8, other: u8) -> u8 {
+        if (other as usize) >= 8_usize {
+            panic("integer shift out of range")
+            ret 0_u8
+        }
         ehir {
             result: u8 = shr self: u8, other: u8
         }
@@ -936,6 +1143,7 @@ impl Shr[u8] for u8 {
     }
 }
 impl BitAnd[u8] for u8 {
+    #attr(safe)
     pub fn op(self: u8, other: u8) -> u8 {
         ehir {
             result: u8 = and self: u8, other: u8
@@ -944,6 +1152,7 @@ impl BitAnd[u8] for u8 {
     }
 }
 impl BitOr[u8] for u8 {
+    #attr(safe)
     pub fn op(self: u8, other: u8) -> u8 {
         ehir {
             result: u8 = or self: u8, other: u8
@@ -952,6 +1161,7 @@ impl BitOr[u8] for u8 {
     }
 }
 impl BitXor[u8] for u8 {
+    #attr(safe)
     pub fn op(self: u8, other: u8) -> u8 {
         ehir {
             result: u8 = xor self: u8, other: u8
@@ -961,7 +1171,12 @@ impl BitXor[u8] for u8 {
 }
 
 impl Shl[u16] for u16 {
+    #attr(safe)
     pub fn op(self: u16, other: u16) -> u16 {
+        if (other as usize) >= 16_usize {
+            panic("integer shift out of range")
+            ret 0_u16
+        }
         ehir {
             result: u16 = shl self: u16, other: u16
         }
@@ -969,7 +1184,12 @@ impl Shl[u16] for u16 {
     }
 }
 impl Shr[u16] for u16 {
+    #attr(safe)
     pub fn op(self: u16, other: u16) -> u16 {
+        if (other as usize) >= 16_usize {
+            panic("integer shift out of range")
+            ret 0_u16
+        }
         ehir {
             result: u16 = shr self: u16, other: u16
         }
@@ -977,6 +1197,7 @@ impl Shr[u16] for u16 {
     }
 }
 impl BitAnd[u16] for u16 {
+    #attr(safe)
     pub fn op(self: u16, other: u16) -> u16 {
         ehir {
             result: u16 = and self: u16, other: u16
@@ -985,6 +1206,7 @@ impl BitAnd[u16] for u16 {
     }
 }
 impl BitOr[u16] for u16 {
+    #attr(safe)
     pub fn op(self: u16, other: u16) -> u16 {
         ehir {
             result: u16 = or self: u16, other: u16
@@ -993,6 +1215,7 @@ impl BitOr[u16] for u16 {
     }
 }
 impl BitXor[u16] for u16 {
+    #attr(safe)
     pub fn op(self: u16, other: u16) -> u16 {
         ehir {
             result: u16 = xor self: u16, other: u16
@@ -1002,7 +1225,12 @@ impl BitXor[u16] for u16 {
 }
 
 impl Shl[u32] for u32 {
+    #attr(safe)
     pub fn op(self: u32, other: u32) -> u32 {
+        if (other as usize) >= 32_usize {
+            panic("integer shift out of range")
+            ret 0_u32
+        }
         ehir {
             result: u32 = shl self: u32, other: u32
         }
@@ -1010,7 +1238,12 @@ impl Shl[u32] for u32 {
     }
 }
 impl Shr[u32] for u32 {
+    #attr(safe)
     pub fn op(self: u32, other: u32) -> u32 {
+        if (other as usize) >= 32_usize {
+            panic("integer shift out of range")
+            ret 0_u32
+        }
         ehir {
             result: u32 = shr self: u32, other: u32
         }
@@ -1018,6 +1251,7 @@ impl Shr[u32] for u32 {
     }
 }
 impl BitAnd[u32] for u32 {
+    #attr(safe)
     pub fn op(self: u32, other: u32) -> u32 {
         ehir {
             result: u32 = and self: u32, other: u32
@@ -1026,6 +1260,7 @@ impl BitAnd[u32] for u32 {
     }
 }
 impl BitOr[u32] for u32 {
+    #attr(safe)
     pub fn op(self: u32, other: u32) -> u32 {
         ehir {
             result: u32 = or self: u32, other: u32
@@ -1034,6 +1269,7 @@ impl BitOr[u32] for u32 {
     }
 }
 impl BitXor[u32] for u32 {
+    #attr(safe)
     pub fn op(self: u32, other: u32) -> u32 {
         ehir {
             result: u32 = xor self: u32, other: u32
@@ -1043,7 +1279,12 @@ impl BitXor[u32] for u32 {
 }
 
 impl Shl[u64] for u64 {
+    #attr(safe)
     pub fn op(self: u64, other: u64) -> u64 {
+        if (other as usize) >= 64_usize {
+            panic("integer shift out of range")
+            ret 0_u64
+        }
         ehir {
             result: u64 = shl self: u64, other: u64
         }
@@ -1051,7 +1292,12 @@ impl Shl[u64] for u64 {
     }
 }
 impl Shr[u64] for u64 {
+    #attr(safe)
     pub fn op(self: u64, other: u64) -> u64 {
+        if (other as usize) >= 64_usize {
+            panic("integer shift out of range")
+            ret 0_u64
+        }
         ehir {
             result: u64 = shr self: u64, other: u64
         }
@@ -1059,6 +1305,7 @@ impl Shr[u64] for u64 {
     }
 }
 impl BitAnd[u64] for u64 {
+    #attr(safe)
     pub fn op(self: u64, other: u64) -> u64 {
         ehir {
             result: u64 = and self: u64, other: u64
@@ -1067,6 +1314,7 @@ impl BitAnd[u64] for u64 {
     }
 }
 impl BitOr[u64] for u64 {
+    #attr(safe)
     pub fn op(self: u64, other: u64) -> u64 {
         ehir {
             result: u64 = or self: u64, other: u64
@@ -1075,6 +1323,7 @@ impl BitOr[u64] for u64 {
     }
 }
 impl BitXor[u64] for u64 {
+    #attr(safe)
     pub fn op(self: u64, other: u64) -> u64 {
         ehir {
             result: u64 = xor self: u64, other: u64
@@ -1084,7 +1333,12 @@ impl BitXor[u64] for u64 {
 }
 
 impl Shl[usize] for usize {
+    #attr(safe)
     pub fn op(self: usize, other: usize) -> usize {
+        if (other as usize) >= word_bits() {
+            panic("integer shift out of range")
+            ret 0_usize
+        }
         ehir {
             result: usize = shl self: usize, other: usize
         }
@@ -1092,7 +1346,12 @@ impl Shl[usize] for usize {
     }
 }
 impl Shr[usize] for usize {
+    #attr(safe)
     pub fn op(self: usize, other: usize) -> usize {
+        if (other as usize) >= word_bits() {
+            panic("integer shift out of range")
+            ret 0_usize
+        }
         ehir {
             result: usize = shr self: usize, other: usize
         }
@@ -1100,6 +1359,7 @@ impl Shr[usize] for usize {
     }
 }
 impl BitAnd[usize] for usize {
+    #attr(safe)
     pub fn op(self: usize, other: usize) -> usize {
         ehir {
             result: usize = and self: usize, other: usize
@@ -1108,6 +1368,7 @@ impl BitAnd[usize] for usize {
     }
 }
 impl BitOr[usize] for usize {
+    #attr(safe)
     pub fn op(self: usize, other: usize) -> usize {
         ehir {
             result: usize = or self: usize, other: usize
@@ -1116,6 +1377,7 @@ impl BitOr[usize] for usize {
     }
 }
 impl BitXor[usize] for usize {
+    #attr(safe)
     pub fn op(self: usize, other: usize) -> usize {
         ehir {
             result: usize = xor self: usize, other: usize
@@ -1125,7 +1387,12 @@ impl BitXor[usize] for usize {
 }
 
 impl Shl[i8] for i8 {
+    #attr(safe)
     pub fn op(self: i8, other: i8) -> i8 {
+        if other < 0_i8 ||(other as usize) >= 8_usize {
+            panic("integer shift out of range")
+            ret 0_i8
+        }
         ehir {
             result: i8 = shl self: i8, other: i8
         }
@@ -1133,7 +1400,12 @@ impl Shl[i8] for i8 {
     }
 }
 impl Shr[i8] for i8 {
+    #attr(safe)
     pub fn op(self: i8, other: i8) -> i8 {
+        if other < 0_i8 ||(other as usize) >= 8_usize {
+            panic("integer shift out of range")
+            ret 0_i8
+        }
         ehir {
             result: i8 = shr self: i8, other: i8
         }
@@ -1141,6 +1413,7 @@ impl Shr[i8] for i8 {
     }
 }
 impl BitAnd[i8] for i8 {
+    #attr(safe)
     pub fn op(self: i8, other: i8) -> i8 {
         ehir {
             result: i8 = and self: i8, other: i8
@@ -1149,6 +1422,7 @@ impl BitAnd[i8] for i8 {
     }
 }
 impl BitOr[i8] for i8 {
+    #attr(safe)
     pub fn op(self: i8, other: i8) -> i8 {
         ehir {
             result: i8 = or self: i8, other: i8
@@ -1157,6 +1431,7 @@ impl BitOr[i8] for i8 {
     }
 }
 impl BitXor[i8] for i8 {
+    #attr(safe)
     pub fn op(self: i8, other: i8) -> i8 {
         ehir {
             result: i8 = xor self: i8, other: i8
@@ -1166,7 +1441,12 @@ impl BitXor[i8] for i8 {
 }
 
 impl Shl[i16] for i16 {
+    #attr(safe)
     pub fn op(self: i16, other: i16) -> i16 {
+        if other < 0_i16 ||(other as usize) >= 16_usize {
+            panic("integer shift out of range")
+            ret 0_i16
+        }
         ehir {
             result: i16 = shl self: i16, other: i16
         }
@@ -1174,7 +1454,12 @@ impl Shl[i16] for i16 {
     }
 }
 impl Shr[i16] for i16 {
+    #attr(safe)
     pub fn op(self: i16, other: i16) -> i16 {
+        if other < 0_i16 ||(other as usize) >= 16_usize {
+            panic("integer shift out of range")
+            ret 0_i16
+        }
         ehir {
             result: i16 = shr self: i16, other: i16
         }
@@ -1182,6 +1467,7 @@ impl Shr[i16] for i16 {
     }
 }
 impl BitAnd[i16] for i16 {
+    #attr(safe)
     pub fn op(self: i16, other: i16) -> i16 {
         ehir {
             result: i16 = and self: i16, other: i16
@@ -1190,6 +1476,7 @@ impl BitAnd[i16] for i16 {
     }
 }
 impl BitOr[i16] for i16 {
+    #attr(safe)
     pub fn op(self: i16, other: i16) -> i16 {
         ehir {
             result: i16 = or self: i16, other: i16
@@ -1198,6 +1485,7 @@ impl BitOr[i16] for i16 {
     }
 }
 impl BitXor[i16] for i16 {
+    #attr(safe)
     pub fn op(self: i16, other: i16) -> i16 {
         ehir {
             result: i16 = xor self: i16, other: i16
@@ -1207,7 +1495,12 @@ impl BitXor[i16] for i16 {
 }
 
 impl Shl[i32] for i32 {
+    #attr(safe)
     pub fn op(self: i32, other: i32) -> i32 {
+        if other < 0_i32 ||(other as usize) >= 32_usize {
+            panic("integer shift out of range")
+            ret 0_i32
+        }
         ehir {
             result: i32 = shl self: i32, other: i32
         }
@@ -1215,7 +1508,12 @@ impl Shl[i32] for i32 {
     }
 }
 impl Shr[i32] for i32 {
+    #attr(safe)
     pub fn op(self: i32, other: i32) -> i32 {
+        if other < 0_i32 ||(other as usize) >= 32_usize {
+            panic("integer shift out of range")
+            ret 0_i32
+        }
         ehir {
             result: i32 = shr self: i32, other: i32
         }
@@ -1223,6 +1521,7 @@ impl Shr[i32] for i32 {
     }
 }
 impl BitAnd[i32] for i32 {
+    #attr(safe)
     pub fn op(self: i32, other: i32) -> i32 {
         ehir {
             result: i32 = and self: i32, other: i32
@@ -1231,6 +1530,7 @@ impl BitAnd[i32] for i32 {
     }
 }
 impl BitOr[i32] for i32 {
+    #attr(safe)
     pub fn op(self: i32, other: i32) -> i32 {
         ehir {
             result: i32 = or self: i32, other: i32
@@ -1239,6 +1539,7 @@ impl BitOr[i32] for i32 {
     }
 }
 impl BitXor[i32] for i32 {
+    #attr(safe)
     pub fn op(self: i32, other: i32) -> i32 {
         ehir {
             result: i32 = xor self: i32, other: i32
@@ -1248,7 +1549,12 @@ impl BitXor[i32] for i32 {
 }
 
 impl Shl[i64] for i64 {
+    #attr(safe)
     pub fn op(self: i64, other: i64) -> i64 {
+        if other < 0_i64 ||(other as usize) >= 64_usize {
+            panic("integer shift out of range")
+            ret 0_i64
+        }
         ehir {
             result: i64 = shl self: i64, other: i64
         }
@@ -1256,7 +1562,12 @@ impl Shl[i64] for i64 {
     }
 }
 impl Shr[i64] for i64 {
+    #attr(safe)
     pub fn op(self: i64, other: i64) -> i64 {
+        if other < 0_i64 ||(other as usize) >= 64_usize {
+            panic("integer shift out of range")
+            ret 0_i64
+        }
         ehir {
             result: i64 = shr self: i64, other: i64
         }
@@ -1264,6 +1575,7 @@ impl Shr[i64] for i64 {
     }
 }
 impl BitAnd[i64] for i64 {
+    #attr(safe)
     pub fn op(self: i64, other: i64) -> i64 {
         ehir {
             result: i64 = and self: i64, other: i64
@@ -1272,6 +1584,7 @@ impl BitAnd[i64] for i64 {
     }
 }
 impl BitOr[i64] for i64 {
+    #attr(safe)
     pub fn op(self: i64, other: i64) -> i64 {
         ehir {
             result: i64 = or self: i64, other: i64
@@ -1280,6 +1593,7 @@ impl BitOr[i64] for i64 {
     }
 }
 impl BitXor[i64] for i64 {
+    #attr(safe)
     pub fn op(self: i64, other: i64) -> i64 {
         ehir {
             result: i64 = xor self: i64, other: i64
@@ -1289,7 +1603,12 @@ impl BitXor[i64] for i64 {
 }
 
 impl Shl[isize] for isize {
+    #attr(safe)
     pub fn op(self: isize, other: isize) -> isize {
+        if other < 0_isize ||(other as usize) >= word_bits() {
+            panic("integer shift out of range")
+            ret 0_isize
+        }
         ehir {
             result: isize = shl self: isize, other: isize
         }
@@ -1297,7 +1616,12 @@ impl Shl[isize] for isize {
     }
 }
 impl Shr[isize] for isize {
+    #attr(safe)
     pub fn op(self: isize, other: isize) -> isize {
+        if other < 0_isize ||(other as usize) >= word_bits() {
+            panic("integer shift out of range")
+            ret 0_isize
+        }
         ehir {
             result: isize = shr self: isize, other: isize
         }
@@ -1305,6 +1629,7 @@ impl Shr[isize] for isize {
     }
 }
 impl BitAnd[isize] for isize {
+    #attr(safe)
     pub fn op(self: isize, other: isize) -> isize {
         ehir {
             result: isize = and self: isize, other: isize
@@ -1313,6 +1638,7 @@ impl BitAnd[isize] for isize {
     }
 }
 impl BitOr[isize] for isize {
+    #attr(safe)
     pub fn op(self: isize, other: isize) -> isize {
         ehir {
             result: isize = or self: isize, other: isize
@@ -1321,6 +1647,7 @@ impl BitOr[isize] for isize {
     }
 }
 impl BitXor[isize] for isize {
+    #attr(safe)
     pub fn op(self: isize, other: isize) -> isize {
         ehir {
             result: isize = xor self: isize, other: isize
@@ -1330,6 +1657,7 @@ impl BitXor[isize] for isize {
 }
 
 impl Eq[u8] for u8 {
+    #attr(safe)
     pub fn op(self: u8, other: u8) -> bool {
         ehir {
             result: bool = ieq self: u8, other: u8
@@ -1338,6 +1666,7 @@ impl Eq[u8] for u8 {
     }
 }
 impl Ne[u8] for u8 {
+    #attr(safe)
     pub fn op(self: u8, other: u8) -> bool {
         ehir {
             result: bool = neq self: u8, other: u8
@@ -1346,6 +1675,7 @@ impl Ne[u8] for u8 {
     }
 }
 impl Lt[u8] for u8 {
+    #attr(safe)
     pub fn op(self: u8, other: u8) -> bool {
         ehir {
             result: bool = les self: u8, other: u8
@@ -1354,6 +1684,7 @@ impl Lt[u8] for u8 {
     }
 }
 impl Le[u8] for u8 {
+    #attr(safe)
     pub fn op(self: u8, other: u8) -> bool {
         ehir {
             result: bool = leq self: u8, other: u8
@@ -1362,6 +1693,7 @@ impl Le[u8] for u8 {
     }
 }
 impl Gt[u8] for u8 {
+    #attr(safe)
     pub fn op(self: u8, other: u8) -> bool {
         ehir {
             result: bool = grt self: u8, other: u8
@@ -1370,6 +1702,7 @@ impl Gt[u8] for u8 {
     }
 }
 impl Ge[u8] for u8 {
+    #attr(safe)
     pub fn op(self: u8, other: u8) -> bool {
         ehir {
             result: bool = geq self: u8, other: u8
@@ -1379,6 +1712,7 @@ impl Ge[u8] for u8 {
 }
 
 impl Eq[u16] for u16 {
+    #attr(safe)
     pub fn op(self: u16, other: u16) -> bool {
         ehir {
             result: bool = ieq self: u16, other: u16
@@ -1387,6 +1721,7 @@ impl Eq[u16] for u16 {
     }
 }
 impl Ne[u16] for u16 {
+    #attr(safe)
     pub fn op(self: u16, other: u16) -> bool {
         ehir {
             result: bool = neq self: u16, other: u16
@@ -1395,6 +1730,7 @@ impl Ne[u16] for u16 {
     }
 }
 impl Lt[u16] for u16 {
+    #attr(safe)
     pub fn op(self: u16, other: u16) -> bool {
         ehir {
             result: bool = les self: u16, other: u16
@@ -1403,6 +1739,7 @@ impl Lt[u16] for u16 {
     }
 }
 impl Le[u16] for u16 {
+    #attr(safe)
     pub fn op(self: u16, other: u16) -> bool {
         ehir {
             result: bool = leq self: u16, other: u16
@@ -1411,6 +1748,7 @@ impl Le[u16] for u16 {
     }
 }
 impl Gt[u16] for u16 {
+    #attr(safe)
     pub fn op(self: u16, other: u16) -> bool {
         ehir {
             result: bool = grt self: u16, other: u16
@@ -1419,6 +1757,7 @@ impl Gt[u16] for u16 {
     }
 }
 impl Ge[u16] for u16 {
+    #attr(safe)
     pub fn op(self: u16, other: u16) -> bool {
         ehir {
             result: bool = geq self: u16, other: u16
@@ -1428,6 +1767,7 @@ impl Ge[u16] for u16 {
 }
 
 impl Eq[u32] for u32 {
+    #attr(safe)
     pub fn op(self: u32, other: u32) -> bool {
         ehir {
             result: bool = ieq self: u32, other: u32
@@ -1436,6 +1776,7 @@ impl Eq[u32] for u32 {
     }
 }
 impl Ne[u32] for u32 {
+    #attr(safe)
     pub fn op(self: u32, other: u32) -> bool {
         ehir {
             result: bool = neq self: u32, other: u32
@@ -1444,6 +1785,7 @@ impl Ne[u32] for u32 {
     }
 }
 impl Lt[u32] for u32 {
+    #attr(safe)
     pub fn op(self: u32, other: u32) -> bool {
         ehir {
             result: bool = les self: u32, other: u32
@@ -1452,6 +1794,7 @@ impl Lt[u32] for u32 {
     }
 }
 impl Le[u32] for u32 {
+    #attr(safe)
     pub fn op(self: u32, other: u32) -> bool {
         ehir {
             result: bool = leq self: u32, other: u32
@@ -1460,6 +1803,7 @@ impl Le[u32] for u32 {
     }
 }
 impl Gt[u32] for u32 {
+    #attr(safe)
     pub fn op(self: u32, other: u32) -> bool {
         ehir {
             result: bool = grt self: u32, other: u32
@@ -1468,6 +1812,7 @@ impl Gt[u32] for u32 {
     }
 }
 impl Ge[u32] for u32 {
+    #attr(safe)
     pub fn op(self: u32, other: u32) -> bool {
         ehir {
             result: bool = geq self: u32, other: u32
@@ -1477,6 +1822,7 @@ impl Ge[u32] for u32 {
 }
 
 impl Eq[u64] for u64 {
+    #attr(safe)
     pub fn op(self: u64, other: u64) -> bool {
         ehir {
             result: bool = ieq self: u64, other: u64
@@ -1485,6 +1831,7 @@ impl Eq[u64] for u64 {
     }
 }
 impl Ne[u64] for u64 {
+    #attr(safe)
     pub fn op(self: u64, other: u64) -> bool {
         ehir {
             result: bool = neq self: u64, other: u64
@@ -1493,6 +1840,7 @@ impl Ne[u64] for u64 {
     }
 }
 impl Lt[u64] for u64 {
+    #attr(safe)
     pub fn op(self: u64, other: u64) -> bool {
         ehir {
             result: bool = les self: u64, other: u64
@@ -1501,6 +1849,7 @@ impl Lt[u64] for u64 {
     }
 }
 impl Le[u64] for u64 {
+    #attr(safe)
     pub fn op(self: u64, other: u64) -> bool {
         ehir {
             result: bool = leq self: u64, other: u64
@@ -1509,6 +1858,7 @@ impl Le[u64] for u64 {
     }
 }
 impl Gt[u64] for u64 {
+    #attr(safe)
     pub fn op(self: u64, other: u64) -> bool {
         ehir {
             result: bool = grt self: u64, other: u64
@@ -1517,6 +1867,7 @@ impl Gt[u64] for u64 {
     }
 }
 impl Ge[u64] for u64 {
+    #attr(safe)
     pub fn op(self: u64, other: u64) -> bool {
         ehir {
             result: bool = geq self: u64, other: u64
@@ -1526,6 +1877,7 @@ impl Ge[u64] for u64 {
 }
 
 impl Eq[usize] for usize {
+    #attr(safe)
     pub fn op(self: usize, other: usize) -> bool {
         ehir {
             result: bool = ieq self: usize, other: usize
@@ -1534,6 +1886,7 @@ impl Eq[usize] for usize {
     }
 }
 impl Ne[usize] for usize {
+    #attr(safe)
     pub fn op(self: usize, other: usize) -> bool {
         ehir {
             result: bool = neq self: usize, other: usize
@@ -1542,6 +1895,7 @@ impl Ne[usize] for usize {
     }
 }
 impl Lt[usize] for usize {
+    #attr(safe)
     pub fn op(self: usize, other: usize) -> bool {
         ehir {
             result: bool = les self: usize, other: usize
@@ -1550,6 +1904,7 @@ impl Lt[usize] for usize {
     }
 }
 impl Le[usize] for usize {
+    #attr(safe)
     pub fn op(self: usize, other: usize) -> bool {
         ehir {
             result: bool = leq self: usize, other: usize
@@ -1558,6 +1913,7 @@ impl Le[usize] for usize {
     }
 }
 impl Gt[usize] for usize {
+    #attr(safe)
     pub fn op(self: usize, other: usize) -> bool {
         ehir {
             result: bool = grt self: usize, other: usize
@@ -1566,6 +1922,7 @@ impl Gt[usize] for usize {
     }
 }
 impl Ge[usize] for usize {
+    #attr(safe)
     pub fn op(self: usize, other: usize) -> bool {
         ehir {
             result: bool = geq self: usize, other: usize
@@ -1575,6 +1932,7 @@ impl Ge[usize] for usize {
 }
 
 impl Eq[i8] for i8 {
+    #attr(safe)
     pub fn op(self: i8, other: i8) -> bool {
         ehir {
             result: bool = ieq self: i8, other: i8
@@ -1583,6 +1941,7 @@ impl Eq[i8] for i8 {
     }
 }
 impl Ne[i8] for i8 {
+    #attr(safe)
     pub fn op(self: i8, other: i8) -> bool {
         ehir {
             result: bool = neq self: i8, other: i8
@@ -1591,6 +1950,7 @@ impl Ne[i8] for i8 {
     }
 }
 impl Lt[i8] for i8 {
+    #attr(safe)
     pub fn op(self: i8, other: i8) -> bool {
         ehir {
             result: bool = les self: i8, other: i8
@@ -1599,6 +1959,7 @@ impl Lt[i8] for i8 {
     }
 }
 impl Le[i8] for i8 {
+    #attr(safe)
     pub fn op(self: i8, other: i8) -> bool {
         ehir {
             result: bool = leq self: i8, other: i8
@@ -1607,6 +1968,7 @@ impl Le[i8] for i8 {
     }
 }
 impl Gt[i8] for i8 {
+    #attr(safe)
     pub fn op(self: i8, other: i8) -> bool {
         ehir {
             result: bool = grt self: i8, other: i8
@@ -1615,6 +1977,7 @@ impl Gt[i8] for i8 {
     }
 }
 impl Ge[i8] for i8 {
+    #attr(safe)
     pub fn op(self: i8, other: i8) -> bool {
         ehir {
             result: bool = geq self: i8, other: i8
@@ -1624,6 +1987,7 @@ impl Ge[i8] for i8 {
 }
 
 impl Eq[i16] for i16 {
+    #attr(safe)
     pub fn op(self: i16, other: i16) -> bool {
         ehir {
             result: bool = ieq self: i16, other: i16
@@ -1632,6 +1996,7 @@ impl Eq[i16] for i16 {
     }
 }
 impl Ne[i16] for i16 {
+    #attr(safe)
     pub fn op(self: i16, other: i16) -> bool {
         ehir {
             result: bool = neq self: i16, other: i16
@@ -1640,6 +2005,7 @@ impl Ne[i16] for i16 {
     }
 }
 impl Lt[i16] for i16 {
+    #attr(safe)
     pub fn op(self: i16, other: i16) -> bool {
         ehir {
             result: bool = les self: i16, other: i16
@@ -1648,6 +2014,7 @@ impl Lt[i16] for i16 {
     }
 }
 impl Le[i16] for i16 {
+    #attr(safe)
     pub fn op(self: i16, other: i16) -> bool {
         ehir {
             result: bool = leq self: i16, other: i16
@@ -1656,6 +2023,7 @@ impl Le[i16] for i16 {
     }
 }
 impl Gt[i16] for i16 {
+    #attr(safe)
     pub fn op(self: i16, other: i16) -> bool {
         ehir {
             result: bool = grt self: i16, other: i16
@@ -1664,6 +2032,7 @@ impl Gt[i16] for i16 {
     }
 }
 impl Ge[i16] for i16 {
+    #attr(safe)
     pub fn op(self: i16, other: i16) -> bool {
         ehir {
             result: bool = geq self: i16, other: i16
@@ -1673,6 +2042,7 @@ impl Ge[i16] for i16 {
 }
 
 impl Eq[i32] for i32 {
+    #attr(safe)
     pub fn op(self: i32, other: i32) -> bool {
         ehir {
             result: bool = ieq self: i32, other: i32
@@ -1681,6 +2051,7 @@ impl Eq[i32] for i32 {
     }
 }
 impl Ne[i32] for i32 {
+    #attr(safe)
     pub fn op(self: i32, other: i32) -> bool {
         ehir {
             result: bool = neq self: i32, other: i32
@@ -1689,6 +2060,7 @@ impl Ne[i32] for i32 {
     }
 }
 impl Lt[i32] for i32 {
+    #attr(safe)
     pub fn op(self: i32, other: i32) -> bool {
         ehir {
             result: bool = les self: i32, other: i32
@@ -1697,6 +2069,7 @@ impl Lt[i32] for i32 {
     }
 }
 impl Le[i32] for i32 {
+    #attr(safe)
     pub fn op(self: i32, other: i32) -> bool {
         ehir {
             result: bool = leq self: i32, other: i32
@@ -1705,6 +2078,7 @@ impl Le[i32] for i32 {
     }
 }
 impl Gt[i32] for i32 {
+    #attr(safe)
     pub fn op(self: i32, other: i32) -> bool {
         ehir {
             result: bool = grt self: i32, other: i32
@@ -1713,6 +2087,7 @@ impl Gt[i32] for i32 {
     }
 }
 impl Ge[i32] for i32 {
+    #attr(safe)
     pub fn op(self: i32, other: i32) -> bool {
         ehir {
             result: bool = geq self: i32, other: i32
@@ -1722,6 +2097,7 @@ impl Ge[i32] for i32 {
 }
 
 impl Eq[i64] for i64 {
+    #attr(safe)
     pub fn op(self: i64, other: i64) -> bool {
         ehir {
             result: bool = ieq self: i64, other: i64
@@ -1730,6 +2106,7 @@ impl Eq[i64] for i64 {
     }
 }
 impl Ne[i64] for i64 {
+    #attr(safe)
     pub fn op(self: i64, other: i64) -> bool {
         ehir {
             result: bool = neq self: i64, other: i64
@@ -1738,6 +2115,7 @@ impl Ne[i64] for i64 {
     }
 }
 impl Lt[i64] for i64 {
+    #attr(safe)
     pub fn op(self: i64, other: i64) -> bool {
         ehir {
             result: bool = les self: i64, other: i64
@@ -1746,6 +2124,7 @@ impl Lt[i64] for i64 {
     }
 }
 impl Le[i64] for i64 {
+    #attr(safe)
     pub fn op(self: i64, other: i64) -> bool {
         ehir {
             result: bool = leq self: i64, other: i64
@@ -1754,6 +2133,7 @@ impl Le[i64] for i64 {
     }
 }
 impl Gt[i64] for i64 {
+    #attr(safe)
     pub fn op(self: i64, other: i64) -> bool {
         ehir {
             result: bool = grt self: i64, other: i64
@@ -1762,6 +2142,7 @@ impl Gt[i64] for i64 {
     }
 }
 impl Ge[i64] for i64 {
+    #attr(safe)
     pub fn op(self: i64, other: i64) -> bool {
         ehir {
             result: bool = geq self: i64, other: i64
@@ -1771,6 +2152,7 @@ impl Ge[i64] for i64 {
 }
 
 impl Eq[isize] for isize {
+    #attr(safe)
     pub fn op(self: isize, other: isize) -> bool {
         ehir {
             result: bool = ieq self: isize, other: isize
@@ -1779,6 +2161,7 @@ impl Eq[isize] for isize {
     }
 }
 impl Ne[isize] for isize {
+    #attr(safe)
     pub fn op(self: isize, other: isize) -> bool {
         ehir {
             result: bool = neq self: isize, other: isize
@@ -1787,6 +2170,7 @@ impl Ne[isize] for isize {
     }
 }
 impl Lt[isize] for isize {
+    #attr(safe)
     pub fn op(self: isize, other: isize) -> bool {
         ehir {
             result: bool = les self: isize, other: isize
@@ -1795,6 +2179,7 @@ impl Lt[isize] for isize {
     }
 }
 impl Le[isize] for isize {
+    #attr(safe)
     pub fn op(self: isize, other: isize) -> bool {
         ehir {
             result: bool = leq self: isize, other: isize
@@ -1803,6 +2188,7 @@ impl Le[isize] for isize {
     }
 }
 impl Gt[isize] for isize {
+    #attr(safe)
     pub fn op(self: isize, other: isize) -> bool {
         ehir {
             result: bool = grt self: isize, other: isize
@@ -1811,6 +2197,7 @@ impl Gt[isize] for isize {
     }
 }
 impl Ge[isize] for isize {
+    #attr(safe)
     pub fn op(self: isize, other: isize) -> bool {
         ehir {
             result: bool = geq self: isize, other: isize
@@ -1820,6 +2207,7 @@ impl Ge[isize] for isize {
 }
 
 impl Eq[f32] for f32 {
+    #attr(safe)
     pub fn op(self: f32, other: f32) -> bool {
         ehir {
             result: bool = ieq self: f32, other: f32
@@ -1828,6 +2216,7 @@ impl Eq[f32] for f32 {
     }
 }
 impl Ne[f32] for f32 {
+    #attr(safe)
     pub fn op(self: f32, other: f32) -> bool {
         ehir {
             result: bool = neq self: f32, other: f32
@@ -1836,6 +2225,7 @@ impl Ne[f32] for f32 {
     }
 }
 impl Lt[f32] for f32 {
+    #attr(safe)
     pub fn op(self: f32, other: f32) -> bool {
         ehir {
             result: bool = les self: f32, other: f32
@@ -1844,6 +2234,7 @@ impl Lt[f32] for f32 {
     }
 }
 impl Le[f32] for f32 {
+    #attr(safe)
     pub fn op(self: f32, other: f32) -> bool {
         ehir {
             result: bool = leq self: f32, other: f32
@@ -1852,6 +2243,7 @@ impl Le[f32] for f32 {
     }
 }
 impl Gt[f32] for f32 {
+    #attr(safe)
     pub fn op(self: f32, other: f32) -> bool {
         ehir {
             result: bool = grt self: f32, other: f32
@@ -1860,6 +2252,7 @@ impl Gt[f32] for f32 {
     }
 }
 impl Ge[f32] for f32 {
+    #attr(safe)
     pub fn op(self: f32, other: f32) -> bool {
         ehir {
             result: bool = geq self: f32, other: f32
@@ -1869,6 +2262,7 @@ impl Ge[f32] for f32 {
 }
 
 impl Eq[f64] for f64 {
+    #attr(safe)
     pub fn op(self: f64, other: f64) -> bool {
         ehir {
             result: bool = ieq self: f64, other: f64
@@ -1877,6 +2271,7 @@ impl Eq[f64] for f64 {
     }
 }
 impl Ne[f64] for f64 {
+    #attr(safe)
     pub fn op(self: f64, other: f64) -> bool {
         ehir {
             result: bool = neq self: f64, other: f64
@@ -1885,6 +2280,7 @@ impl Ne[f64] for f64 {
     }
 }
 impl Lt[f64] for f64 {
+    #attr(safe)
     pub fn op(self: f64, other: f64) -> bool {
         ehir {
             result: bool = les self: f64, other: f64
@@ -1893,6 +2289,7 @@ impl Lt[f64] for f64 {
     }
 }
 impl Le[f64] for f64 {
+    #attr(safe)
     pub fn op(self: f64, other: f64) -> bool {
         ehir {
             result: bool = leq self: f64, other: f64
@@ -1901,6 +2298,7 @@ impl Le[f64] for f64 {
     }
 }
 impl Gt[f64] for f64 {
+    #attr(safe)
     pub fn op(self: f64, other: f64) -> bool {
         ehir {
             result: bool = grt self: f64, other: f64
@@ -1909,6 +2307,7 @@ impl Gt[f64] for f64 {
     }
 }
 impl Ge[f64] for f64 {
+    #attr(safe)
     pub fn op(self: f64, other: f64) -> bool {
         ehir {
             result: bool = geq self: f64, other: f64

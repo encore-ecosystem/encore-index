@@ -45,6 +45,7 @@ impl for TlsClientConfig {
 
 impl for TlsStream {
     /// Connects to `host:port`, sends SNI and verifies the certificate hostname.
+    #attr(safe)
     pub fn connect(host: str, port: usize, config: TlsClientConfig) -> Result[TlsStream, str] {
         unsafe {
             if config.timeout_ms == 0_usize {
@@ -62,6 +63,10 @@ impl for TlsStream {
     }
 
     /// Reads at most `max` decrypted bytes. Empty data denotes a clean EOF.
+    ///
+    /// # Safety
+    /// The native handle must still be alive and exclusively accessed. Closing
+    /// any copy invalidates all copies of this stream.
     pub fn read(self: Self, max: usize) -> Result[str, str] {
         if max == 0_usize {
             ret Result::Ok("")
@@ -76,6 +81,9 @@ impl for TlsStream {
     }
 
     /// Writes the complete byte string or returns a TLS transport error.
+    ///
+    /// # Safety
+    /// The native handle must still be alive and exclusively accessed.
     pub fn write_all(self: Self, data: str) -> Result[usize, str] {
         unsafe {
             let written = encore_tls_write(self.handle, data)
@@ -87,6 +95,9 @@ impl for TlsStream {
     }
 
     /// Sends TLS close-notify and releases the native connection.
+    ///
+    /// # Safety
+    /// Close exactly once, after all I/O; do not use any stream copy afterwards.
     pub fn close(self: Self) -> Result[bool, str] {
         unsafe {
             if encore_tls_close(self.handle) == 0_i32 {

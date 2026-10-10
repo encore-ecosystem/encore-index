@@ -24,6 +24,7 @@ pub fn stderr_fd() -> i32 {
 }
 
 /// Performs the `io_read` operation.
+#attr(safe)
 pub fn io_read(fd: i32, max_bytes: usize) -> str {
     unsafe {
         ret encore_io_read(fd, max_bytes)
@@ -36,6 +37,7 @@ pub fn read_stdin(max_bytes: usize) -> str {
 }
 
 /// Waits until a descriptor can be read, an EOF is pending, or the timeout expires.
+#attr(safe)
 pub fn wait_readable(fd: i32, timeout_ms: usize) -> bool {
     unsafe {
         ret encore_io_wait_readable(fd, timeout_ms)
@@ -74,6 +76,7 @@ pub fn read_line(fd: i32) -> Option[str] {
 }
 
 /// Performs the `io_write` operation.
+#attr(safe)
 pub fn io_write(fd: i32, value: str) -> i32 {
     unsafe {
         ret encore_io_write(fd, value)

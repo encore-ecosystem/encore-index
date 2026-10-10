@@ -57,7 +57,11 @@ def main():
                     'end': {'line': declaration_line, 'character': declaration_column + 5}}, locations
                 if line == 3:
                     hover = call('textDocument/hover', params)
-                    assert 'Alias[u32]::Value' in str(hover) and 'Carries the selected value.' in str(hover), hover
+                    assert 'Alias[u32]::Value(u32)' in str(hover) and 'Carries the selected value.' in str(hover), hover
+                    signature = call('textDocument/signatureHelp', {
+                        'textDocument': {'uri': path.as_uri()},
+                        'position': {'line': line, 'character': source.splitlines()[line].index('(1_u32') + 1}})
+                    assert signature['signatures'][0]['label'] == 'Value(u32) -> Alias[u32]', signature
                 completions = call('textDocument/completion', params)['items']
                 assert {item['label'] for item in completions} == {'Value', 'Empty'}, completions
                 assert all(item['kind'] == 20 for item in completions), completions

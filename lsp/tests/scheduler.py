@@ -338,7 +338,7 @@ def main() -> None:
                 },
             )
             assert response(recovered, 8)["result"]["items"] == []
-            assert json.loads(cache_file.read_text())["schema"] == "encore-lsp-analysis-v2"
+            assert json.loads(cache_file.read_text())["schema"] == "encore-lsp-analysis-v3"
         finally:
             if recovered.poll() is None:
                 stop(recovered)

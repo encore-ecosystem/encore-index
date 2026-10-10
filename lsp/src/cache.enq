@@ -5,17 +5,17 @@ import core::option::Option
 import core::result::Result
 import core::vec::Vec
 
-import encore::frontend::{DependencyGraph, Documentation, FrontendCallable, FrontendDiagnostic, FrontendDocument, FrontendSymbol}
+import encore::frontend::{DependencyGraph, Documentation, FrontendCallable, FrontendDiagnostic, FrontendDocument, FrontendSymbol, DiagnosticLabel, DiagnosticLabelKind, DiagnosticSuggestion, SuggestionApplicability}
 import encore::version::compiler_release_version
 import json::{Json, ParseError, field, parse, stringify}
 import std::os::{file_exists, mkdir_all, read_file, write_file_atomic}
 
 fn cache_schema() -> str {
-    ret "encore-lsp-analysis-v2"
+    ret "encore-lsp-analysis-v3"
 }
 
-pub fn load(path: str, module_name: str, source: str) -> Option[FrontendDocument] {
-    if path == "" || !file_exists(path) {
+pub fn load(path: str, module_name: str, source: str, identity: str) -> Option[FrontendDocument] {
+    if path == "" || identity == "" || !file_exists(path) {
         ret Option[FrontendDocument]::None
     }
     let root = match parse(read_file(path)) {
@@ -26,6 +26,7 @@ pub fn load(path: str, module_name: str, source: str) -> Option[FrontendDocument
     }
     if object_string(root, "schema") != cache_schema()
     || object_string(root, "compiler") != compiler_release_version()
+    || object_string(root, "binary") != identity
     || object_string(root, "module") != module_name
     || object_string(root, "sourceHash") != Debug::fmt(source.hash())
     || object_usize(root, "sourceLength") != source.byte_len()
@@ -62,8 +63,8 @@ pub fn load(path: str, module_name: str, source: str) -> Option[FrontendDocument
             diagnostics, symbols, callables, dependencies, object_bool(root, "parsed"),))
 }
 
-pub fn save(path: str, module_name: str, source: str, document: FrontendDocument) ->() {
-    if path == "" {
+pub fn save(path: str, module_name: str, source: str, document: FrontendDocument, identity: str) ->() {
+    if path == "" || identity == "" {
         ret()
     }
     let directory = parent_path(path)
@@ -73,6 +74,7 @@ pub fn save(path: str, module_name: str, source: str, document: FrontendDocument
     let mut fields = Vec[(str, Json)]::new()
     fields.push(field("schema", Json::String(cache_schema())))
     fields.push(field("compiler", Json::String(compiler_release_version())))
+    fields.push(field("binary", Json::String(identity)))
     fields.push(field("module", Json::String(module_name)))
     fields.push(field("sourceHash", Json::String(Debug::fmt(source.hash()))))
     fields.push(field("sourceLength", number(source.byte_len())))
@@ -123,6 +125,43 @@ fn encode_diagnostics(values: Vec[FrontendDiagnostic]) -> Json {
         fields.push(number(value.line))
         fields.push(number(value.column))
         fields.push(number(value.length))
+        let mut labels = Vec[Json]::new()
+        for label in value.labels {
+            let mut item = Vec[Json]::new()
+            item.push(Json::String(label.source_name))
+            item.push(number(label.line))
+            item.push(number(label.column))
+            item.push(number(label.length))
+            item.push(Json::String(match label.kind {
+                        DiagnosticLabelKind::Primary => "primary"
+                        DiagnosticLabelKind::Secondary => "secondary"
+                    }
+                ))
+            item.push(Json::String(label.message))
+            labels.push(Json::Array(item))
+        }
+        fields.push(Json::Array(labels))
+        fields.push(encode_strings(value.notes))
+        fields.push(encode_strings(value.helps))
+        let mut suggestions = Vec[Json]::new()
+        for suggestion in value.suggestions {
+            let mut item = Vec[Json]::new()
+            item.push(Json::String(suggestion.source_name))
+            item.push(number(suggestion.line))
+            item.push(number(suggestion.column))
+            item.push(number(suggestion.length))
+            item.push(Json::String(suggestion.replacement))
+            item.push(Json::String(suggestion.message))
+            item.push(Json::String(match suggestion.applicability {
+                        SuggestionApplicability::MachineApplicable => "machine-applicable"
+                        SuggestionApplicability::MaybeIncorrect => "maybe-incorrect"
+                        SuggestionApplicability::HasPlaceholders => "has-placeholders"
+                        SuggestionApplicability::Unspecified => "unspecified"
+                    }
+                ))
+            suggestions.push(Json::Array(item))
+        }
+        fields.push(Json::Array(suggestions))
         out.push(Json::Array(fields))
     }
     ret Json::Array(out)
@@ -137,12 +176,74 @@ fn decode_diagnostics(value: Json) -> Option[Vec[FrontendDiagnostic]] {
     }
     let mut out = Vec[FrontendDiagnostic]::new()
     for item in items {
-        if item.as_array().is_none() {
+        if !array_has_length(item, 10) {
             ret Option[Vec[FrontendDiagnostic]]::None
         }
-        out.push(FrontendDiagnostic::new(array_usize(item, 0_usize), array_string(item, 1_usize),
-                array_string(item, 2_usize), array_usize(item, 3_usize), array_usize(item, 4_usize),
-                array_usize(item, 5_usize),))
+        let mut diagnostic = FrontendDiagnostic::new(array_usize(item, 0_usize), array_string(item, 1_usize),
+            array_string(item, 2_usize), array_usize(item, 3_usize), array_usize(item, 4_usize),
+            array_usize(item, 5_usize),)
+        let labels = match item.index(6).unwrap_or(Json::Null).as_array() {
+            Some(values) => values
+            None => {
+                ret Option[Vec[FrontendDiagnostic]]::None
+            }
+        }
+        for label in labels {
+            if !array_has_length(label, 6) {
+                ret Option[Vec[FrontendDiagnostic]]::None
+            }
+            let kind = match array_string(label, 4) {
+                "primary" => DiagnosticLabelKind::Primary
+                "secondary" => DiagnosticLabelKind::Secondary
+                _ => {
+                    ret Option[Vec[FrontendDiagnostic]]::None
+                }
+            }
+            diagnostic.labels.push(DiagnosticLabel {
+                    array_string(label, 0), array_usize(label, 1),
+                    array_usize(label, 2), array_usize(label, 3), kind, array_string(label, 5)
+                }
+                ,)
+        }
+        diagnostic.notes = match decode_strings(item.index(7).unwrap_or(Json::Null)) {
+            Some(values) => values
+            None => {
+                ret Option[Vec[FrontendDiagnostic]]::None
+            }
+        }
+        diagnostic.helps = match decode_strings(item.index(8).unwrap_or(Json::Null)) {
+            Some(values) => values
+            None => {
+                ret Option[Vec[FrontendDiagnostic]]::None
+            }
+        }
+        let suggestions = match item.index(9).unwrap_or(Json::Null).as_array() {
+            Some(values) => values
+            None => {
+                ret Option[Vec[FrontendDiagnostic]]::None
+            }
+        }
+        for suggestion in suggestions {
+            if !array_has_length(suggestion, 7) {
+                ret Option[Vec[FrontendDiagnostic]]::None
+            }
+            let applicability = match array_string(suggestion, 6) {
+                "machine-applicable" => SuggestionApplicability::MachineApplicable
+                "maybe-incorrect" => SuggestionApplicability::MaybeIncorrect
+                "has-placeholders" => SuggestionApplicability::HasPlaceholders
+                "unspecified" => SuggestionApplicability::Unspecified
+                _ => {
+                    ret Option[Vec[FrontendDiagnostic]]::None
+                }
+            }
+            diagnostic.suggestions.push(DiagnosticSuggestion {
+                    array_string(suggestion, 0), array_usize(suggestion, 1),
+                    array_usize(suggestion, 2), array_usize(suggestion, 3), array_string(suggestion, 4),
+                    array_string(suggestion, 5), applicability
+                }
+                ,)
+        }
+        out.push(diagnostic)
     }
     ret Option[Vec[FrontendDiagnostic]]::Some(out)
 }
@@ -272,6 +373,39 @@ fn decode_dependencies(value: Json) -> Option[DependencyGraph] {
     ret Option[DependencyGraph]::Some(graph)
 }
 
+fn array_has_length(value: Json, length: usize) -> bool {
+    ret match value.as_array() {
+        Some(items) => items.len() == length None => false
+    }
+}
+
+fn encode_strings(values: Vec[str]) -> Json {
+    let mut items = Vec[Json]::new()
+    for value in values {
+        items.push(Json::String(value))
+    }
+    ret Json::Array(items)
+}
+
+fn decode_strings(value: Json) -> Option[Vec[str]] {
+    let values = match value.as_array() {
+        Some(items) => items
+        None => {
+            ret Option[Vec[str]]::None
+        }
+    }
+    let mut items = Vec[str]::new()
+    for value in values {
+        match value.as_str() {
+            Some(text) => items.push(text)
+            None => {
+                ret Option[Vec[str]]::None
+            }
+        }
+    }
+    ret Option[Vec[str]]::Some(items)
+}
+
 fn number(value: usize) -> Json {
     ret Json::Number(Debug::fmt(value))
 }
@@ -324,4 +458,28 @@ fn parent_path(path: str) -> str {
         }
     }
     ret ""
+}
+
+#attr(test)
+fn diagnostic_metadata_roundtrip() -> bool {
+    let mut diagnostic = FrontendDiagnostic::new(1, "fixture", "invalid input", 2, 3, 4)
+    diagnostic.labels.push(DiagnosticLabel {
+            "source.enq", 2, 3, 4, DiagnosticLabelKind::Secondary, "origin"
+        }
+        ,
+    )
+    diagnostic.notes.push("context")
+    diagnostic.helps.push("fix the input")
+    diagnostic.suggestions.push(DiagnosticSuggestion {
+            "source.enq", 2, 3, 4, "replacement", "fix", SuggestionApplicability::MachineApplicable
+        }
+        ,
+    )
+    let mut values = Vec[FrontendDiagnostic]::new()
+    values.push(diagnostic)
+    let encoded = encode_diagnostics(values)
+    ret match decode_diagnostics(encoded) {
+        Some(decoded) => stringify(encode_diagnostics(decoded)) == stringify(encoded)
+        None => false
+    }
 }

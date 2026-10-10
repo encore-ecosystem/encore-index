@@ -65,6 +65,7 @@ impl for Command {
     }
 
     /// Runs the command and captures stdout and stderr.
+    #attr(safe)
     pub fn output(self: Self) -> Output {
         let len = self.args.len()
         let data = if len == 0_usize {
@@ -87,6 +88,7 @@ impl for Command {
 }
 
 /// Performs the `exit` operation.
+#attr(safe)
 pub fn exit(code: i32) -> i32 {
     unsafe {
         ret encore_proc_exit(code)
@@ -94,6 +96,7 @@ pub fn exit(code: i32) -> i32 {
 }
 
 /// Performs the `run` operation.
+#attr(safe)
 pub fn run(command: str) -> i32 {
     unsafe {
         ret encore_proc_run(command)
@@ -101,6 +104,7 @@ pub fn run(command: str) -> i32 {
 }
 
 /// Performs the `run_args` operation.
+#attr(safe)
 pub fn run_args(program: str, args: frozen Vec[str]) -> i32 {
     let mut copied = Vec[str]::new()
     for arg in args {
@@ -121,6 +125,7 @@ pub fn run_args(program: str, args: frozen Vec[str]) -> i32 {
 
 /// Runs a process while consuming an unaliased argument vector, avoiding the
 /// defensive copy required by the shared frozen overload.
+#attr(safe)
 pub fn run_args_owned(program: str, args: Vec[str]) -> i32 {
     let len = args.len()
     let data = if len == 0_usize {
@@ -136,6 +141,7 @@ pub fn run_args_owned(program: str, args: Vec[str]) -> i32 {
 }
 
 /// Performs the `run_args_capture` operation.
+#attr(safe)
 pub fn run_args_capture(program: str, args: Vec[str], output_path: str) -> i32 {
     let len = args.len()
     let data = if len == 0_usize {

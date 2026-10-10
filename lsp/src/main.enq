@@ -22,6 +22,7 @@ import encore::frontend::PreparedSemanticWorkspace
 import encore::frontend::SyntaxDocument
 import encore::frontend::Token
 import encore::frontend::TokenType
+import encore::frontend::analysis_database::EditorBindingSite
 import encore::frontend::analysis_database::MemberDetails
 import encore::frontend::check_prepared_semantic_workspace
 import encore::frontend::cursor_expects_type
@@ -39,14 +40,16 @@ import encore::project::{try_load_cached_entry_workspace_source, ProjectWorkspac
 import encore::project::{try_read_project_manifest, project_manifest_dependencies, try_cached_project_dependency_root}
 import encore::version::compiler_release_version
 import json::Json
-import json::field
+import json::{field, stringify}
 import mod::actions::{diagnostic_actions, ranges_overlap, versioned_edit}
 import mod::cache::{load, save}
 import mod::paths::{uri_to_path, path_to_uri, join_path, ends_with, starts_with}
-import mod::protocol::{read_lsp_message, send_response, send_error, send_notification, send_request, json_get, json_get_str, json_usize, json_number_usize, make_range, range_between, location_json, text_edit, bool_provider, rename_provider, signature_help_provider, semantic_tokens_provider,}
+import mod::protocol::{LspInput, send_response, send_error, send_notification, send_request, json_get, json_get_str, json_usize, json_number_usize, make_range, range_between, location_json, text_edit, bool_provider, rename_provider, signature_help_provider, semantic_tokens_provider,}
+import mod::query_cache::QueryCache
 import mod::text::{line_text_at, find_in_line_at_or_after, contains_substring, document_last_line, min_usize, is_identifier_name, utf16_len, utf16_column, character_index_from_utf16, text_position_index, parse_usize,}
 import mod::tokens::{is_keyword_token, is_operator_token}
-import std::io::{stdin_fd, wait_readable}
+import std::io::println
+import std::os::{args, executable_path, file_sha256}
 import std::path::Path
 import std::thread::{JoinHandle, available_parallelism}
 import std::time::perf_counter_ms
@@ -92,12 +95,14 @@ struct AnalysisTask {
 struct SemanticAnalysisTask {
     uri: str
     generation: usize
+    snapshot_revision: str
     handle: JoinHandle[Vec[FrontendDiagnostic]]
 }
 
 struct SemanticAnalysisResult {
     uri: str
     generation: usize
+    snapshot_revision: str
     diagnostics: Vec[FrontendDiagnostic]
 }
 
@@ -221,6 +226,22 @@ struct ServerState {
     autoimport_scopes: Vec[AutoimportScope]
     supports_document_changes: bool
     private_query_modules: Vec[str]
+    query_cache: QueryCache
+    cache_identity: str
+    navigation_index: Vec[NavigationIndex]
+    dependency_projects: Vec[DependencyProjects]
+}
+
+struct DependencyProjects {
+    root: str
+    projects: Vec[ProjectRoot]
+}
+
+struct NavigationIndex {
+    uri: str
+    imports: str
+    complete: bool
+    dependencies: Vec[str]
 }
 
 struct SemanticTokenCache {
@@ -273,11 +294,12 @@ impl for ServerState {
             false,
             Vec[AutoimportScope]::new(),
             false,
-            Vec[str]::new()
+            Vec[str]::new(), QueryCache::new(), file_sha256(executable_path()), Vec[NavigationIndex]::new(), Vec[DependencyProjects]::new()
         }
     }
 
     fn upsert_pending_document(self: mut Self, uri: str, text: str) ->() {
+        invalidate_navigation_parents(self, uri)
         let outline = FrontendDocument::outline(analysis_module_name(self, uri), text)
         let mut index = 0_usize
         while index < self.documents.len() {
@@ -377,13 +399,14 @@ impl for ServerState {
     }
 
     fn upsert_ready_document(self: mut Self, uri: str, text: str, analyzed: FrontendDocument) ->() {
+        let editor = analyzed.editor_view()
         let mut index = 0_usize
         while index < self.documents.len() {
             match self.documents.get(index) {
                 Option[Document]::Some(doc) => {
                     if doc.uri == uri {
                         self.documents.set(index, Document {
-                                uri, text, analyzed
+                                uri, text, editor
                             }
                             ,
                         )
@@ -399,13 +422,14 @@ impl for ServerState {
     }
 
     fn upsert_ready_workspace_document(self: mut Self, uri: str, text: str, analyzed: FrontendDocument) ->() {
+        let editor = analyzed.editor_view()
         let mut index = 0_usize
         while index < self.workspace_documents.len() {
             match self.workspace_documents.get(index) {
                 Option[Document]::Some(doc) => {
                     if doc.uri == uri {
                         self.workspace_documents.set(index, Document {
-                                uri, text, analyzed
+                                uri, text, editor
                             }
                             ,
                         )
@@ -418,7 +442,7 @@ impl for ServerState {
             index += 1_usize
         }
         self.workspace_documents.push(Document {
-                uri, text, analyzed
+                uri, text, editor
             }
             ,
         )
@@ -503,8 +527,8 @@ fn analysis_cache_path(state: ServerState, uri: str) -> str {
     ret join_path(root, Debug::fmt(uri_to_path(uri).hash()) + ".json")
 }
 
-fn prepare_analysis_job(module_name: str, source_name: str, source: str, cache_path: str) -> sending PreparedLightweightModule {
-    match load(cache_path, module_name, source) {
+fn prepare_analysis_job(module_name: str, source_name: str, source: str, cache_path: str, identity: str) -> sending PreparedLightweightModule {
+    match load(cache_path, module_name, source, identity) {
         Some(document) => {
             ret prepare_cached_lightweight_module(module_name, source_name, source, document)
         }
@@ -512,7 +536,7 @@ fn prepare_analysis_job(module_name: str, source_name: str, source: str, cache_p
         }
     }
     let prepared = prepare_lightweight_module(module_name, source_name, source)
-    save(cache_path, module_name, source, prepared.document())
+    save(cache_path, module_name, source, prepared.document(), identity)
     ret prepared
 }
 
@@ -561,6 +585,10 @@ fn analysis_is_pending(state: ServerState) -> bool {
     ret state.analysis_queue.len() > 0_usize || state.analysis_tasks.len() > 0_usize
     || state.semantic_tasks.len() > 0_usize || state.project_graph_tasks.len() > 0_usize
     || state.project_graph_queue.len() > 0_usize
+}
+
+fn active_analysis_tasks(state: ServerState) -> usize {
+    ret state.analysis_tasks.len() + state.semantic_tasks.len() + state.project_graph_tasks.len()
 }
 
 fn project_graph_ready(state: ServerState, entry: str) -> bool {
@@ -775,8 +803,9 @@ fn analysis_pending_for_uri(state: ServerState, uri: str) -> bool {
 
 fn semantic_pending_for_uri(state: ServerState, uri: str) -> bool {
     let current = document_generation(state, uri)
+    let revision = semantic_snapshot_revision(state, uri)
     for task in state.semantic_tasks {
-        if task.uri == uri && task.generation == current {
+        if task.uri == uri && task.generation == current && task.snapshot_revision == revision {
             ret true
         }
     }
@@ -785,12 +814,53 @@ fn semantic_pending_for_uri(state: ServerState, uri: str) -> bool {
 
 fn semantic_result_for_uri(state: ServerState, uri: str) -> Option[Vec[FrontendDiagnostic]] {
     let current = document_generation(state, uri)
+    let revision = semantic_snapshot_revision(state, uri)
     for result in state.semantic_results {
-        if result.uri == uri && result.generation == current {
+        if result.uri == uri && result.generation == current && result.snapshot_revision == revision {
             ret Option[Vec[FrontendDiagnostic]]::Some(result.diagnostics)
         }
     }
     ret Option[Vec[FrontendDiagnostic]]::None
+}
+
+fn semantic_analysis_eligible(state: ServerState, uri: str) -> bool {
+    let document = match state.document(uri) {
+        Some(value) => value None => {
+            ret false
+        }
+    }
+    if !document.analysis.parsed || document.analysis.diagnostics.len() > 0 {
+        ret false
+    }
+    for graph in state.project_graphs {
+        if graph.entry == uri_to_path(uri) {
+            ret graph.ready && graph.diagnostics.len() == 0
+        }
+    }
+    ret false
+}
+
+// The buffer revision alone cannot validate diagnostics: an imported signature
+// may change in another open buffer without editing the importing document.
+fn semantic_snapshot_revision(state: ServerState, uri: str) -> str {
+    let entry = uri_to_path(uri)
+    let mut key = ""
+    for graph in state.project_graphs {
+        if graph.entry != entry {
+            continue
+        }
+        key = Debug::fmt(graph.generation)
+        for source in graph.sources {
+            for document in state.documents {
+                if uri_to_path(document.uri) == source.source_name {
+                    key += ":" + Debug::fmt(document.uri.byte_len()) + ":" + document.uri
+                    + ":" + Debug::fmt(document_generation(state, document.uri))
+                }
+            }
+        }
+        break
+    }
+    ret key
 }
 
 fn project_semantic_workspace(state: ServerState, uri: str, module_name: str,
@@ -808,8 +878,14 @@ fn project_semantic_workspace(state: ServerState, uri: str, module_name: str,
                     sources.push(AnalysisSourceSnapshot::new(module_name, entry, source))
                     replaced = true
                 } else {
+                    let mut text = graph_source.source
+                    for document in state.documents {
+                        if uri_to_path(document.uri) == graph_source.source_name {
+                            text = document.text break
+                        }
+                    }
                     sources.push(AnalysisSourceSnapshot::new(graph_source.module_name, graph_source.source_name,
-                            graph_source.source,))
+                            text,))
                 }
             }
             if !replaced {
@@ -826,7 +902,7 @@ fn queue_semantic_analysis(state: mut ServerState, uri: str) -> bool {
     if semantic_pending_for_uri(state, uri) {
         ret true
     }
-    if state.analysis_tasks.len() + state.semantic_tasks.len() >= state.max_analysis_tasks {
+    if active_analysis_tasks(state) >= state.max_analysis_tasks {
         ret false
     }
     let module_name = analysis_module_name(state, uri)
@@ -847,7 +923,7 @@ fn queue_semantic_analysis(state: mut ServerState, uri: str) -> bool {
     match spawned {
         Some(handle) => {
             state.semantic_tasks.push(SemanticAnalysisTask {
-                    uri, document_generation(state, uri), handle
+                    uri, document_generation(state, uri), semantic_snapshot_revision(state, uri), handle
                 }
                 ,)
             ret true
@@ -886,13 +962,16 @@ fn queue_workspace_analysis(state: mut ServerState, uri: str, text: str) ->() {
         ret()
     }
     match state.document(uri) {
-        Some(_document) => {
-            ret()
+        Some(document) => {
+            if document.text == text && document.analysis.parsed {
+                ret()
+            }
         }
         None => {
         }
     }
     let generation = advance_document_generation(state, uri)
+    state.upsert_ready_workspace_document(uri, text, FrontendDocument::outline(analysis_module_name(state, uri), text))
     state.analysis_queue.push(AnalysisJob {
             uri,
             text,
@@ -910,7 +989,7 @@ fn queue_workspace_analysis(state: mut ServerState, uri: str, text: str) ->() {
 fn start_analysis_tasks(state: mut ServerState, include_workspace: bool) ->() {
     let now = perf_counter_ms()
     let mut deferred = Vec[AnalysisJob]::new()
-    while state.analysis_tasks.len() + state.semantic_tasks.len() < state.max_analysis_tasks
+    while active_analysis_tasks(state) < state.max_analysis_tasks
     && state.analysis_queue.len() > 0_usize {
         match state.analysis_queue.pop() {
             Some(job) => {
@@ -922,7 +1001,7 @@ fn start_analysis_tasks(state: mut ServerState, include_workspace: bool) ->() {
                 } else {
                     let mut spawned = Option[JoinHandle[PreparedLightweightModule]]::None
                     spawned = Option[JoinHandle[PreparedLightweightModule]]::Some(spawn prepare_analysis_job(job.module_name,
-                            job.source_name, job.text, job.cache_path,))
+                            job.source_name, job.text, job.cache_path, state.cache_identity,))
                     match spawned {
                         Some(handle) => {
                             state.analysis_tasks.push(AnalysisTask {
@@ -955,7 +1034,7 @@ fn schedule_open_semantic_analysis(state: mut ServerState) ->() {
         ret()
     }
     for doc in state.documents {
-        if state.analysis_tasks.len() + state.semantic_tasks.len() >= state.max_analysis_tasks {
+        if active_analysis_tasks(state) >= state.max_analysis_tasks {
             ret()
         }
         if !analysis_pending_for_uri(state, doc.uri)
@@ -976,6 +1055,7 @@ fn finish_project_graph_task(state: mut ServerState, task: ProjectGraphTask) ->(
         ret()
     }
     let graph_result = task.handle.join()
+    state.navigation_index = Vec[NavigationIndex]::new()
     for prepared in graph_result.modules {
         state.analysis.apply_prepared_lightweight(prepared)
     }
@@ -1010,7 +1090,7 @@ fn finish_project_graph_task(state: mut ServerState, task: ProjectGraphTask) ->(
 }
 
 fn start_project_graph_task(state: mut ServerState) ->() {
-    if state.project_graph_tasks.len() > 0_usize {
+    if state.project_graph_tasks.len() > 0_usize || active_analysis_tasks(state) >= state.max_analysis_tasks {
         ret()
     }
     while state.project_graph_queue.len() > 0_usize {
@@ -1070,6 +1150,17 @@ fn finish_analysis_task(state: mut ServerState, task: AnalysisTask) ->() {
         ret()
     }
     let document = prepared.document()
+    let imports = navigation_import_signature(document)
+    let mut unchanged_imports = false
+    for indexed in state.navigation_index {
+        if indexed.uri == task.job.uri && indexed.imports == imports && document.parsed {
+            unchanged_imports = true
+            break
+        }
+    }
+    if !unchanged_imports {
+        state.navigation_index = Vec[NavigationIndex]::new()
+    }
     if !document.parsed {
         state.analysis.remove_module(task.job.module_name)
         if task.job.workspace {
@@ -1080,6 +1171,9 @@ fn finish_analysis_task(state: mut ServerState, task: AnalysisTask) ->() {
             publish_diagnostics_for_uri(state, task.job.uri)
         }
     } else {
+        // Navigation addresses modules by URI while typed workers use package
+        // identities. Both views must receive body-only edits without reparsing.
+        state.analysis.apply_prepared_lightweight(prepared.with_module_name(task.job.uri))
         state.analysis.apply_prepared_lightweight(prepared)
         if task.job.workspace {
             state.upsert_ready_workspace_document(task.job.uri, task.job.text, document)
@@ -1145,7 +1239,7 @@ fn drive_analysis(state: mut ServerState) ->() {
     ret()
 }
 
-fn store_semantic_result(state: mut ServerState, uri: str, generation: usize,
+fn store_semantic_result(state: mut ServerState, uri: str, generation: usize, snapshot_revision: str,
     diagnostics: Vec[FrontendDiagnostic],) ->() {
     let mut index = 0_usize
     while index < state.semantic_results.len() {
@@ -1153,7 +1247,7 @@ fn store_semantic_result(state: mut ServerState, uri: str, generation: usize,
             Some(existing) => {
                 if existing.uri == uri {
                     state.semantic_results.set(index, SemanticAnalysisResult {
-                            uri, generation, diagnostics
+                            uri, generation, snapshot_revision, diagnostics
                         }
                         ,
                     )
@@ -1166,7 +1260,7 @@ fn store_semantic_result(state: mut ServerState, uri: str, generation: usize,
         index += 1_usize
     }
     state.semantic_results.push(SemanticAnalysisResult {
-            uri, generation, diagnostics
+            uri, generation, snapshot_revision, diagnostics
         }
         ,
     )
@@ -1180,8 +1274,9 @@ fn drive_semantic_tasks(state: mut ServerState) ->() {
             Some(task) => {
                 if task.handle.is_finished() {
                     let diagnostics = task.handle.join()
-                    if document_generation(state, task.uri) == task.generation {
-                        store_semantic_result(state, task.uri, task.generation, diagnostics)
+                    if document_generation(state, task.uri) == task.generation
+                    && semantic_snapshot_revision(state, task.uri) == task.snapshot_revision {
+                        store_semantic_result(state, task.uri, task.generation, task.snapshot_revision, diagnostics)
                         publish_semantic_diagnostics_for_uri(state, task.uri)
                     }
                 } else {
@@ -1208,8 +1303,11 @@ fn drive_deferred_requests(state: mut ServerState) ->() {
         match state.deferred_requests.pop() {
             Some(message) => {
                 let uri = request_uri(json_get(message, "params"))
-                if analysis_pending_for_uri(state, uri) {
+                let method = json_get_str(message, "method", "")
+                if cursor_analysis_pending(state, uri, method) {
                     retained.push(message)
+                } elif method != "textDocument/diagnostic" {
+                    let _handled = handle_message(state, message)
                 } else {
                     match semantic_result_for_uri(state, uri) {
                         Some(_diagnostics) => {
@@ -1220,7 +1318,7 @@ fn drive_deferred_requests(state: mut ServerState) ->() {
                             if !semantic_pending_for_uri(state, uri) {
                                 scheduled = queue_semantic_analysis(state, uri)
                             }
-                            if scheduled || project_graph_pending_for_uri(state, uri) {
+                            if scheduled || project_graph_pending_for_uri(state, uri) || semantic_analysis_eligible(state, uri) {
                                 retained.push(message)
                             } else {
                                 let _handled = handle_message(state, message)
@@ -1243,21 +1341,59 @@ fn drive_deferred_requests(state: mut ServerState) ->() {
     ret()
 }
 
+// Never answer a semantic cursor request from a pending outline. Outlines
+// deliberately omit declarations until the syntax worker publishes its result.
+fn cursor_analysis_pending(state: ServerState, uri: str, method: str) -> bool {
+    if analysis_pending_for_uri(state, uri) {
+        ret true
+    }
+    if method == "textDocument/implementation" {
+        let root = project_root_for_path(uri_to_path(uri)).unwrap_or("")
+        for document in state.documents {
+            if (document.uri == uri ||(root != "" && project_root_for_path(uri_to_path(document.uri)).unwrap_or("") == root))
+            && analysis_pending_for_uri(state, document.uri) {
+                ret true
+            }
+        }
+    }
+    ret false
+}
+
+fn needs_cursor_analysis(method: str) -> bool {
+    ret method == "textDocument/completion" || method == "textDocument/definition" || method == "textDocument/declaration"
+    || method == "textDocument/implementation" || method == "textDocument/hover"
+    || method == "textDocument/signatureHelp" || method == "textDocument/documentHighlight"
+    || method == "textDocument/inlayHint" || method == "textDocument/references"
+    || method == "textDocument/prepareRename" || method == "textDocument/rename"
+    || method == "textDocument/prepareCallHierarchy"
+    || method == "textDocument/semanticTokens/full"
+}
+
 fn main() -> u32 {
+    let arguments = args()
+    if arguments.len() == 2 && arguments.get(1).unwrap_or("") == "--version" {
+        println("encore-lsp " + compiler_release_version())
+        ret 0
+    }
     let mut state = ServerState::new()
+    let mut input = LspInput::new()
     loop {
         drive_analysis(state)
-        if analysis_is_pending(state) && !wait_readable(stdin_fd(), 10_usize) {
-            continue
-        }
-        match read_lsp_message() {
+        match input.next_message(if analysis_is_pending(state) {
+                10
+            } else {
+                1000
+            }
+        ) {
             Option[Json]::Some(message) => {
                 if !handle_message(state, message) {
                     ret 0_u32
                 }
             }
             Option[Json]::None => {
-                ret 0_u32
+                if input.is_closed() {
+                    ret 0_u32
+                }
             }
         }
     }
@@ -1300,7 +1436,22 @@ fn handle_message(state: mut ServerState, message: Json) -> bool {
         exit_process(1_i32)
         ret false
     }
-    if method == "$/cancelRequest" || method == "$/setTrace" {
+    if method == "$/cancelRequest" {
+        let id = json_get(json_get(message, "params"), "id")
+        if !id.is_null() {
+            let mut retained = Vec[Json]::new()
+            for deferred in state.deferred_requests {
+                if stringify(json_get(deferred, "id")) == stringify(id) {
+                    send_error(id, "-32800", "Request cancelled")
+                } else {
+                    retained.push(deferred)
+                }
+            }
+            state.deferred_requests = retained
+        }
+        ret true
+    }
+    if method == "$/setTrace" {
         ret true
     }
     if !state.initialized {
@@ -1345,28 +1496,19 @@ fn handle_message(state: mut ServerState, message: Json) -> bool {
         send_response(json_get(message, "id"), workspace_symbols(state, json_get(message, "params")))
         ret true
     }
-    if method == "textDocument/definition" || method == "textDocument/declaration" {
-        send_response(json_get(message, "id"), definition_result(state, json_get(message, "params")))
+    if needs_cursor_analysis(method) && cursor_analysis_pending(state, request_uri(json_get(message, "params")), method) {
+        state.deferred_requests.push(message)
+        ret true
+    }
+    if respond_cached_cursor(state, message, method) {
         ret true
     }
     if method == "textDocument/implementation" {
         send_response(json_get(message, "id"), implementation_result(state, json_get(message, "params")))
         ret true
     }
-    if method == "textDocument/hover" {
-        send_response(json_get(message, "id"), hover_result(state, json_get(message, "params")))
-        ret true
-    }
-    if method == "textDocument/signatureHelp" {
-        send_response(json_get(message, "id"), signature_help_result(state, json_get(message, "params")))
-        ret true
-    }
     if method == "textDocument/references" {
         send_response(json_get(message, "id"), references_result(state, json_get(message, "params")))
-        ret true
-    }
-    if method == "textDocument/documentHighlight" {
-        send_response(json_get(message, "id"), document_highlight_result(state, json_get(message, "params")))
         ret true
     }
     if method == "textDocument/prepareRename" {
@@ -1394,10 +1536,6 @@ fn handle_message(state: mut ServerState, message: Json) -> bool {
     }
     if method == "textDocument/codeAction" {
         send_response(json_get(message, "id"), code_action_result(state, json_get(message, "params")))
-        ret true
-    }
-    if method == "textDocument/inlayHint" {
-        send_response(json_get(message, "id"), inlay_hint_result(state, json_get(message, "params")))
         ret true
     }
     if method == "textDocument/documentLink" {
@@ -1431,7 +1569,7 @@ fn handle_message(state: mut ServerState, message: Json) -> bool {
             }
             None => {
                 let scheduled = queue_semantic_analysis(state, uri)
-                if scheduled || project_graph_pending_for_uri(state, uri) {
+                if scheduled || project_graph_pending_for_uri(state, uri) || semantic_analysis_eligible(state, uri) {
                     state.deferred_requests.push(message)
                     ret true
                 }
@@ -1460,6 +1598,74 @@ fn handle_message(state: mut ServerState, message: Json) -> bool {
 
     send_error(json_get(message, "id"), "-32601", "Method not found: " + method)
     ret true
+}
+
+fn respond_cached_cursor(state: mut ServerState, message: Json, method: str) -> bool {
+    if method != "textDocument/definition" && method != "textDocument/declaration"
+    && method != "textDocument/hover" && method != "textDocument/signatureHelp"
+    && method != "textDocument/documentHighlight" && method != "textDocument/inlayHint"
+    && method != "textDocument/completion" {
+        ret false
+    }
+    let params = json_get(message, "params")
+    // Workspace/auto-import lists need every indexed module. Receiver-scoped
+    // lists depend only on the active document's resolved import graph.
+    if method == "textDocument/completion" && !completion_is_scoped(state, params) {
+        ret false
+    }
+    let key = method + ":" + stringify(params)
+    let uri = request_uri(params)
+    if !cursor_analysis_pending(state, uri, method) {
+        match state.query_cache.get(key, state.analysis.module_query_revision(uri), state.next_generation) {
+            Some(response) => {
+                send_response(json_get(message, "id"), response)
+                ret true
+            }
+            None => {
+            }
+        }
+    }
+    let response = match method {
+        "textDocument/definition" => definition_result(state, params)
+        "textDocument/declaration" => definition_result(state, params)
+        "textDocument/hover" => hover_result(state, params)
+        "textDocument/signatureHelp" => signature_help_result(state, params)
+        "textDocument/documentHighlight" => document_highlight_result(state, params)
+        "textDocument/completion" => completion_result(state, params)
+        _ => inlay_hint_result(state, params)
+    }
+    if !cursor_analysis_pending(state, uri, method) {
+        state.query_cache.put(key, response, state.analysis.module_query_revision(uri), state.next_generation)
+    }
+    send_response(json_get(message, "id"), response)
+    ret true
+}
+
+fn completion_is_scoped(state: mut ServerState, params: Json) -> bool {
+    let doc = match state.document(request_uri(params)) {
+        Some(value) => value
+        None => {
+            ret false
+        }
+    }
+    if !doc.analysis.parsed {
+        ret false
+    }
+    let position = json_get(params, "position")
+    let line = json_number_usize(json_get(position, "line"), 0)
+    let column = request_character_index(doc, line, json_number_usize(json_get(position, "character"), 0))
+    if cursor_member_context(doc.analysis.tokens, line, column).is_some() {
+        ret true
+    }
+    match cursor_associated_context(doc.analysis.tokens, line, column) {
+        Some(context) => {
+            let owner = associated_query_owner(state, doc, context.0)
+            ret state.analysis.associated_owner_type(doc.uri, owner).is_some()
+        }
+        None => {
+            ret false
+        }
+    }
 }
 
 fn configure_server(state: mut ServerState, params: Json) ->() {
@@ -1556,10 +1762,26 @@ fn handle_did_close(state: mut ServerState, params: Json) ->() {
     let text_document = json_get(params, "textDocument")
     let uri = json_get_str(text_document, "uri", "")
     if uri != "" {
+        state.navigation_index = Vec[NavigationIndex]::new()
         clear_semantic_token_cache(state, uri)
         advance_document_generation(state, uri)
         remove_queued_analysis_for_uri(state, uri)
         state.remove_document(uri)
+        // Closing an unsaved buffer must restore the on-disk workspace view.
+        let mut retained = Vec[Document]::new()
+        for document in state.workspace_documents {
+            if document.uri != uri {
+                retained.push(document)
+            }
+        }
+        state.workspace_documents = retained
+        let mut cached = Vec[Document]::new()
+        for document in state.completion_documents {
+            if document.uri != uri {
+                cached.push(document)
+            }
+        }
+        state.completion_documents = cached
         send_notification("textDocument/publishDiagnostics", publish_diagnostics_params(uri, Vec[Json]::new()))
         let path = uri_to_path(uri)
         if file_exists(path) {
@@ -1721,7 +1943,9 @@ fn handle_workspace_folders_changed(state: mut ServerState, params: Json) ->() {
         None => {
         }
     }
+    state.navigation_index = Vec[NavigationIndex]::new()
     state.analysis = AnalysisDatabase::new()
+    state.dependency_projects = Vec[DependencyProjects]::new()
     state.project_graphs = Vec[ProjectGraphState]::new()
     state.semantic_results = Vec[SemanticAnalysisResult]::new()
     index_workspace_roots_shallow(state)
@@ -1760,6 +1984,8 @@ fn register_project_file_watchers() ->() {
 }
 
 fn handle_project_files_changed(state: mut ServerState) ->() {
+    state.navigation_index = Vec[NavigationIndex]::new()
+    state.dependency_projects = Vec[DependencyProjects]::new()
     state.analysis = AnalysisDatabase::new()
     state.semantic_results = Vec[SemanticAnalysisResult]::new()
     state.project_graphs = Vec[ProjectGraphState]::new()
@@ -1803,6 +2029,7 @@ fn ensure_workspace_for_uri(state: mut ServerState, uri: str) ->() {
     ensure_workspace_roots_for_path(state, path)
     match project_root_for_path(path) {
         Option[str]::Some(root) => {
+            cache_dependency_projects(state, root)
             if !workspace_project_root_exists(state, root) {
                 state_add_workspace_project(state, root)
             }
@@ -2428,7 +2655,7 @@ fn completion_result(state: mut ServerState, params: Json) -> Json {
                                 }
                             }
                             let mut result = Vec[(str, Json)]::new()
-                            result.push(field("isIncomplete", Json::Bool(analysis_is_pending(state))))
+                            result.push(field("isIncomplete", Json::Bool(analysis_pending_for_uri(state, doc.uri))))
                             result.push(field("items", Json::Array(items)))
                             ret Json::Object(result)
                         }
@@ -2442,7 +2669,7 @@ fn completion_result(state: mut ServerState, params: Json) -> Json {
             match cursor_member_context(doc.analysis.tokens, line, column) {
                 Some(context) => {
                     let mut result = Vec[(str, Json)]::new()
-                    result.push(field("isIncomplete", Json::Bool(analysis_is_pending(state))))
+                    result.push(field("isIncomplete", Json::Bool(analysis_pending_for_uri(state, doc.uri))))
                     result.push(field("items", Json::Array(member_completion_items(state, doc, context))))
                     ret Json::Object(result)
                 }
@@ -2541,7 +2768,7 @@ fn push_visible_completion_items(state: mut ServerState, items: mut Vec[Json], d
         }
     }
     push_imported_visible_completion_items(state, items, doc, prefix, types_only, seen)
-    if !types_only {
+    if !types_only && doc.analysis.parsed {
         let visited = encore_strset_new()
         index_query_module(state, doc, visited, true)
         encore_strset_free(visited)
@@ -2821,7 +3048,7 @@ fn package_completion_items(state: mut ServerState, doc: Document, prefix: str) 
                 items.push(package_completion_item(state, "repo", module.project_root,
                         "Current Encore project",))
             }
-            for dependency in path_dependency_projects(module.project_root) {
+            for dependency in path_dependency_projects(state, module.project_root) {
                 if starts_with(dependency.name, prefix) && !completion_item_exists(items, dependency.name) {
                     items.push(package_completion_item(state, dependency.name, dependency.root, "Encore package"))
                 }
@@ -2985,7 +3212,7 @@ fn completion_package_root_for_doc(state: ServerState, doc: Document, name: str)
             if name == "refrain" || name == "repo" || name == module.project_name {
                 ret Option[str]::Some(module.project_root)
             }
-            match path_dependency_project(module.project_root, name) {
+            match path_dependency_project(state, module.project_root, name) {
                 Some(project) => {
                     ret Option[str]::Some(project.root)
                 }
@@ -3366,6 +3593,53 @@ fn definition_result(state: mut ServerState, params: Json) -> Json {
                             ret Json::Array(items)
                         }
                         Option[ResolvedReference]::None => {
+                            // Each qualified segment denotes its own prefix, not
+                            // the final imported item. Only accept an exact module
+                            // match: the resolver also falls back to parent files.
+                            let prefix = cursor_symbol_path(doc.analysis.tokens, token.line, token.column)
+                            let line = trim_spaces(line_text_at(doc.text, token.line).unwrap_or(""))
+                            let package_import = starts_with(line, "import " + token.value + "::")
+                            || starts_with(line, "pub import " + token.value + "::")
+                            if package_import && split_scope_path(prefix).len() == 1 {
+                                match completion_package_root_for_doc(state, doc, token.value) {
+                                    Some(root) => {
+                                        match resolve_module_uri_from_parts(join_path(root, "src"),
+                                            Vec[str]::new(), 0, 0,) {
+                                            Some(target) => {
+                                                ret Json::Array(vec![location_json(target, make_range(0, 0, 0))])
+                                            }
+                                            None => {
+                                            }
+                                        }
+                                    }
+                                    None => {
+                                    }
+                                }
+                            }
+                            if split_scope_path(prefix).len() > 1_usize {
+                                let request = ImportRequest {
+                                    "", prefix, Option[str]::None, false,
+                                    token.line, token.column, token.value.char_len()
+                                }
+                                match resolve_import_request_uri(state, doc, request) {
+                                    Some(target) => {
+                                        let path = uri_to_path(target)
+                                        let mut name = basename_path(path)
+                                        if name == "mod.enq" || name == "lib.enq" {
+                                            name = basename_path(parent_path(path))
+                                        } elif ends_with(name, ".enq") {
+                                            name = name.slice(0_usize, name.len() - 4_usize)
+                                        }
+                                        if name == token.value {
+                                            let mut items = Vec[Json]::new()
+                                            items.push(location_json(target, make_range(0, 0, 0)))
+                                            ret Json::Array(items)
+                                        }
+                                    }
+                                    None => {
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -3379,13 +3653,47 @@ fn definition_result(state: mut ServerState, params: Json) -> Json {
     ret Json::Array(Vec[Json]::new())
 }
 
-fn implementation_result(state: ServerState, params: Json) -> Json {
+fn implementation_result(state: mut ServerState, params: Json) -> Json {
     let uri = request_uri(params)
     match state.document(uri) {
         Option[Document]::Some(doc) => {
             match identifier_at_request(doc, params) {
                 Option[Token]::Some(token) => {
-                    ret Json::Array(implementation_locations(state, token.value))
+                    match resolved_symbol_at(state, doc, token) {
+                        Some(reference) => {
+                            let origin = document_for_path(state, uri_to_path(reference.uri))
+                            let visited = encore_strset_new()
+                            index_query_module(state, origin, visited, true)
+                            // Activate indexed project files, including impl-only modules.
+                            for indexed in state.workspace_documents {
+                                if project_root_for_path(uri_to_path(indexed.uri)).unwrap_or("")
+                                == project_root_for_path(uri_to_path(doc.uri)).unwrap_or("") {
+                                    index_query_module(state, indexed, visited, true)
+                                }
+                            }
+                            encore_strset_free(visited)
+                            let start = json_get(reference.range, "start")
+                            let line = json_number_usize(json_get(start, "line"), 0)
+                            let column = character_index_from_utf16(line_text_at(origin.text, line).unwrap_or(""),
+                                json_number_usize(json_get(start, "character"), 0),)
+                            let definition = state.analysis.declaration_at(origin.uri, line, column)
+                            let mut locations = Vec[Json]::new()
+                            match definition {
+                                Some(found) => {
+                                    for implementation in state.analysis.implementations_of(found) {
+                                        let target = document_for_path(state, implementation.source_name)
+                                        locations.push(location_json(target.uri, lsp_range(target, implementation.line,
+                                                    implementation.column, implementation.length,)))
+                                    }
+                                }
+                                None => {
+                                }
+                            }
+                            ret Json::Array(locations)
+                        }
+                        None => {
+                        }
+                    }
                 }
                 Option[Token]::None => {
                 }
@@ -3395,55 +3703,6 @@ fn implementation_result(state: ServerState, params: Json) -> Json {
         }
     }
     ret Json::Array(Vec[Json]::new())
-}
-
-fn implementation_locations(state: ServerState, name: str) -> Vec[Json] {
-    let mut items = Vec[Json]::new()
-    let impl_name = "impl " + name
-
-    let mut doc_index = 0_usize
-    while doc_index < state.documents.len() {
-        match state.documents.get(doc_index) {
-            Option[Document]::Some(doc) => {
-                push_implementation_locations_for_doc(items, doc, impl_name)
-            }
-            Option[Document]::None => {
-            }
-        }
-        doc_index += 1_usize
-    }
-
-    let mut workspace_index = 0_usize
-    while workspace_index < state.workspace_documents.len() {
-        match state.workspace_documents.get(workspace_index) {
-            Option[Document]::Some(doc) => {
-                if !open_document_exists(state, doc.uri) {
-                    push_implementation_locations_for_doc(items, doc, impl_name)
-                }
-            }
-            Option[Document]::None => {
-            }
-        }
-        workspace_index += 1_usize
-    }
-    ret items
-}
-
-fn push_implementation_locations_for_doc(items: mut Vec[Json], doc: Document, impl_name: str) ->() {
-    let mut index = 0_usize
-    while index < doc.analysis.symbols.len() {
-        match doc.analysis.symbols.get(index) {
-            Option[FrontendSymbol]::Some(symbol) => {
-                if symbol.name == impl_name {
-                    items.push(location_json(doc.uri, symbol_range(doc, symbol)))
-                }
-            }
-            Option[FrontendSymbol]::None => {
-            }
-        }
-        index += 1_usize
-    }
-    ret()
 }
 
 fn hover_result(state: mut ServerState, params: Json) -> Json {
@@ -3581,7 +3840,7 @@ fn import_package_hover(state: ServerState, doc: Document, package: str, line_nu
     if !starts_with(line, "import " + package) {
         ret Option[str]::None
     }
-    match completion_package_root(state, package) {
+    match completion_package_root_for_doc(state, doc, package) {
         Some(root) => {
             let manifest = read_file(join_path(root, "encore.toml"))
             let version = project_string_from_manifest(manifest, "version")
@@ -3698,17 +3957,25 @@ fn empty_signature_help() -> Json {
     ret Json::Object(fields)
 }
 
-fn prepare_call_hierarchy_result(state: ServerState, params: Json) -> Json {
+fn prepare_call_hierarchy_result(state: mut ServerState, params: Json) -> Json {
     let uri = request_uri(params)
     match state.document(uri) {
         Option[Document]::Some(doc) => {
-            match callable_at_request(doc, params) {
-                Option[FrontendCallable]::Some(callable) => {
-                    let mut items = Vec[Json]::new()
-                    items.push(call_hierarchy_item(doc, callable))
-                    ret Json::Array(items)
+            match identifier_at_request(doc, params) {
+                Some(token) => {
+                    match resolved_symbol_at(state, doc, token) {
+                        Some(reference) => {
+                            if reference.callable.is_some() {
+                                let mut items = Vec[Json]::new()
+                                items.push(call_hierarchy_reference_item(reference))
+                                ret Json::Array(items)
+                            }
+                        }
+                        None => {
+                        }
+                    }
                 }
-                Option[FrontendCallable]::None => {
+                None => {
                 }
             }
         }
@@ -3718,38 +3985,38 @@ fn prepare_call_hierarchy_result(state: ServerState, params: Json) -> Json {
     ret Json::Array(Vec[Json]::new())
 }
 
-fn outgoing_calls_result(state: ServerState, params: Json) -> Json {
+fn outgoing_calls_result(state: mut ServerState, params: Json) -> Json {
     let item = json_get(params, "item")
     let uri = call_hierarchy_item_uri(item)
-    let name = call_hierarchy_item_name(item)
-    match state.document(uri) {
-        Option[Document]::Some(doc) => {
-            match callable_by_name(doc, name) {
-                Option[FrontendCallable]::Some(callable) => {
-                    ret Json::Array(outgoing_calls_for_callable(state, doc, callable))
-                }
-                Option[FrontendCallable]::None => {
-                }
-            }
+    let doc = document_for_path(state, uri_to_path(uri))
+    let start = json_get(json_get(item, "selectionRange"), "start")
+    let line = json_number_usize(json_get(start, "line"), 0)
+    let column = character_index_from_utf16(line_text_at(doc.text, line).unwrap_or(""),
+        json_number_usize(json_get(start, "character"), 0),)
+    match callable_at_position(doc, line, column) {
+        Option[FrontendCallable]::Some(callable) => {
+            ret Json::Array(outgoing_calls_for_callable(state, doc, callable))
         }
-        Option[Document]::None => {
+        Option[FrontendCallable]::None => {
         }
     }
     ret Json::Array(Vec[Json]::new())
 }
 
-fn incoming_calls_result(state: ServerState, params: Json) -> Json {
+fn incoming_calls_result(state: mut ServerState, params: Json) -> Json {
     let item = json_get(params, "item")
-    let target = call_hierarchy_item_name(item)
-    if target == "" {
+    if call_hierarchy_item_uri(item) == "" {
         ret Json::Array(Vec[Json]::new())
     }
-    ret Json::Array(incoming_calls_for_name(state, target))
+    ret Json::Array(incoming_calls_for_identity(state, item))
 }
 
-fn outgoing_calls_for_callable(state: ServerState, doc: Document, callable: FrontendCallable) -> Vec[Json]
+fn outgoing_calls_for_callable(state: mut ServerState, doc: Document, callable: FrontendCallable) -> Vec[Json]
 {
     let mut items = Vec[Json]::new()
+    let visited = encore_strset_new()
+    index_query_module(state, doc, visited, true)
+    encore_strset_free(visited)
     let start = callable_body_start_index(doc, callable)
     let end = callable_body_end_index(doc, start)
     let mut index = start
@@ -3757,13 +4024,25 @@ fn outgoing_calls_for_callable(state: ServerState, doc: Document, callable: Fron
         match doc.analysis.tokens.get(index) {
             Option[Token]::Some(token) => {
                 if token.type == TokenType::IDENTIFIER && token_is_call_expression(doc, index) {
-                    match callable_doc_by_name(state, token.value) {
-                        Option[(Document, FrontendCallable)]::Some(target) => {
-                            if !call_hierarchy_call_exists(items, token.value) {
-                                items.push(outgoing_call_item(target.0, target.1, token_range(doc, token)))
+                    match resolved_symbol_in_index(state, doc, token) {
+                        Some(reference) => {
+                            if reference.callable.is_none() {
+                                index += 1 continue
+                            }
+                            let target = call_hierarchy_reference_item(reference)
+                            match call_hierarchy_group_index(items, target, "to") {
+                                Some(slot) => append_call_range(items, slot, token_range(doc, token), "to")
+                                None => {
+                                    let mut ranges = Vec[Json]::new()
+                                    ranges.push(token_range(doc, token))
+                                    let mut fields = Vec[(str, Json)]::new()
+                                    fields.push(field("to", target))
+                                    fields.push(field("fromRanges", Json::Array(ranges)))
+                                    items.push(Json::Object(fields))
+                                }
                             }
                         }
-                        Option[(Document, FrontendCallable)]::None => {
+                        None => {
                         }
                     }
                 }
@@ -3776,13 +4055,13 @@ fn outgoing_calls_for_callable(state: ServerState, doc: Document, callable: Fron
     ret items
 }
 
-fn incoming_calls_for_name(state: ServerState, target: str) -> Vec[Json] {
+fn incoming_calls_for_identity(state: mut ServerState, target: Json) -> Vec[Json] {
     let mut items = Vec[Json]::new()
     let mut doc_index = 0_usize
     while doc_index < state.documents.len() {
         match state.documents.get(doc_index) {
             Option[Document]::Some(doc) => {
-                push_incoming_calls_for_doc(items, doc, target)
+                push_incoming_calls_for_doc(state, items, doc, target)
             }
             Option[Document]::None => {
             }
@@ -3794,7 +4073,7 @@ fn incoming_calls_for_name(state: ServerState, target: str) -> Vec[Json] {
         match state.workspace_documents.get(workspace_index) {
             Option[Document]::Some(doc) => {
                 if !open_document_exists(state, doc.uri) {
-                    push_incoming_calls_for_doc(items, doc, target)
+                    push_incoming_calls_for_doc(state, items, doc, target)
                 }
             }
             Option[Document]::None => {
@@ -3805,20 +4084,31 @@ fn incoming_calls_for_name(state: ServerState, target: str) -> Vec[Json] {
     ret items
 }
 
-fn push_incoming_calls_for_doc(items: mut Vec[Json], doc: Document, target: str) ->() {
+fn push_incoming_calls_for_doc(state: mut ServerState, items: mut Vec[Json], doc: Document, target: Json) ->() {
+    let visited = encore_strset_new()
+    index_query_module(state, doc, visited, true)
+    encore_strset_free(visited)
     let mut index = 0_usize
     while index < doc.analysis.tokens.len() {
         match doc.analysis.tokens.get(index) {
             Option[Token]::Some(token) => {
-                if token.type == TokenType::IDENTIFIER && token.value == target && token_is_call_expression(doc,
+                if token.type == TokenType::IDENTIFIER && token_is_call_expression(doc,
                     index,) {
-                    match enclosing_callable(doc, token.line) {
+                    let resolved = match resolved_symbol_in_index(state, doc, token) {
+                        Some(reference) => reference.uri == call_hierarchy_item_uri(target)
+                        && stringify(reference.range) == stringify(json_get(target, "selectionRange"))
+                        None => false
+                    }
+                    if !resolved {
+                        index += 1 continue
+                    }
+                    match enclosing_callable(doc, token.line, token.column) {
                         Option[FrontendCallable]::Some(caller) => {
                             let call_range = token_range(doc, token)
-                            let existing = incoming_call_index(items, caller.name)
+                            let existing = call_hierarchy_group_index(items, call_hierarchy_item(doc, caller), "from")
                             match existing {
                                 Option[usize]::Some(item_index) => {
-                                    append_from_range(items, item_index, call_range)
+                                    append_call_range(items, item_index, call_range, "from")
                                 }
                                 Option[usize]::None => {
                                     items.push(incoming_call_item(doc, caller, call_range))
@@ -3850,6 +4140,29 @@ fn call_hierarchy_item(doc: Document, callable: FrontendCallable) -> Json {
     ret Json::Object(fields)
 }
 
+fn call_hierarchy_reference_item(reference: ResolvedReference) -> Json {
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("name", Json::String(reference.label)))
+    fields.push(field("kind", Json::Number("12")))
+    fields.push(field("uri", Json::String(reference.uri)))
+    fields.push(field("range", reference.range))
+    fields.push(field("selectionRange", reference.range))
+    ret Json::Object(fields)
+}
+
+fn call_hierarchy_group_index(items: Vec[Json], target: Json, direction: str) -> Option[usize] {
+    let mut index = 0_usize
+    for item in items {
+        let previous = json_get(item, direction)
+        if call_hierarchy_item_uri(previous) == call_hierarchy_item_uri(target)
+        && stringify(json_get(previous, "selectionRange")) == stringify(json_get(target, "selectionRange")) {
+            ret Option[usize]::Some(index)
+        }
+        index += 1
+    }
+    ret Option[usize]::None
+}
+
 fn call_hierarchy_data(uri: str, name: str, line: usize, character: usize) -> Json {
     let mut fields = Vec[(str, Json)]::new()
     fields.push(field("uri", Json::String(uri)))
@@ -3877,7 +4190,7 @@ fn incoming_call_item(doc: Document, callable: FrontendCallable, from_range: Jso
     ret Json::Object(fields)
 }
 
-fn append_from_range(items: mut Vec[Json], item_index: usize, call_range: Json) ->() {
+fn append_call_range(items: mut Vec[Json], item_index: usize, call_range: Json, direction: str) ->() {
     match items.get(item_index) {
         Option[Json]::Some(item) => {
             let mut ranges = Vec[Json]::new()
@@ -3900,7 +4213,7 @@ fn append_from_range(items: mut Vec[Json], item_index: usize, call_range: Json) 
             }
             ranges.push(call_range)
             let mut fields = Vec[(str, Json)]::new()
-            fields.push(field("from", json_get(item, "from")))
+            fields.push(field(direction, json_get(item, direction)))
             fields.push(field("fromRanges", Json::Array(ranges)))
             items.set(item_index, Json::Object(fields))
         }
@@ -4001,7 +4314,7 @@ fn callable_body_start_index(doc: Document, callable: FrontendCallable) -> usize
     while index < doc.analysis.tokens.len() {
         match doc.analysis.tokens.get(index) {
             Option[Token]::Some(token) => {
-                if token.line == callable.line && token.type == TokenType::IDENTIFIER && token.value
+                if token.line == callable.line && token.column == callable.column && token.type == TokenType::IDENTIFIER && token.value
                 == callable.name {
                     seen_name = true
                 } elif seen_name && token.type == TokenType::LEFT_BRACE {
@@ -4039,16 +4352,16 @@ fn callable_body_end_index(doc: Document, start: usize) -> usize {
     ret doc.analysis.tokens.len()
 }
 
-fn enclosing_callable(doc: Document, line: usize) -> Option[FrontendCallable] {
+fn enclosing_callable(doc: Document, line: usize, column: usize) -> Option[FrontendCallable] {
     let mut best = Option[FrontendCallable]::None
     let mut index = 0_usize
     while index < doc.analysis.callables.len() {
         match doc.analysis.callables.get(index) {
             Option[FrontendCallable]::Some(callable) => {
-                if callable.line <= line {
+                if callable.line < line ||(callable.line == line && callable.column <= column) {
                     match best {
                         Option[FrontendCallable]::Some(existing) => {
-                            if callable.line > existing.line {
+                            if callable.line > existing.line ||(callable.line == existing.line && callable.column > existing.column) {
                                 best = Option[FrontendCallable]::Some(callable)
                             }
                         }
@@ -4071,7 +4384,7 @@ fn callable_range(doc: Document, callable: FrontendCallable) -> Json {
     while index < doc.analysis.tokens.len() {
         match doc.analysis.tokens.get(index) {
             Option[Token]::Some(token) => {
-                if token.type == TokenType::IDENTIFIER && token.line == callable.line && token.value
+                if token.type == TokenType::IDENTIFIER && token.line == callable.line && token.column == callable.column && token.value
                 == callable.name {
                     ret token_range(doc, token)
                 }
@@ -4845,22 +5158,62 @@ fn empty_workspace_edit() -> Json {
     ret Json::Object(fields)
 }
 
-fn document_links(state: ServerState, params: Json) -> Json {
+fn document_links(state: mut ServerState, params: Json) -> Json {
     let uri = request_uri(params)
     match state.document(uri) {
         Option[Document]::Some(doc) => {
             let mut items = Vec[Json]::new()
-            let requests = import_requests_from_doc(doc)
-            let mut index = 0_usize
-            while index < requests.len() {
-                match requests.get(index) {
-                    Option[ImportRequest]::Some(request) => {
-                        items.push(document_link_for_import(state, doc, request))
+            let mut active = false
+            let mut depth = 0_usize
+            for token in doc.analysis.tokens {
+                if token.type == TokenType::KW_IMPORT {
+                    active = true
+                    depth = 0
+                    continue
+                }
+                if !active {
+                    continue
+                }
+                if token.type == TokenType::LEFT_BRACE {
+                    depth += 1
+                } elif token.type == TokenType::RIGHT_BRACE && depth > 0 {
+                    depth -= 1
+                } elif token.type == TokenType::NEWLINE && depth > 0 {
+                    continue
+                } elif token.type != TokenType::IDENTIFIER && token.type != TokenType::SCOPE
+                && token.type != TokenType::COMMA && token.value != "as" && token.value != "*" {
+                    active = false
+                    continue
+                }
+                if token.type != TokenType::IDENTIFIER || token.value == "as" {
+                    continue
+                }
+                let range = token_range(doc, token)
+                let mut query = Vec[(str, Json)]::new()
+                let mut document = Vec[(str, Json)]::new()
+                document.push(field("uri", Json::String(doc.uri)))
+                query.push(field("textDocument", Json::Object(document)))
+                query.push(field("position", json_get(range, "start")))
+                match definition_result(state, Json::Object(query)) {
+                    Json::Array(locations) => {
+                        match locations.get(0) {
+                            Some(location) => {
+                                let target = json_get_str(location, "uri", "")
+                                if target != "" {
+                                    let mut link = Vec[(str, Json)]::new()
+                                    link.push(field("range", range))
+                                    link.push(field("target", Json::String(target)))
+                                    link.push(field("tooltip", Json::String("Encore import: " + token.value)))
+                                    items.push(Json::Object(link))
+                                }
+                            }
+                            None => {
+                            }
+                        }
                     }
-                    Option[ImportRequest]::None => {
+                    _ => {
                     }
                 }
-                index += 1_usize
             }
             ret Json::Array(items)
         }
@@ -4868,20 +5221,6 @@ fn document_links(state: ServerState, params: Json) -> Json {
         }
     }
     ret Json::Array(Vec[Json]::new())
-}
-
-fn document_link_for_import(state: ServerState, doc: Document, request: ImportRequest) -> Json {
-    let mut fields = Vec[(str, Json)]::new()
-    fields.push(field("range", lsp_range(doc, request.line, request.column, request.length)))
-    match resolve_import_request_uri(state, doc, request) {
-        Option[str]::Some(target_uri) => {
-            fields.push(field("target", Json::String(target_uri)))
-        }
-        Option[str]::None => {
-        }
-    }
-    fields.push(field("tooltip", Json::String("Encore import: " + request.target)))
-    ret Json::Object(fields)
 }
 
 fn resolve_import_target_uri(state: ServerState, target: str) -> Option[str] {
@@ -5311,7 +5650,13 @@ fn resolve_import_request_uri_from_module(state: ServerState, module: ModuleRef,
     } elif first == "refrain" || first == "repo" || first == module.project_name {
         source_dir = module.source_dir
     } else {
-        match workspace_project_by_name(state, first) {
+        // Dependency identity belongs to the importing project. A same-named
+        // package in another workspace root must never shadow its locked root.
+        let project = match path_dependency_project(state, module.project_root, first) {
+            Some(dependency) => Option[ProjectRoot]::Some(dependency)
+            None => workspace_project_by_name(state, first)
+        }
+        match project {
             Option[ProjectRoot]::Some(project) => {
                 source_dir = join_path(project.root, "src")
             }
@@ -5329,7 +5674,7 @@ fn resolve_import_request_uri_from_module(state: ServerState, module: ModuleRef,
                                 // Packages from the installed Encore index are
                                 // not workspace projects, but must participate
                                 // in the same resolver as local dependencies.
-                                match path_dependency_project(module.project_root, first) {
+                                match path_dependency_project(state, module.project_root, first) {
                                     Option[ProjectRoot]::Some(project) => {
                                         source_dir = join_path(project.root, "src")
                                     }
@@ -5386,8 +5731,8 @@ fn workspace_project_by_name(state: ServerState, name: str) -> Option[ProjectRoo
     ret Option[ProjectRoot]::None
 }
 
-fn path_dependency_project(project_root: str, name: str) -> Option[ProjectRoot] {
-    for project in path_dependency_projects(project_root) {
+fn path_dependency_project(state: ServerState, project_root: str, name: str) -> Option[ProjectRoot] {
+    for project in path_dependency_projects(state, project_root) {
         if project.name == name {
             ret Option[ProjectRoot]::Some(project)
         }
@@ -5395,38 +5740,58 @@ fn path_dependency_project(project_root: str, name: str) -> Option[ProjectRoot] 
     ret Option[ProjectRoot]::None
 }
 
-fn path_dependency_projects(project_root: str) -> Vec[ProjectRoot] {
+fn path_dependency_projects(state: ServerState, project_root: str) -> Vec[ProjectRoot] {
+    for cached in state.dependency_projects {
+        if cached.root == project_root {
+            ret cached.projects
+        }
+    }
+    ret read_dependency_projects(project_root)
+}
+
+fn cache_dependency_projects(state: mut ServerState, root: str) ->() {
+    for cached in state.dependency_projects {
+        if cached.root == root {
+            ret()
+        }
+    }
+    if state.dependency_projects.len() >= 128 {
+        state.dependency_projects = Vec[DependencyProjects]::new()
+    }
+    state.dependency_projects.push(DependencyProjects {
+            root, read_dependency_projects(root)
+        }
+        ,
+    )
+}
+
+fn read_dependency_projects(project_root: str) -> Vec[ProjectRoot] {
     let mut projects = Vec[ProjectRoot]::new()
-    let manifest = read_file(join_path(project_root, "encore.toml"))
-    let marker = "\"path@"
-    let mut remaining = manifest
-    while remaining.len() > 0_usize {
-        let marker_index = find_substring(remaining, marker)
-        if marker_index >= remaining.char_len() {
-            break
-        }
-        let value_start = marker_index + marker.char_len()
-        let tail = remaining.slice(value_start, remaining.char_len() - value_start)
-        let value_end = find_char(tail, "\"", 0_usize)
-        if value_end >= tail.char_len() {
-            break
-        }
-        let dependency_root = join_path(project_root, tail.slice(0_usize, value_end))
-        if file_exists(join_path(dependency_root, "encore.toml")) {
-            let dependency_name = project_name_for_root(dependency_root)
-            if dependency_name != "" {
-                projects.push(ProjectRoot {
-                        dependency_root, dependency_name
+    // Use the compiler's read-only resolver for every dependency kind. Scanning
+    // only path@ references made downloaded index packages invisible to cursor
+    // queries even though the semantic worker had already loaded their graph.
+    match try_read_project_manifest(Path::new(project_root)) {
+        Result::Ok(manifest) => {
+            for dependency in project_manifest_dependencies(manifest) {
+                match try_cached_project_dependency_root(Path::new(project_root), dependency) {
+                    Result::Ok(root) => {
+                        let dependency_root = root.as_str()
+                        let dependency_name = project_name_for_root(dependency_root)
+                        if dependency_name != "" {
+                            projects.push(ProjectRoot {
+                                    dependency_root, dependency_name
+                                }
+                                ,
+                            )
+                        }
                     }
-                    ,
-                )
+                    Result::Err(_) => {
+                    }
+                }
             }
         }
-        let consumed = value_start + value_end + 1_usize
-        if consumed >= remaining.char_len() {
-            break
+        Result::Err(_) => {
         }
-        remaining = remaining.slice(consumed, remaining.char_len() - consumed)
     }
     ret projects
 }
@@ -5538,6 +5903,37 @@ fn index_navigation_module(state: mut ServerState, doc: Document, visited: usize
     ret()
 }
 
+fn navigation_import_signature(document: FrontendDocument) -> str {
+    let mut signature = ""
+    for edge in document.dependencies.all() {
+        signature += Debug::fmt(edge.is_public) + ":" + Debug::fmt(edge.target.byte_len()) + ":" + edge.target + "\n"
+    }
+    ret signature
+}
+
+// An editor overlay is visible before its worker parse finishes. Revisit only
+// graphs importing that file, so cached topology cannot hide the newer buffer.
+fn invalidate_navigation_parents(state: mut ServerState, uri: str) ->() {
+    let mut changed = Vec[str]::new()
+    changed.push(uri)
+    let mut cursor = 0
+    while cursor < changed.len() {
+        let source = changed.get(cursor).unwrap_or("")
+        let mut retained = Vec[NavigationIndex]::new()
+        for indexed in state.navigation_index {
+            if contains_string(indexed.dependencies, source) {
+                if !contains_string(changed, indexed.uri) {
+                    changed.push(indexed.uri)
+                }
+            } else {
+                retained.push(indexed)
+            }
+        }
+        state.navigation_index = retained
+        cursor += 1
+    }
+}
+
 // Source discovery stays in the adapter. Type and member identity stay in the
 // database, including public re-exports of a fully qualified type.
 fn associated_query_owner(state: mut ServerState, doc: Document, owner: str) -> str {
@@ -5571,13 +5967,25 @@ fn index_query_module(state: mut ServerState, doc: Document, visited: usize, inc
         ret()
     }
     state.analysis.set_module(doc.uri, uri_to_path(doc.uri), doc.text)
+    match project_root_for_path(uri_to_path(doc.uri)) {
+        Some(root) => cache_dependency_projects(state, root)
+        None => {
+        }
+    }
     // Once a body query requires private imports, navigation must not replace
     // its complete graph with a public-only graph and invalidate every cache.
     if include_private && !contains_string(state.private_query_modules, doc.uri) {
         state.private_query_modules.push(doc.uri)
     }
     let complete = contains_string(state.private_query_modules, doc.uri)
+    let imports = navigation_import_signature(doc.analysis)
+    for indexed in state.navigation_index {
+        if indexed.uri == doc.uri && indexed.imports == imports && indexed.complete == complete {
+            ret()
+        }
+    }
     let mut targets = Vec[ModuleImportTarget]::new()
+    let mut dependencies = Vec[str]::new()
     for edge in doc.analysis.dependencies.all() {
         if !complete && !edge.is_public {
             continue
@@ -5607,6 +6015,7 @@ fn index_query_module(state: mut ServerState, doc: Document, visited: usize, inc
                         }
                         ,
                     )
+                    dependencies.push(imported.uri)
                     index_navigation_module(state, imported, visited)
                 }
                 Option[str]::None => {
@@ -5615,6 +6024,26 @@ fn index_query_module(state: mut ServerState, doc: Document, visited: usize, inc
         }
     }
     state.analysis.set_module_import_targets(doc.uri, targets)
+    // Cache topology, not type facts or bodies. Worker edits invalidate this
+    // cache when imports change; body edits still update AnalysisDatabase above.
+    // An unindexed edited module also clears the cache, covering evicted entries.
+    let mut retained = Vec[NavigationIndex]::new()
+    for indexed in state.navigation_index {
+        if indexed.uri != doc.uri {
+            retained.push(indexed)
+        }
+    }
+    if retained.len() >= 512 {
+        retained = Vec[NavigationIndex]::new()
+    }
+    if imports.byte_len() <= 65536 {
+        retained.push(NavigationIndex {
+                doc.uri, imports, complete, dependencies
+            }
+            ,
+        )
+    }
+    state.navigation_index = retained
     ret()
 }
 
@@ -5732,6 +6161,19 @@ fn member_definition_reference(state: mut ServerState, details: MemberDetails) -
     let mut callable = Option[FrontendCallable]::None
     if definition.kind() == DefinitionKind::Variant {
         signature = details.typ + "::" + definition.name()
+        if details.params.len() > 0 {
+            signature += "("
+            let mut separator = ""
+            for param in details.params {
+                signature += separator + param separator = ", "
+            }
+            signature += ")"
+            callable = Option[FrontendCallable]::Some(FrontendCallable {
+                    definition.name(), details.params, Option[str]::Some(details.typ),
+                    definition.line(), definition.column(), definition.length()
+                }
+                ,)
+        }
     }
     if details.is_method {
         signature = "fn " + definition.name() + "("
@@ -5835,8 +6277,26 @@ fn local_symbol_reference(state: ServerState, doc: Document, name: str) -> Optio
 
 fn symbol_reference(state: ServerState, doc: Document, symbol: FrontendSymbol) -> ResolvedReference {
     let id = canonical_symbol_id(state, doc, symbol)
-    let hover = symbol_hover_text(symbol)
-    let callable = callable_by_name(doc, symbol.name)
+    let callable = callable_at_position(doc, symbol.line, symbol.column)
+    let mut hover = symbol_hover_text(symbol)
+    if symbol.kind == 12 {
+        match callable {
+            Some(found) => {
+                hover = "```encore\nfn " + json_get_str(signature_json(found), "label", found.name) + "\n```"
+                match symbol.documentation {
+                    Some(documentation) => {
+                        if documentation.text != "" {
+                            hover += "\n\n" + documentation.text
+                        }
+                    }
+                    None => {
+                    }
+                }
+            }
+            None => {
+            }
+        }
+    }
     ret ResolvedReference {
         id, symbol.name, doc.uri, symbol_range(doc, symbol), hover, callable, id
     }
@@ -6279,13 +6739,14 @@ fn semantic_tokens_full(state: mut ServerState, params: Json) -> Json {
     }
 }
 
-fn compute_semantic_tokens(state: ServerState, params: Json) -> Json {
+fn compute_semantic_tokens(state: mut ServerState, params: Json) -> Json {
     let uri = request_uri(params)
     let mut data = Vec[Json]::new()
     match state.document(uri) {
         Some(original) => {
             let mut lexer = Lexer::new()
-            let tokens = lexer.tokenize_lossless(original.text)
+            let raw_tokens = lexer.tokenize_lossless(original.text)
+            let tokens = lexer.highlight_tokens(raw_tokens)
             let analysis = original.analysis
             let doc = Document {
                 uri, original.text, FrontendDocument {
@@ -6294,13 +6755,19 @@ fn compute_semantic_tokens(state: ServerState, params: Json) -> Json {
                 }
             }
             let symbols = encore_strmap_new()
+            let declarations = encore_strmap_new()
             let mut ordinal = 0_usize
             for symbol in analysis.symbols {
                 if encore_strmap_get(symbols, symbol.name) == 0_usize {
                     encore_strmap_put(symbols, symbol.name, ordinal + 1_usize)
                 }
+                encore_strmap_put(declarations, semantic_position_key(symbol.line, symbol.column), ordinal + 1)
                 ordinal += 1_usize
             }
+            let bindings = state.analysis.lexical_binding_sites(analysis_module_name(state, uri))
+            let binding_heads = encore_strmap_new()
+            let mut previous_bindings = Vec[usize]::new()
+            let mut next_binding = 0
             let lines = semantic_source_lines(doc.text)
             let mut indexed_line = 0_usize
             let mut columns = semantic_utf16_columns(lines.get(0_usize).unwrap_or(""))
@@ -6309,9 +6776,24 @@ fn compute_semantic_tokens(state: ServerState, params: Json) -> Json {
             let mut previous_end = 0_usize
             let mut first = true
             let mut in_import = false
-            let mut formatted_string = false
             let mut index = 0_usize
             for token in tokens {
+                while next_binding < bindings.len() {
+                    match bindings.get(next_binding) {
+                        Some(entry) => {
+                            let binding = entry.site.binding
+                            if !semantic_position_before(binding.line, binding.column, token.line, token.column) {
+                                break
+                            }
+                            previous_bindings.push(encore_strmap_get(binding_heads, binding.name))
+                            encore_strmap_put(binding_heads, binding.name, next_binding + 1)
+                        }
+                        None => {
+                            break
+                        }
+                    }
+                    next_binding += 1
+                }
                 if token.type == TokenType::NEWLINE {
                     in_import = false
                 }
@@ -6321,64 +6803,69 @@ fn compute_semantic_tokens(state: ServerState, params: Json) -> Json {
                 if token.type == TokenType::KW_AS {
                     in_import = false
                 }
-                // Tree-sitter owns interpolated-string syntax. Never cover its
-                // expression captures with one opaque semantic string span.
-                let prefix = token.type == TokenType::IDENTIFIER && token.value == "f"
-                && match tokens.get(index + 1_usize) {
-                    Some(next) => next.type == TokenType::STRING
-                    None => false
+                let local = if token.type == TokenType::IDENTIFIER && !in_import
+                && !semantic_qualified_identifier(tokens, index) {
+                    semantic_local_role(bindings, binding_heads, previous_bindings, token)
+                } else {
+                    Option[(usize, usize)]::None
                 }
-                let skip = prefix ||(formatted_string && token.type == TokenType::STRING)
-                formatted_string = prefix
-                if !skip {
-                    match semantic_token_kind(doc, token, index, symbols, in_import) {
-                        Some(kind) => {
-                            let parts = semantic_source_lines(token.value)
-                            let mut part_index = 0_usize
-                            for part in parts {
-                                let line = token.line + part_index
-                                if indexed_line != line {
-                                    columns = semantic_utf16_columns(lines.get(line).unwrap_or(""))
-                                    indexed_line = line
-                                }
-                                let character = if part_index == 0_usize {
-                                    token.column
-                                } else {
-                                    0_usize
-                                }
-                                let start = columns.get(character).unwrap_or(0_usize)
-                                let length = utf16_len(part)
-                                if length > 0_usize &&(first || line > previous_line || start >= previous_end) {
-                                    let delta_line = if first {
-                                        line
-                                    } else {
-                                        line - previous_line
-                                    }
-                                    let delta_start = if first || delta_line > 0_usize {
-                                        start
-                                    } else {
-                                        start - previous_start
-                                    }
-                                    data.push(json_usize(delta_line))
-                                    data.push(json_usize(delta_start))
-                                    data.push(json_usize(length))
-                                    data.push(json_usize(kind))
-                                    data.push(json_usize(semantic_token_modifier_bits(doc, token, symbols)))
-                                    previous_line = line
-                                    previous_start = start
-                                    previous_end = start + length
-                                    first = false
-                                }
-                                part_index += 1_usize
+                let kind = match local {
+                    Some(role) => Option[usize]::Some(role.0)
+                    None => semantic_token_kind(doc, token, index, symbols, declarations, in_import)
+                }
+                match kind {
+                    Some(kind) => {
+                        let parts = semantic_source_lines(token.value)
+                        let mut part_index = 0_usize
+                        for part in parts {
+                            let line = token.line + part_index
+                            if indexed_line != line {
+                                columns = semantic_utf16_columns(lines.get(line).unwrap_or(""))
+                                indexed_line = line
                             }
+                            let character = if part_index == 0_usize {
+                                token.column
+                            } else {
+                                0_usize
+                            }
+                            let start = columns.get(character).unwrap_or(0_usize)
+                            let length = utf16_len(part)
+                            if length > 0_usize &&(first || line > previous_line || start >= previous_end) {
+                                let delta_line = if first {
+                                    line
+                                } else {
+                                    line - previous_line
+                                }
+                                let delta_start = if first || delta_line > 0_usize {
+                                    start
+                                } else {
+                                    start - previous_start
+                                }
+                                data.push(json_usize(delta_line))
+                                data.push(json_usize(delta_start))
+                                data.push(json_usize(length))
+                                data.push(json_usize(kind))
+                                data.push(json_usize(match local {
+                                            Some(role) => role.1
+                                            None => semantic_token_modifier_bits(doc, token, declarations)
+                                        }
+                                    ))
+                                previous_line = line
+                                previous_start = start
+                                previous_end = start + length
+                                first = false
+                            }
+                            part_index += 1_usize
                         }
-                        None => {
-                        }
+                    }
+                    None => {
                     }
                 }
                 index += 1_usize
             }
             encore_strmap_free(symbols)
+            encore_strmap_free(declarations)
+            encore_strmap_free(binding_heads)
         }
         None => {
         }
@@ -6428,7 +6915,68 @@ fn semantic_source_lines(text: str) -> Vec[str] {
     ret lines
 }
 
-fn semantic_token_kind(doc: Document, token: Token, token_index: usize, symbols: usize, in_import: bool) -> Option[usize] {
+fn semantic_position_key(line: usize, column: usize) -> str {
+    ret Debug::fmt(line) + ":" + Debug::fmt(column)
+}
+
+fn semantic_position_before(a_line: usize, a_column: usize, b_line: usize, b_column: usize) -> bool {
+    ret a_line < b_line ||(a_line == b_line && a_column <= b_column)
+}
+
+fn semantic_local_role(bindings: Vec[EditorBindingSite], heads: usize, previous: Vec[usize],
+    token: Token,) -> Option[(usize, usize)] {
+    let mut ordinal = encore_strmap_get(heads, token.value)
+    while ordinal > 0 {
+        match bindings.get(ordinal - 1) {
+            Some(entry) => {
+                let site = entry.site
+                let declaration = site.binding.line == token.line && site.binding.column == token.column
+                if declaration ||(semantic_position_before(site.scope.0, site.scope.1, token.line, token.column)
+                    && semantic_position_before(token.line, token.column, site.scope.2, site.scope.3)
+                    && semantic_position_before(site.visible_line, site.visible_column, token.line, token.column)) {
+                    ret Option[(usize, usize)]::Some((if entry.is_parameter {
+                                12
+                            } else {
+                                6
+                            }
+                            ,
+                            if declaration {
+                                3
+                            } else {
+                                0
+                            }
+                            ,))
+                }
+            }
+            None => {
+            }
+        }
+        ordinal = previous.get(ordinal - 1).unwrap_or(0)
+    }
+    ret Option[(usize, usize)]::None
+}
+
+fn semantic_qualified_identifier(tokens: Vec[Token], index: usize) -> bool {
+    let mut previous = index
+    while previous > 0 {
+        previous -= 1
+        match tokens.get(previous) {
+            Some(token) => {
+                if token.type == TokenType::WHITESPACE {
+                    continue
+                }
+                ret token.type == TokenType::DOT || token.type == TokenType::SCOPE
+                || token.type == TokenType::COLON || token.type == TokenType::ARROW
+            }
+            None => {
+            }
+        }
+    }
+    ret false
+}
+
+fn semantic_token_kind(doc: Document, token: Token, token_index: usize, symbols: usize,
+    declarations: usize, in_import: bool,) -> Option[usize] {
     if is_keyword_token(token.type) {
         ret Option[usize]::Some(0_usize)
     }
@@ -6452,7 +7000,30 @@ fn semantic_token_kind(doc: Document, token: Token, token_index: usize, symbols:
             }
             ret Option[usize]::Some(11_usize)
         }
-        let ordinal = encore_strmap_get(symbols, token.value)
+        let mut previous = token_index
+        while previous > 0 {
+            previous -= 1
+            let before = doc.analysis.tokens.get(previous).unwrap_or(Token::new(TokenType::EOF, "", 0, 0))
+            if before.type == TokenType::WHITESPACE || before.type == TokenType::NEWLINE
+            || before.type == TokenType::ONE_LINE_COMMENT || before.type == TokenType::MULTI_LINE_COMMENT {
+                continue
+            }
+            if before.type == TokenType::DOT {
+                ret Option[usize]::Some(if token_is_call(doc, token_index) {
+                        14
+                    } else {
+                        13
+                    }
+                )
+            }
+            break
+        }
+        let declared = encore_strmap_get(declarations, semantic_position_key(token.line, token.column))
+        let ordinal = if declared > 0 {
+            declared
+        } else {
+            encore_strmap_get(symbols, token.value)
+        }
         if ordinal > 0_usize {
             match doc.analysis.symbols.get(ordinal - 1_usize) {
                 Option[FrontendSymbol]::Some(symbol) => {
@@ -6476,15 +7047,12 @@ fn semantic_token_kind(doc: Document, token: Token, token_index: usize, symbols:
 
 fn semantic_type_name(name: str) -> bool {
     if name == "bool" || name == "str" || name == "char" || name == "usize" || name == "isize"
-    || name == "u8" || name == "u16" || name == "u32" || name == "u64"
-    || name == "i8" || name == "i16" || name == "i32" || name == "i64"
+    || name == "u8" || name == "u16" || name == "u32" || name == "u64" || name == "u128"
+    || name == "i8" || name == "i16" || name == "i32" || name == "i64" || name == "i128"
     || name == "f32" || name == "f64" {
         ret true
     }
-    if name.byte_len() == 0_usize {
-        ret false
-    }
-    ret name.byte_at(0_usize) >= 65_u8 && name.byte_at(0_usize) <= 90_u8
+    ret false
 }
 
 fn semantic_kind_for_symbol(symbol: FrontendSymbol) -> usize {
@@ -6507,7 +7075,7 @@ fn semantic_token_modifier_bits(doc: Document, token: Token, symbols: usize) -> 
     if token.type != TokenType::IDENTIFIER {
         ret 0_usize
     }
-    let ordinal = encore_strmap_get(symbols, token.value)
+    let ordinal = encore_strmap_get(symbols, semantic_position_key(token.line, token.column))
     if ordinal > 0_usize {
         match doc.analysis.symbols.get(ordinal - 1_usize) {
             Option[FrontendSymbol]::Some(symbol) => {
@@ -7175,7 +7743,7 @@ fn imported_symbol_resolves(state: mut ServerState, doc: Document, name: str) ->
     ret false
 }
 
-fn tolerant_import_diagnostics(state: ServerState, doc: Document) -> Vec[FrontendDiagnostic] {
+fn tolerant_import_diagnostics(state: mut ServerState, doc: Document) -> Vec[FrontendDiagnostic] {
     let mut diagnostics = Vec[FrontendDiagnostic]::new()
     for edge in doc.analysis.dependencies.all() {
         if !tolerant_import_resolves(state, doc, edge.target) {
@@ -7192,7 +7760,25 @@ fn tolerant_import_diagnostics(state: ServerState, doc: Document) -> Vec[Fronten
     ret diagnostics
 }
 
-fn tolerant_import_resolves(state: ServerState, doc: Document, target: str) -> bool {
+fn tolerant_import_resolves(state: mut ServerState, doc: Document, target: str) -> bool {
+    let expanded = expand_import_path_targets(target)
+    if expanded.len() == 0 {
+        ret false
+    }
+    for item in expanded {
+        let resolved_target = item.target + if item.wildcard {
+            "::*"
+        } else {
+            ""
+        }
+        if !tolerant_single_import_resolves(state, doc, resolved_target) {
+            ret false
+        }
+    }
+    ret true
+}
+
+fn tolerant_single_import_resolves(state: mut ServerState, doc: Document, target: str) -> bool {
     let mut cleaned = target
     if ends_with(cleaned, "::*") {
         cleaned = cleaned.slice(0_usize, cleaned.len() - 3_usize)
@@ -7202,14 +7788,39 @@ fn tolerant_import_resolves(state: ServerState, doc: Document, target: str) -> b
         ret false
     }
     let package = parts.get(0_usize).unwrap_or("")
-    if !project_declares_package(doc, package) {
+    if !project_declares_package(state, doc, package) {
         ret false
     }
     let request = ImportRequest {
         "", cleaned, Option[str]::None, false, 0_usize, 0_usize, 0_usize
     }
     match resolve_import_request_uri(state, doc, request) {
-        Some(_) => {
+        Some(uri) => {
+            if parts.len() > 1 {
+                let path = uri_to_path(uri)
+                let mut name = basename_path(path)
+                if name == "mod.enq" || name == "lib.enq" {
+                    name = basename_path(parent_path(path))
+                } elif ends_with(name, ".enq") {
+                    name = name.slice(0, name.len() - 4)
+                }
+                if name == last_scope_segment(cleaned) {
+                    ret true
+                }
+                if ends_with(target, "::*") {
+                    ret false
+                }
+                let module_doc = document_for_path(state, path)
+                let visited = encore_strset_new()
+                index_navigation_module(state, module_doc, visited)
+                encore_strset_free(visited)
+                for definition in state.analysis.module_exports(module_doc.uri) {
+                    if definition.name() == last_scope_segment(cleaned) {
+                        ret true
+                    }
+                }
+                ret false
+            }
             ret true
         }
         None => {
@@ -7218,10 +7829,10 @@ fn tolerant_import_resolves(state: ServerState, doc: Document, target: str) -> b
     ret false
 }
 
-fn project_declares_package(doc: Document, package: str) -> bool {
-    // `refrain` and `repo` address modules in the current project's source
+fn project_declares_package(state: ServerState, doc: Document, package: str) -> bool {
+    // `refrain`, `repo` and `mod` address modules in the current project's source
     // tree; they are not manifest dependencies.
-    if package == "core" || package == "refrain" || package == "repo" {
+    if package == "core" || package == "refrain" || package == "repo" || package == "mod" {
         ret true
     }
     match project_root_for_path(uri_to_path(doc.uri)) {
@@ -7229,7 +7840,7 @@ fn project_declares_package(doc: Document, package: str) -> bool {
             if project_name_for_root(root) == package {
                 ret true
             }
-            match path_dependency_project(root, package) {
+            match path_dependency_project(state, root, package) {
                 Some(_) => {
                     ret true
                 }

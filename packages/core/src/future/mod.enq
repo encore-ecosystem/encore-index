@@ -15,6 +15,10 @@ pub struct Waker {
 
 impl for Waker {
     /// Performs the `wake` operation.
+    ///
+    /// # Safety
+    /// The native event token must remain alive; a copied waker must not be used
+    /// after the blocking executor has released its event.
     pub fn wake(self: Waker) ->() {
         encore_async_waker_wake(self.token)
         ret()
