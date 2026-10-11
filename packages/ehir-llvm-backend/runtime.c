@@ -4,8 +4,18 @@
 #include <unistd.h>
 #endif
 
-static size_t encore_target_pointer_width = sizeof(void *) * 8u;
-static size_t encore_windows_target = 0u;
+/* Every emission worker sets its target before touching layout or ABI code.
+ * A process-wide value races even when two otherwise independent modules are
+ * emitted for the same target: a host-width default must not leak into a
+ * worker, and concurrent cross-target compilations must remain isolated. */
+#if defined(_MSC_VER)
+#define ENCORE_CODEGEN_THREAD_LOCAL __declspec(thread)
+#else
+#define ENCORE_CODEGEN_THREAD_LOCAL _Thread_local
+#endif
+
+static ENCORE_CODEGEN_THREAD_LOCAL size_t encore_target_pointer_width = sizeof(void *) * 8u;
+static ENCORE_CODEGEN_THREAD_LOCAL size_t encore_windows_target = 0u;
 
 void encore_llvm_set_target_pointer_width(size_t bits) {
     encore_target_pointer_width = bits == 32u ? 32u : 64u;

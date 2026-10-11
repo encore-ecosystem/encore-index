@@ -209,6 +209,254 @@ struct GenericCall {
     key: str
 }
 
+/// A concrete call site exported by a separately compiled package. No ordinary
+/// function body is needed to close its nested generic/template requirements.
+pub struct GenericRequirement {
+    name: str
+    args: Vec[Type]
+}
+
+/// A checked package's link-time specialization and layout requirements.
+pub struct CodegenRequirements {
+    generic_calls: Vec[GenericRequirement]
+    concrete_types: Vec[Type]
+}
+
+/// Worker-owned preparation, shared read-only across this unit's LLVM outputs.
+/// Dependency contexts contain declarations/templates, never ordinary bodies.
+pub struct PreparedUnitCodegen {
+    owned: Vec[Module]
+    contexts: Vec[Module]
+    requirements: CodegenRequirements
+}
+
+/// Normalizes only owned modules, once. A dependent can consume the resulting
+/// context (including generated coroutine layouts) before LLVM/native work ends.
+pub fn prepare_unit_codegen(owned: ModuleBundle, dependencies: ModuleBundle,
+    triple: str, pointer_width: usize, jobs: usize) -> PreparedUnitCodegen {
+    install_codegen_target(triple, pointer_width)
+    let prepared = prepare_modules_for_codegen_parallel(owned.modules, jobs, triple, pointer_width)
+    let mut contexts = Vec[Module]::new()
+    contexts.extend(dependencies.modules)
+    contexts.extend(module_codegen_context_modules(prepared))
+    let directives = module_bundle_directives(contexts)
+    let own_directives = module_bundle_directives(prepared)
+    let calls = collect_generic_calls(own_directives)
+    let mut requirements = Vec[GenericRequirement]::new()
+    for item in calls { requirements.push(GenericRequirement{item.name, clone_codegen_types(item.args)}) }
+    let expanded = expand_generic_calls(directives, calls)
+    let mut concrete_types = collect_concrete_types(own_directives, expanded)
+    let seen = unsafe { encore_strset_new() }
+    for typ in concrete_types { let _ = unsafe { encore_strset_insert(seen, mangle_type_name(typ)) } }
+    for typ in collect_concrete_types(directives, expanded) { remember_concrete_type(concrete_types, seen, typ) }
+    collect_declaration_type_closure(concrete_types, seen, directives)
+    unsafe { encore_strset_free(seen) }
+    ret PreparedUnitCodegen{prepared, contexts, CodegenRequirements{requirements, concrete_types}}
+}
+
+/// Compact, already normalized ABI declarations and closed private templates
+/// of this unit. It deliberately excludes every dependency and ordinary body.
+pub fn unit_codegen_context(unit: frozen PreparedUnitCodegen, entry: str) -> ModuleBundle {
+    let mut modules = Vec[Module]::new()
+    for owned in unit.owned {
+        for context in unit.contexts {
+            if context.name == owned.name { modules.push(clone_module_for_codegen(context)) }
+        }
+    }
+    ret make_module_bundle(entry, modules)
+}
+
+/// A private normalized-body checkpoint, distinct from dependency templates.
+/// It is never supplied to another package's frontend or generic support CGU.
+pub fn unit_codegen_owned(unit: frozen PreparedUnitCodegen, entry: str) -> ModuleBundle {
+    let mut modules = Vec[Module]::new()
+    for owned in unit.owned { modules.push(clone_module_for_codegen(owned)) }
+    ret make_module_bundle(entry, modules)
+}
+
+/// Copies only compact requirements across the immutable preparation boundary.
+pub fn unit_codegen_requirements(unit: frozen PreparedUnitCodegen) -> CodegenRequirements {
+    let mut calls = Vec[GenericRequirement]::new()
+    for item in unit.requirements.generic_calls { calls.push(GenericRequirement{item.name, clone_codegen_types(item.args)}) }
+    ret CodegenRequirements{calls, clone_codegen_types(unit.requirements.concrete_types)}
+}
+
+/// Emits ordinary package bodies only. Generic/vtable/ownership helpers remain
+/// external declarations and are defined once by emit_program_support.
+pub fn emit_unit_codegen(unit: frozen PreparedUnitCodegen, triple: str,
+    pointer_width: usize) -> Vec[EmittedIrModule] {
+    install_codegen_target(triple, pointer_width)
+    let directives = module_bundle_directives(unit.contexts)
+    let mut calls = Vec[GenericCall]::new()
+    for requirement in unit.requirements.generic_calls {
+        calls.push(GenericCall{requirement.name, clone_codegen_types(requirement.args),
+            generic_symbol(requirement.name, requirement.args)})
+    }
+    let expanded = expand_generic_calls(directives, calls)
+    let support = SupportIr{"", unit_support_declarations(directives, expanded, unit.requirements.concrete_types)}
+    let mut out = Vec[EmittedIrModule]::new()
+    for module in unit.owned {
+        let view = module_codegen_view(module, unit.contexts)
+        let lowered = lower_with_precomputed_analysis(view, unit.requirements.concrete_types, support, false)
+        let ir = "target triple = \"" + triple + "\"\n\n" + lowered.ir
+        out.push(EmittedIrModule{module.name, ir, ir.byte_len()})
+    }
+    ret out
+}
+
+/// Consumes compact contexts and explicit call/type summaries, not dependency
+/// ordinary bodies. The coordinator supplies contexts in canonical unit order.
+pub fn emit_program_support(context: frozen ModuleBundle, requirements: frozen Vec[CodegenRequirements],
+    triple: str, pointer_width: usize) -> EmittedIrModule {
+    install_codegen_target(triple, pointer_width)
+    let directives = module_bundle_directives(context.modules)
+    let mut calls = Vec[GenericCall]::new()
+    let call_seen = unsafe { encore_strset_new() }
+    let type_seen = unsafe { encore_strset_new() }
+    let mut concrete = Vec[Type]::new()
+    for requirement in requirements {
+        for item in requirement.generic_calls { remember_generic_call(calls, call_seen, item.name, item.args) }
+        for typ in requirement.concrete_types { remember_concrete_type(concrete, type_seen, typ) }
+    }
+    let expanded = expand_generic_calls(directives, calls)
+    for typ in collect_concrete_types(directives, expanded) { remember_concrete_type(concrete, type_seen, typ) }
+    collect_declaration_type_closure(concrete, type_seen, directives)
+    unsafe { encore_strset_free(call_seen) encore_strset_free(type_seen) }
+    let support = build_support_ir(directives, expanded, concrete)
+    let mut support_directives = Vec[Directive]::new()
+    for directive in directives { support_directives.push(clone_codegen_directive(directive)) }
+    let module = make_module("__encore_program_support", support_directives)
+    let lowered = lower_with_precomputed_analysis(module, concrete, support, true)
+    let ir = "target triple = \"" + triple + "\"\n\n" + lowered.ir
+    ret EmittedIrModule{"__encore_program_support", ir, ir.byte_len()}
+}
+
+fn install_codegen_target(triple: str, pointer_width: usize) -> () {
+    unsafe {
+        encore_llvm_set_target_pointer_width(pointer_width)
+        encore_llvm_set_windows_target(if is_windows_triple(triple) { 1_usize } else { 0_usize })
+    }
+}
+
+// Build declarations directly from ABI signatures. This must never lower a
+// specialized body or build a discarded copy of the program-wide support CGU.
+fn unit_support_declarations(directives: frozen Vec[Directive], calls: frozen Vec[GenericCall],
+    concrete: frozen Vec[Type]) -> str {
+    let builder = unsafe { encore_text_builder_new() }
+    let seen = unsafe { encore_strset_new() }
+    let mut emitted = false
+    for directive in directives {
+        match directive {
+            Directive::Function(function) => {
+                if function.generics.len() == 0 { continue }
+                for item in calls {
+                    if generic_function_name_matches(function.name, item.name)
+                        && function.generics.len() == item.args.len() {
+                        emitted = unit_generic_declaration(builder, seen, emitted, function, function.generics, item)
+                    }
+                }
+            }
+            Directive::Impl(item) => {
+                for method in item.methods {
+                    let params = combined_impl_method_generics(item.generics, method.generics)
+                    if params.len() == 0 { continue }
+                    let name = item.for_type.name + "::" + method.name
+                    for site in calls {
+                        if site.name == name && site.args.len() == params.len() {
+                            emitted = unit_generic_declaration(builder, seen, emitted, method, params, site)
+                        }
+                    }
+                }
+            }
+            Directive::Trait(item) => {
+                if !trait_is_used_dynamically(concrete, item.name) { continue }
+                let dynamic = Type{"dyn " + item.name, Vec[Type]::new(), RepresentationKind::Inline}
+                emitted = unit_owner_declarations(builder, seen, emitted, dynamic, true)
+                for method in item.methods {
+                    let mut params = Vec[LLVMParam]::new()
+                    let mut index = 0_usize
+                    for parameter in method.params {
+                        params.push(llvm_make_param(parameter.name, if index == 0 { lower_type(dynamic) }
+                            else { lower_type(parameter.typ) }))
+                        index += 1
+                    }
+                    emitted = append_unique_functions(builder, vec_singleton(llvm_declare_fn(
+                        function_symbol(item.name + "::" + method.name), lower_type(method.ret_type),
+                        params, Vec[LLVMBasicBlock]::new())), seen, emitted, 0)
+                }
+            }
+            Directive::Struct(item) => {
+                if item.generics.len() == 0 {
+                    emitted = unit_owner_declarations(builder, seen, emitted,
+                        Type{item.name, Vec[Type]::new(), RepresentationKind::Inline}, true)
+                }
+            }
+            Directive::Enum(item) => {
+                if item.generics.len() == 0 {
+                    emitted = unit_owner_declarations(builder, seen, emitted,
+                        Type{item.name, Vec[Type]::new(), RepresentationKind::Inline}, true)
+                }
+            }
+            _ => {}
+        }
+    }
+    for typ in concrete {
+        if is_node_handle_type(typ) {
+            emitted = unit_owner_declarations(builder, seen, emitted, typ, false)
+        } elif typ.representation == RepresentationKind::Inline
+            && (has_prefix(typ.name, "__tuple_") || has_prefix(typ.name, "__array_")) {
+            emitted = unit_owner_declarations(builder, seen, emitted, typ, true)
+        } else {
+            for directive in directives {
+                match directive {
+                    Directive::Struct(item) => {
+                        if typ.name == item.name && typ.generics.len() == item.generics.len()
+                            && typ.representation == RepresentationKind::Inline {
+                            emitted = unit_owner_declarations(builder, seen, emitted, typ, true)
+                        }
+                    }
+                    Directive::Enum(item) => {
+                        if typ.name == item.name && typ.generics.len() == item.generics.len()
+                            && typ.representation == RepresentationKind::Inline {
+                            emitted = unit_owner_declarations(builder, seen, emitted, typ, true)
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    unsafe { encore_strset_free(seen) }
+    ret unsafe { encore_text_builder_finish(builder) }
+}
+
+fn unit_generic_declaration(builder: usize, seen: usize, emitted: bool, function: frozen FnDirective,
+    params: frozen Vec[Type], site: frozen GenericCall) -> bool {
+    let mut arguments = Vec[Parameter]::new()
+    for parameter in function.params {
+        arguments.push(param(parameter.name, substitute_generic_type(parameter.typ, params, site.args)))
+    }
+    let declaration = llvm_declare_fn(generic_symbol(site.name, site.args),
+        lower_type(substitute_generic_type(function.ret_type, params, site.args)),
+        lower_params(arguments), Vec[LLVMBasicBlock]::new())
+    ret append_unique_functions(builder, vec_singleton(declaration), seen, emitted, 0)
+}
+
+fn unit_owner_declarations(builder: usize, seen: usize, emitted: bool, typ: frozen Type, edges: bool) -> bool {
+    let params = vec_singleton(llvm_make_param("self", lower_type(typ)))
+    let mut functions = Vec[LLVMFunction]::new()
+    functions.push(llvm_declare_fn(drop_symbol(typ), void_type(), params, Vec[LLVMBasicBlock]::new()))
+    functions.push(llvm_declare_fn(retain_symbol(typ), void_type(), params, Vec[LLVMBasicBlock]::new()))
+    if edges {
+        let mut edge_params = Vec[LLVMParam]::new()
+        edge_params.push(llvm_make_param("owner", ptr_type(i8_type())))
+        edge_params.push(llvm_make_param("self", lower_type(typ)))
+        functions.push(llvm_declare_fn(edge_symbol(typ, true), void_type(), edge_params, Vec[LLVMBasicBlock]::new()))
+        functions.push(llvm_declare_fn(edge_symbol(typ, false), void_type(), edge_params, Vec[LLVMBasicBlock]::new()))
+    }
+    ret append_unique_functions(builder, functions, seen, emitted, 0)
+}
+
 struct StringGlobal {
     body: str
     tag: usize
@@ -2537,7 +2785,7 @@ fn emit_ir_bundle_for_target_selected_impl(bundle: frozen ModuleBundle, triple: 
     let prepared = if prepare_selected_view {
         source_modules
     } else {
-        prepare_modules_for_codegen_parallel(source_modules, requested_jobs)
+        prepare_modules_for_codegen_parallel(source_modules, requested_jobs, triple, pointer_width)
     }
     // Incremental workers normalize the compact generic/declaration context
     // once, module by module. Previously each selected CGU rebuilt one giant
@@ -2545,7 +2793,7 @@ fn emit_ir_bundle_for_target_selected_impl(bundle: frozen ModuleBundle, triple: 
     // one-function edit in FastWord spent minutes before LLVM emission.
     let contexts = if prepare_selected_view {
         prepare_modules_for_codegen_parallel(
-            module_codegen_context_modules(prepared), requested_jobs,)
+            module_codegen_context_modules(prepared), requested_jobs, triple, pointer_width,)
     } else {
         module_codegen_context_modules(prepared)
     }
@@ -2628,7 +2876,8 @@ fn module_bundle_directives(modules: frozen Vec[Module]) -> frozen Vec[Directive
     ret directives
 }
 
-fn prepare_modules_for_codegen_parallel(modules: sending Vec[Module], requested_jobs: usize) -> Vec[Module] {
+fn prepare_modules_for_codegen_parallel(modules: sending Vec[Module], requested_jobs: usize,
+    triple: str, pointer_width: usize,) -> Vec[Module] {
     let worker_count = min_codegen_jobs(requested_jobs, modules.len())
     if worker_count <= 1_usize {
         let mut prepared = Vec[Module]::new()
@@ -2641,7 +2890,7 @@ fn prepare_modules_for_codegen_parallel(modules: sending Vec[Module], requested_
     let mut chunks = Vec[PreparedModuleChunk]::new()
     let mut module_index = 0_usize
     for module in modules {
-        pending.push(spawn prepare_module_job(module, module_index))
+        pending.push(spawn prepare_module_job(module, module_index, triple, pointer_width))
         module_index += 1_usize
         if pending.len() == worker_count {
             for handle in pending {
@@ -2666,7 +2915,14 @@ fn prepare_modules_for_codegen_parallel(modules: sending Vec[Module], requested_
     ret prepared
 }
 
-fn prepare_module_job(module: sending Module, index: usize) -> sending PreparedModuleChunk {
+fn prepare_module_job(module: sending Module, index: usize, triple: str, pointer_width: usize)
+-> sending PreparedModuleChunk {
+    // Target state is thread-local: preparation workers must install it too,
+    // rather than depending on the coordinator's host or previous target.
+    unsafe {
+        encore_llvm_set_target_pointer_width(pointer_width)
+        encore_llvm_set_windows_target(if is_windows_triple(triple) { 1_usize } else { 0_usize })
+    }
     ret PreparedModuleChunk {
         index, prepare_module_for_codegen(module)
     }
@@ -2910,8 +3166,7 @@ fn clone_codegen_directive(directive: frozen Directive) -> Directive {
             ret enum_directive("" + item.name, clone_codegen_types(item.generics), variants)
         }
         Directive::Function(function) => {
-            ret Directive::Function(specialize_function_with_params(function,
-                    Vec[Type]::new(), Vec[Type]::new(), "" + function.name,))
+            ret Directive::Function(clone_codegen_function(function))
         }
         Directive::Trait(item) => {
             let mut methods = Vec[TraitMethod]::new()
@@ -2924,14 +3179,23 @@ fn clone_codegen_directive(directive: frozen Directive) -> Directive {
         Directive::Impl(item) => {
             let mut methods = Vec[FnDirective]::new()
             for method in item.methods {
-                methods.push(specialize_function_with_params(method, Vec[Type]::new(),
-                        Vec[Type]::new(), "" + method.name,))
+                methods.push(clone_codegen_function(method))
             }
             ret impl_directive(clone_codegen_types(item.generics), "" + item.trait_name,
                 clone_codegen_types(item.trait_args), clone_type(item.for_type), methods,)
         }
     }
     ret struct_directive("invalid", Vec[Type]::new(), Vec[Parameter]::new())
+}
+
+// An empty substitution copies the body but deliberately clears binders for
+// specialization. A declaration/template clone is not a specialization: keep
+// its binders, or a generic function becomes an invalid ordinary definition.
+fn clone_codegen_function(function: frozen FnDirective) -> FnDirective {
+    let mut cloned = specialize_function_with_params(function, Vec[Type]::new(),
+        Vec[Type]::new(), "" + function.name)
+    cloned.generics = clone_codegen_types(function.generics)
+    ret cloned
 }
 
 fn module_codegen_view(current: frozen Module, modules: frozen Vec[Module]) -> frozen Module {

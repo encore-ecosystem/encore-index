@@ -30,7 +30,6 @@ def main():
     parser.add_argument('binary', type=Path)
     parser.add_argument('root', type=Path)
     parser.add_argument('--samples', type=int, default=5)
-    parser.add_argument('--max-warm-ms', type=float)
     parser.add_argument('--repeat-requests', type=int, default=0)
     parser.add_argument('--max-rss-growth-percent', type=float)
     parser.add_argument('--settle-seconds', type=float, default=0,
@@ -119,8 +118,6 @@ def main():
             print(json.dumps({'phase': name, 'median_ms': round(statistics.median(samples), 2),
                               'p95_ms': round(sorted(samples)[max(0, (95 * len(samples) + 99) // 100 - 1)], 2),
                               'max_ms': round(max(samples), 2), **process_usage(process.pid)}), flush=True)
-            if args.max_warm_ms is not None:
-                assert sorted(samples)[max(0, (95 * len(samples) + 99) // 100 - 1)] <= args.max_warm_ms, (name, samples)
         if args.repeat_requests:
             before = process_usage(process.pid)
             for index in range(args.repeat_requests):

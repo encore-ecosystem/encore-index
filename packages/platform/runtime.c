@@ -2091,6 +2091,28 @@ static void encore_sha256_finish(encore_sha256_context *context, uint8_t digest[
     }
 }
 
+static encore_str encore_sha256_finish_text(encore_sha256_context *context) {
+    uint8_t digest[32];
+    char encoded[65];
+    static const char hexadecimal[] = "0123456789abcdef";
+    encore_sha256_finish(context, digest);
+    for (size_t index = 0; index < 32; ++index) {
+        encoded[index * 2] = hexadecimal[digest[index] >> 4];
+        encoded[index * 2 + 1] = hexadecimal[digest[index] & 15U];
+    }
+    encoded[64] = '\0';
+    return encore_from_cstr_copy(encoded);
+}
+
+/* Content identity for compiler metadata: hash the original bytes, not a
+ * destination file which another build may have replaced concurrently. */
+encore_str encore_text_sha256(encore_str contents) {
+    encore_sha256_context context;
+    encore_sha256_init(&context);
+    encore_sha256_update(&context, (const uint8_t *)encore_str_data(contents), encore_str_size(contents));
+    return encore_sha256_finish_text(&context);
+}
+
 encore_str encore_fs_sha256(encore_str path) {
     char *path_c = encore_to_cstr(path);
     if (path_c == NULL) return encore_empty_str();
@@ -2108,16 +2130,7 @@ encore_str encore_fs_sha256(encore_str path) {
     }
     if (fclose(file) != 0) failed = true;
     if (failed) return encore_empty_str();
-    uint8_t digest[32];
-    char encoded[65];
-    static const char hexadecimal[] = "0123456789abcdef";
-    encore_sha256_finish(&context, digest);
-    for (size_t index = 0; index < 32; ++index) {
-        encoded[index * 2] = hexadecimal[digest[index] >> 4];
-        encoded[index * 2 + 1] = hexadecimal[digest[index] & 15U];
-    }
-    encoded[64] = '\0';
-    return encore_from_cstr_copy(encoded);
+    return encore_sha256_finish_text(&context);
 }
 
 int32_t encore_fs_status(encore_str path) {
