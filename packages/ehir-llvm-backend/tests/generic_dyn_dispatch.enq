@@ -1,0 +1,62 @@
+//! Generic dyn ABI is identical in monolithic, unit and support codegen.
+
+import ehirlib::{parse_module_bundle_text, make_module_bundle, make_module, Module, Directive}
+import refrain::codegen::{emit_ir, prepare_unit_codegen, emit_unit_codegen, unit_codegen_context, unit_codegen_requirements, emit_program_support}
+import std::vec::Vec
+
+fn main() -> u32 {
+    let source = "entry probe\nmodule probe {\n" +
+    "trait Value[T] {\nfn evaluate(self: Value) -> T\n}\n" +
+    "struct Number {\nvalue: u32\n}\nstruct Text {\nvalue: str\n}\n" +
+    "impl Value[u32] for Number {\nfn evaluate(self: Number) -> u32 {\n" +
+    "$entry:\nvalue: u32 = getfield self > 0\nret value: u32\n}\n}\n" +
+    "impl Value[str] for Text {\nfn evaluate(self: Text) -> str {\n" +
+    "$entry:\nvalue: str = getfield self > 0\nret value: str\n}\n}\n" +
+    "fn probe(number: dyn Value[u32], text: dyn Value[str]) -> u32 {\n" +
+    "$entry:\nresult: u32 = call Value::evaluate[u32](number: dyn Value[u32])\n" +
+    "label: str = call Value::evaluate[str](text: dyn Value[str])\n" +
+    "drop label: str\nret result: u32\n}\n}\n"
+    let bundle = parse_module_bundle_text("", source)
+    let monolithic = emit_ir(bundle.modules.get(0).unwrap_or(make_module("invalid", Vec[Directive]::new())))
+    if !monolithic.contains("%dyn_Value_u32 = type { i8*, i64 }") {
+        ret 1
+    }
+    if !monolithic.contains("%dyn_Value_str = type { i8*, i64 }") {
+        ret 2
+    }
+    if !monolithic.contains("define i32 @Value__evaluate__u32") {
+        ret 3
+    }
+    if !monolithic.contains("define i8* @Value__evaluate__str") {
+        ret 4
+    }
+    if monolithic.contains("%T ") || monolithic.contains("%dyn_Value_T = type") {
+        ret 5
+    }
+    let unit = prepare_unit_codegen(bundle, make_module_bundle("", Vec[Module]::new()),
+        "x86_64-unknown-linux-gnu", 64, 1,)
+    let emitted = emit_unit_codegen(unit, "x86_64-unknown-linux-gnu", 64)
+    if emitted.len() != 1 {
+        ret 6
+    }
+    for module in emitted {
+        if !module.ir.contains("declare i32 @Value__evaluate__u32(%dyn_Value_u32") {
+            ret 7
+        }
+        if !module.ir.contains("declare i8* @Value__evaluate__str(%dyn_Value_str") {
+            ret 8
+        }
+        if module.ir.contains("define i32 @Value__evaluate__u32") {
+            ret 9
+        }
+    }
+    let support = emit_program_support(unit_codegen_context(unit, "probe"),
+        vec![unit_codegen_requirements(unit)], "x86_64-unknown-linux-gnu", 64,)
+    if !support.ir.contains("define i32 @Value__evaluate__u32") {
+        ret 10
+    }
+    if !support.ir.contains("define i8* @Value__evaluate__str") {
+        ret 11
+    }
+    ret 0
+}

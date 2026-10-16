@@ -16,6 +16,7 @@ bool encore_node_debug_is_stack(void *payload);
 size_t encore_node_debug_edge_count(void *payload);
 size_t encore_node_debug_live_count(void);
 size_t encore_node_debug_ern_scan_count(void);
+void *encore_node_owner_of_place(void *place);
 
 typedef struct stack_u64_node {
     uint64_t node_prefix[8];
@@ -27,8 +28,70 @@ static void connect(void *owner, void *target) {
     encore_node_add_edge(owner, target);
 }
 
+static void check_projected_places(void) {
+    unsigned char local[32] = {0};
+    assert(encore_node_owner_of_place(local) == NULL);
+    assert(encore_node_owner_of_place(NULL) == NULL);
+    /* Multiple rotations and arbitrary deletion order must preserve every
+     * address interval, including unaligned fields and both boundaries. */
+    void *nodes[4096];
+    for (size_t i = 0; i < 4096; ++i) {
+        nodes[i] = encore_node_alloc_heap(37);
+        assert(nodes[i] != NULL);
+    }
+    for (size_t i = 0; i < 4096; ++i) {
+        unsigned char *node = nodes[i];
+        assert(encore_node_owner_of_place(node) == node);
+        assert(encore_node_owner_of_place(node + 1) == node);
+        assert(encore_node_owner_of_place(node + 36) == node);
+        assert(encore_node_owner_of_place(node - 1) == NULL);
+        assert(encore_node_owner_of_place(node + 37) == NULL);
+    }
+    for (size_t i = 0; i < 4096; ++i) {
+        size_t index = (i * 137) % 4096;
+        void *node = nodes[index];
+        assert(encore_node_release(node));
+        assert(encore_node_owner_of_place(node) == NULL);
+        encore_node_free_released(node);
+    }
+    /* Stack payloads and allocator address reuse must not leave stale owners. */
+    stack_u64_node storage = {{0}, 0};
+    for (size_t i = 0; i < 128; ++i) {
+        encore_node_register_stack(&storage.payload, sizeof(storage.payload));
+        assert(encore_node_owner_of_place(&storage.payload) == &storage.payload);
+        assert(encore_node_release(&storage.payload));
+        encore_node_free_released(&storage.payload);
+        assert(encore_node_owner_of_place(&storage.payload) == NULL);
+        void *heap = encore_node_alloc_heap(sizeof(uint64_t));
+        assert(encore_node_owner_of_place(heap) == heap);
+        assert(encore_node_release(heap));
+        encore_node_free_released(heap);
+    }
+    assert(encore_node_debug_live_count() == 0);
+}
+
+static void check_deep_owner_chain(void) {
+    void *nodes[128];
+    for (size_t i = 0; i < 128; ++i) {
+        nodes[i] = encore_node_alloc_heap(sizeof(void *));
+        assert(nodes[i] != NULL);
+        if (i > 0) connect(nodes[i - 1], nodes[i]);
+    }
+    size_t scans = encore_node_debug_ern_scan_count();
+    for (size_t i = 1; i < 128; ++i) {
+        assert(!encore_node_release(nodes[i]));
+    }
+    assert(encore_node_debug_ern_scan_count() == scans);
+    /* Shallow finalizers recurse first, then unwind in reverse order. */
+    for (size_t i = 0; i < 128; ++i) assert(encore_node_release(nodes[i]));
+    for (size_t i = 128; i > 0; --i) encore_node_free_released(nodes[i - 1]);
+    assert(encore_node_debug_live_count() == 0);
+}
+
 int main(void) {
     assert(encore_node_debug_live_count() == 0);
+    check_projected_places();
+    check_deep_owner_chain();
     uint64_t *heap = encore_node_alloc_heap(sizeof(uint64_t));
     assert(heap != NULL);
     assert(!encore_node_debug_is_stack(heap));
@@ -102,8 +165,9 @@ int main(void) {
     assert(encore_node_release(owner_a));
     assert(encore_node_release(owner_b));
     assert(!encore_node_release(owner_a));
-    assert(!encore_node_release(shared));
+    /* Finish B's recursive finalizer before dropping A's next field. */
     encore_node_free_released(owner_b);
+    assert(!encore_node_release(shared));
     encore_node_free_released(owner_a);
     assert(encore_node_debug_ref_count(shared) == 1);
     assert(encore_node_release(shared));

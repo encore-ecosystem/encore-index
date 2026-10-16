@@ -39,6 +39,13 @@ typedef struct encore_node_header {
     size_t incoming_owner_capacity;
     uint32_t placement;
     _Atomic uint32_t state;
+    /* Intrusive live-payload index: mutable inline projections keep the raw
+     * pointer ABI, but their graph edges belong to the enclosing node. */
+    void *payload;
+    size_t payload_size;
+    struct encore_node_header *place_left;
+    struct encore_node_header *place_right;
+    unsigned place_height;
 } encore_node_header;
 
 typedef struct encore_node_header_vec {
@@ -58,6 +65,7 @@ static atomic_flag g_encore_node_graph_lock = ATOMIC_FLAG_INIT;
 static _Atomic size_t g_encore_node_live_count = 0;
 static _Atomic size_t g_encore_node_ern_scan_count = 0;
 static _Thread_local encore_node_header_vec g_encore_node_finalizers = {0};
+static encore_node_header *g_encore_node_places = NULL;
 
 static void encore_node_graph_lock(void) {
     while (atomic_flag_test_and_set_explicit(&g_encore_node_graph_lock,
@@ -84,7 +92,6 @@ static void encore_node_initialize_header(encore_node_header *header,
                                           uint32_t placement) {
     atomic_init(&header->refs, 1);
     header->allocation_base = allocation_base;
-    (void)payload_size;
     atomic_init(&header->incoming_edges, 0);
     header->edges = NULL;
     header->edge_count = 0;
@@ -94,6 +101,141 @@ static void encore_node_initialize_header(encore_node_header *header,
     header->incoming_owner_capacity = 0;
     header->placement = placement;
     atomic_init(&header->state, ENCORE_NODE_ALIVE);
+    header->payload = NULL;
+    header->payload_size = payload_size == 0 ? 1 : payload_size;
+    header->place_left = NULL;
+    header->place_right = NULL;
+    header->place_height = 1;
+}
+
+/* The AVL index costs no separate allocation, never scans all live nodes,
+ * and is changed only at node allocation/finalization. Field reads and
+ * projections do not register addresses or take a lock. Entries are weak;
+ * callers of owner_of_place must already hold a live mutable capability. */
+static unsigned encore_node_place_height(encore_node_header *node) {
+    return node == NULL ? 0 : node->place_height;
+}
+
+static void encore_node_place_update(encore_node_header *node) {
+    unsigned left = encore_node_place_height(node->place_left);
+    unsigned right = encore_node_place_height(node->place_right);
+    node->place_height = 1 + (left > right ? left : right);
+}
+
+static encore_node_header *encore_node_place_rotate_left(
+    encore_node_header *node) {
+    encore_node_header *next = node->place_right;
+    node->place_right = next->place_left;
+    next->place_left = node;
+    encore_node_place_update(node);
+    encore_node_place_update(next);
+    return next;
+}
+
+static encore_node_header *encore_node_place_rotate_right(
+    encore_node_header *node) {
+    encore_node_header *next = node->place_left;
+    node->place_left = next->place_right;
+    next->place_right = node;
+    encore_node_place_update(node);
+    encore_node_place_update(next);
+    return next;
+}
+
+static encore_node_header *encore_node_place_balance(
+    encore_node_header *node) {
+    encore_node_place_update(node);
+    unsigned left = encore_node_place_height(node->place_left);
+    unsigned right = encore_node_place_height(node->place_right);
+    if (left > right + 1) {
+        if (encore_node_place_height(node->place_left->place_right) >
+            encore_node_place_height(node->place_left->place_left)) {
+            node->place_left = encore_node_place_rotate_left(node->place_left);
+        }
+        return encore_node_place_rotate_right(node);
+    }
+    if (right > left + 1) {
+        if (encore_node_place_height(node->place_right->place_left) >
+            encore_node_place_height(node->place_right->place_right)) {
+            node->place_right = encore_node_place_rotate_right(node->place_right);
+        }
+        return encore_node_place_rotate_left(node);
+    }
+    return node;
+}
+
+static encore_node_header *encore_node_place_insert(encore_node_header *root,
+                                                   encore_node_header *node) {
+    if (root == NULL) return node;
+    uintptr_t key = (uintptr_t)node->payload;
+    uintptr_t current = (uintptr_t)root->payload;
+    if (key < current) {
+        if (node->payload_size > current - key) abort();
+        root->place_left = encore_node_place_insert(root->place_left, node);
+    } else {
+        if (key - current < root->payload_size) abort();
+        root->place_right = encore_node_place_insert(root->place_right, node);
+    }
+    return encore_node_place_balance(root);
+}
+
+static encore_node_header *encore_node_place_take_min(encore_node_header *root,
+                                                     encore_node_header **min) {
+    if (root->place_left == NULL) {
+        *min = root;
+        return root->place_right;
+    }
+    root->place_left = encore_node_place_take_min(root->place_left, min);
+    return encore_node_place_balance(root);
+}
+
+static encore_node_header *encore_node_place_remove(encore_node_header *root,
+                                                   encore_node_header *node) {
+    if (root == NULL) abort();
+    uintptr_t key = (uintptr_t)node->payload;
+    uintptr_t current = (uintptr_t)root->payload;
+    if (key < current) {
+        root->place_left = encore_node_place_remove(root->place_left, node);
+    } else if (key > current) {
+        root->place_right = encore_node_place_remove(root->place_right, node);
+    } else {
+        if (root != node) abort();
+        if (root->place_right == NULL) return root->place_left;
+        encore_node_header *next = NULL;
+        encore_node_header *right = encore_node_place_take_min(root->place_right, &next);
+        next->place_left = root->place_left;
+        next->place_right = right;
+        return encore_node_place_balance(next);
+    }
+    return encore_node_place_balance(root);
+}
+
+static void encore_node_place_register(encore_node_header *header,
+                                       void *payload) {
+    header->payload = payload;
+    encore_node_graph_lock();
+    g_encore_node_places = encore_node_place_insert(g_encore_node_places, header);
+    encore_node_graph_unlock();
+}
+
+void *encore_node_owner_of_place(void *place) {
+    uintptr_t key = (uintptr_t)place;
+    void *owner = NULL;
+    encore_node_graph_lock();
+    encore_node_header *node = g_encore_node_places;
+    while (node != NULL) {
+        uintptr_t start = (uintptr_t)node->payload;
+        if (key < start) {
+            node = node->place_left;
+        } else if (key - start >= node->payload_size) {
+            node = node->place_right;
+        } else {
+            if (node->state == ENCORE_NODE_ALIVE) owner = node->payload;
+            break;
+        }
+    }
+    encore_node_graph_unlock();
+    return owner;
 }
 
 static void encore_node_reserve_edges(encore_node_header *header,
@@ -371,6 +513,35 @@ static void encore_node_index_map_free(encore_node_index_map *map) {
  * algorithm, so cycles and rootless components keep their existing behavior.
  */
 static bool encore_node_has_external_ancestor(encore_node_header *root) {
+    /* Almost every field-read release reaches a live root through a short
+     * owner chain. Do that exact search without allocating a queue and two
+     * hash-table arrays for each temporary value. Wide/deep graphs still use
+     * the complete search below; exhausting scratch space is not a verdict. */
+    encore_node_header *local[32] = {root};
+    size_t local_len = 1;
+    for (size_t cursor = 0; cursor < local_len; ++cursor) {
+        encore_node_header *node = local[cursor];
+        if (node->state != ENCORE_NODE_ALIVE) continue;
+        for (size_t index = 0; index < node->incoming_owner_count; ++index) {
+            encore_node_header *owner = node->incoming_owners[index];
+            if (owner == NULL || owner->state != ENCORE_NODE_ALIVE) continue;
+            if (owner != root &&
+                atomic_load_explicit(&owner->refs, memory_order_relaxed) >
+                atomic_load_explicit(&owner->incoming_edges, memory_order_relaxed)) {
+                return true;
+            }
+            size_t seen_index = 0;
+            while (seen_index < local_len && local[seen_index] != owner) {
+                seen_index++;
+            }
+            if (seen_index != local_len) continue;
+            if (local_len == sizeof(local) / sizeof(local[0])) goto full_search;
+            local[local_len++] = owner;
+        }
+    }
+    return false;
+
+full_search:;
     encore_node_header_vec pending = {0};
     encore_node_index_map seen = {0};
     encore_node_header_vec_push(&pending, root);
@@ -494,6 +665,7 @@ void *encore_node_alloc_heap(size_t payload_size) {
     encore_node_initialize_header(header, allocation, payload_size,
                                   ENCORE_NODE_HEAP);
     ((encore_node_header **)payload)[-1] = header;
+    encore_node_place_register(header, payload);
     atomic_fetch_add_explicit(&g_encore_node_live_count, 1,
                               memory_order_relaxed);
     return payload;
@@ -506,6 +678,7 @@ void encore_node_register_stack(void *payload, size_t payload_size) {
     encore_node_initialize_header(header, NULL, payload_size,
                                   ENCORE_NODE_STACK);
     ((encore_node_header **)payload)[-1] = header;
+    encore_node_place_register(header, payload);
     atomic_fetch_add_explicit(&g_encore_node_live_count, 1,
                               memory_order_relaxed);
 }
@@ -658,6 +831,9 @@ void encore_node_free_released(void *payload) {
         ((encore_node_header **)payload)[-1] = NULL;
     }
     if (!can_free) abort();
+    encore_node_graph_lock();
+    g_encore_node_places = encore_node_place_remove(g_encore_node_places, header);
+    encore_node_graph_unlock();
     free(edges);
     free(incoming_owners);
     if (placement == ENCORE_NODE_HEAP) free(allocation_base);
