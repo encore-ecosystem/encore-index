@@ -1430,7 +1430,8 @@ fn append_lowered_drop_functions(builder: usize, directives: frozen Vec[Directiv
                 lower_heap_retain_function(concrete), seen, any, declaration_builder,)
         }
         if concrete.representation == RepresentationKind::Inline &&
-        (has_prefix(concrete.name, "__tuple_") || has_prefix(concrete.name, "__array_")) {
+        (has_prefix(concrete.name, "__tuple_") || has_prefix(concrete.name, "__array_") ||
+            (concrete.name == "JoinHandle" && concrete.generics.len() == 1)) {
             let fields = positional_aggregate_fields(concrete)
             any = append_lowered_drop_pair(builder, lower_struct_drop_function(Vec[Type]::new(), fields, concrete),
                 lower_struct_retain_function(Vec[Type]::new(), fields, concrete), seen, any,
@@ -1825,7 +1826,8 @@ fn append_lowered_edge_functions(builder: usize, directives: frozen Vec[Directiv
     }
     for concrete in concrete_types {
         if concrete.representation == RepresentationKind::Inline &&
-        (has_prefix(concrete.name, "__tuple_") || has_prefix(concrete.name, "__array_")) {
+        (has_prefix(concrete.name, "__tuple_") || has_prefix(concrete.name, "__array_") ||
+            (concrete.name == "JoinHandle" && concrete.generics.len() == 1)) {
             let fields = positional_aggregate_fields(concrete)
             any = append_lowered_edge_pair(builder,
                 lower_struct_edge_function(Vec[Type]::new(), fields, concrete, true),
