@@ -46,7 +46,23 @@ static wchar_t *encore_process_utf16(const char *text) {
     return wide;
 }
 
-static int32_t encore_windows_capture(char *const *argv, const char *cwd, FILE *capture) {
+static HANDLE encore_process_child_handle(HANDLE source, DWORD access) {
+    HANDLE child = INVALID_HANDLE_VALUE;
+    if (source != NULL && source != INVALID_HANDLE_VALUE) {
+        if (!DuplicateHandle(GetCurrentProcess(), source, GetCurrentProcess(),
+            &child, 0, TRUE, DUPLICATE_SAME_ACCESS)) return INVALID_HANDLE_VALUE;
+    } else {
+        SECURITY_ATTRIBUTES security = {sizeof(security), NULL, TRUE};
+        child = CreateFileW(L"NUL", access, FILE_SHARE_READ | FILE_SHARE_WRITE,
+            &security, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    }
+    return child;
+}
+
+/* Every argv-based launcher uses the same explicit handle list. Inheritable
+   duplicates exist briefly in the parent, so even uncaptured launches must
+   exclude other threads' handles instead of using the CRT spawn functions. */
+static int32_t encore_windows_run(char *const *argv, const char *cwd, HANDLE capture) {
     size_t capacity = 1;
     for (size_t index = 0; argv[index] != NULL; index += 1) {
         size_t length = strlen(argv[index]);
@@ -76,24 +92,16 @@ static int32_t encore_windows_capture(char *const *argv, const char *cwd, FILE *
     wchar_t *directory = cwd[0] == '\0' ? NULL : encore_process_utf16(cwd);
     free(quoted);
     int32_t result = -1;
-    HANDLE output = INVALID_HANDLE_VALUE, input = INVALID_HANDLE_VALUE;
+    HANDLE output = INVALID_HANDLE_VALUE, input = INVALID_HANDLE_VALUE, error = INVALID_HANDLE_VALUE;
     STARTUPINFOEXW startup;
     memset(&startup, 0, sizeof(startup));
     startup.StartupInfo.cb = sizeof(startup);
     if (command == NULL || (cwd[0] != '\0' && directory == NULL)) goto cleanup;
-    HANDLE source = (HANDLE)_get_osfhandle(_fileno(capture));
-    if (source == INVALID_HANDLE_VALUE || !DuplicateHandle(GetCurrentProcess(), source,
-        GetCurrentProcess(), &output, 0, TRUE, DUPLICATE_SAME_ACCESS)) goto cleanup;
-    HANDLE parent_input = GetStdHandle(STD_INPUT_HANDLE);
-    if (parent_input != NULL && parent_input != INVALID_HANDLE_VALUE) {
-        if (!DuplicateHandle(GetCurrentProcess(), parent_input, GetCurrentProcess(),
-            &input, 0, TRUE, DUPLICATE_SAME_ACCESS)) goto cleanup;
-    } else {
-        SECURITY_ATTRIBUTES security = {sizeof(security), NULL, TRUE};
-        input = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
-            &security, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    }
-    if (input == INVALID_HANDLE_VALUE) goto cleanup;
+    input = encore_process_child_handle(GetStdHandle(STD_INPUT_HANDLE), GENERIC_READ);
+    output = encore_process_child_handle(capture == INVALID_HANDLE_VALUE ? GetStdHandle(STD_OUTPUT_HANDLE) : capture, GENERIC_WRITE);
+    error = capture == INVALID_HANDLE_VALUE ?
+        encore_process_child_handle(GetStdHandle(STD_ERROR_HANDLE), GENERIC_WRITE) : output;
+    if (input == INVALID_HANDLE_VALUE || output == INVALID_HANDLE_VALUE || error == INVALID_HANDLE_VALUE) goto cleanup;
     SIZE_T attributes_size = 0;
     InitializeProcThreadAttributeList(NULL, 1, 0, &attributes_size);
     startup.lpAttributeList = malloc(attributes_size);
@@ -101,17 +109,18 @@ static int32_t encore_windows_capture(char *const *argv, const char *cwd, FILE *
     if (!InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, &attributes_size)) {
         free(startup.lpAttributeList); startup.lpAttributeList = NULL; goto cleanup;
     }
-    HANDLE inherited[] = {output, input};
+    HANDLE inherited[] = {output, input, error};
+    SIZE_T inherited_size = (error == output ? 2 : 3) * sizeof(HANDLE);
     if (!UpdateProcThreadAttribute(startup.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-        inherited, sizeof(inherited), NULL, NULL)) goto cleanup;
+        inherited, inherited_size, NULL, NULL)) goto cleanup;
     startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
     startup.StartupInfo.hStdInput = input;
     startup.StartupInfo.hStdOutput = output;
-    startup.StartupInfo.hStdError = output;
+    startup.StartupInfo.hStdError = error;
     PROCESS_INFORMATION process;
     memset(&process, 0, sizeof(process));
     if (CreateProcessW(NULL, command, NULL, NULL, TRUE,
-        CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT, NULL, directory,
+        (capture == INVALID_HANDLE_VALUE ? 0 : CREATE_NO_WINDOW) | EXTENDED_STARTUPINFO_PRESENT, NULL, directory,
         &startup.StartupInfo, &process)) {
         DWORD status = 0;
         if (WaitForSingleObject(process.hProcess, INFINITE) == WAIT_OBJECT_0 &&
@@ -125,7 +134,14 @@ cleanup:
         free(startup.lpAttributeList);
     }
     if (output != INVALID_HANDLE_VALUE) CloseHandle(output);
+    if (error != INVALID_HANDLE_VALUE && error != output) CloseHandle(error);
     if (input != INVALID_HANDLE_VALUE) CloseHandle(input);
     free(command); free(directory);
     return result;
+}
+
+static int32_t encore_windows_capture(char *const *argv, const char *cwd, FILE *capture) {
+    HANDLE output = (HANDLE)_get_osfhandle(_fileno(capture));
+    if (output == INVALID_HANDLE_VALUE) return -1;
+    return encore_windows_run(argv, cwd, output);
 }

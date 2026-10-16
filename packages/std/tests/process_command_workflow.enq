@@ -1,9 +1,10 @@
 import core::option::Option
-import core::testing:: *
+import core::testing::*
+import core::vec::Vec
 import std::io::{print, eprint}
-import std::os::{argv, cwd, executable_path}
+import std::os::{argv, cwd, executable_path, mkdir_all, read_file, remove_file}
 import std::path::Path
-import std::process::Command
+import std::process::{Command, run_args, run_args_capture}
 
 fn main() -> u32 {
     match argv(1_usize) {
@@ -16,6 +17,15 @@ fn main() -> u32 {
             if mode == "cwd-child" {
                 print(cwd())
                 ret 0_u32
+            }
+            if mode == "quiet-child" {
+                ret 7
+            }
+            if mode == "args-child" {
+                print(argv(2).unwrap_or("missing") + "|" + argv(3).unwrap_or("missing") + "|" +
+                    argv(4).unwrap_or("missing") + "|" + argv(5).unwrap_or("missing") + "|" + argv(6).unwrap_or("missing"))
+                eprint("|stderr")
+                ret 7
             }
             ret 99_u32
         }
@@ -46,6 +56,21 @@ fn main() -> u32 {
     }
     if !assert(!Command::new("encore-missing-executable").output().success()) {
         ret 1_u32
+    }
+    // Exercise the separate argv-based APIs too, not only Command::output.
+    // Preserve spaces, empty arguments, quotes, backslashes and exit status.
+    if !assert(run_args(executable, vec!["quiet-child"]) == 7) {
+        ret 1
+    }
+    if !assert(mkdir_all("target") == 0) {
+        ret 1
+    }
+    let capture_path = "target/process capture.log"
+    let status = run_args_capture(executable, vec!["args-child", "space arg", "", "quote\"arg", "tail\\", "last"], capture_path)
+    let captured_args = read_file(capture_path)
+    let removed = remove_file(capture_path)
+    if !assert(status == 7) || !assert(captured_args == "space arg||quote\"arg|tail\\|last|stderr") || !assert(removed == 0) {
+        ret 1
     }
     ret 0_u32
 }

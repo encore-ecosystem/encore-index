@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,7 +37,61 @@ static DWORD WINAPI check_capture(void *raw) {
     return 0;
 }
 
+typedef struct { char **argv; HANDLE capture; int32_t status; } held_invocation;
+static DWORD WINAPI held_child(void *raw) {
+    held_invocation *test = raw;
+    test->status = encore_windows_run(test->argv, "", test->capture);
+    return 0;
+}
+
+/* No timing assumption: the child signals that startup has completed and then
+   waits for release. A foreign inheritable log must be deletable while that
+   child is still alive, for both captured and ordinary argv-based launches. */
+static int check_handle_isolation(char *program, const wchar_t *directory, bool captured) {
+    char ready_name[100], release_name[100];
+    snprintf(ready_name, sizeof(ready_name), "Local\\encore-ready-%lu-%d", (unsigned long)GetCurrentProcessId(), captured);
+    snprintf(release_name, sizeof(release_name), "Local\\encore-release-%lu-%d", (unsigned long)GetCurrentProcessId(), captured);
+    HANDLE ready = CreateEventA(NULL, TRUE, FALSE, ready_name);
+    HANDLE release = CreateEventA(NULL, TRUE, FALSE, release_name);
+    wchar_t log[1400];
+    swprintf(log, 1400, L"%ls\\unrelated-%d.log", directory, captured);
+    SECURITY_ATTRIBUTES security = {sizeof(security), NULL, TRUE};
+    HANDLE unrelated = CreateFileW(log, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+        &security, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+    FILE *capture = encore_windows_capture_file();
+    if (ready == NULL || release == NULL || unrelated == INVALID_HANDLE_VALUE || capture == NULL) {
+        if (ready != NULL) CloseHandle(ready);
+        if (release != NULL) CloseHandle(release);
+        if (unrelated != INVALID_HANDLE_VALUE) CloseHandle(unrelated);
+        if (capture != NULL) fclose(capture);
+        DeleteFileW(log);
+        return 1;
+    }
+    char *args[] = {program, "hold", ready_name, release_name, NULL};
+    held_invocation test = {args, captured ? (HANDLE)_get_osfhandle(_fileno(capture)) : INVALID_HANDLE_VALUE, -1};
+    HANDLE thread = CreateThread(NULL, 0, held_child, &test, 0, NULL);
+    bool started = thread != NULL && WaitForSingleObject(ready, 15000) == WAIT_OBJECT_0;
+    CloseHandle(unrelated);
+    bool deleted = DeleteFileW(log) != 0;
+    if (!started || !deleted) fprintf(stderr, "foreign handle inherited: captured=%d, started=%d, delete=%d, error=%lu\n",
+        captured, started, deleted, (unsigned long)GetLastError());
+    SetEvent(release);
+    if (thread != NULL) { WaitForSingleObject(thread, INFINITE); CloseHandle(thread); }
+    CloseHandle(ready); CloseHandle(release); fclose(capture);
+    if (!deleted) DeleteFileW(log);
+    return !started || !deleted || test.status != 0;
+}
+
 int main(int argc, char **argv) {
+    if (argc == 4 && !strcmp(argv[1], "hold")) {
+        HANDLE ready = OpenEventA(EVENT_MODIFY_STATE, FALSE, argv[2]);
+        HANDLE release = OpenEventA(SYNCHRONIZE, FALSE, argv[3]);
+        if (ready == NULL || release == NULL) return 98;
+        SetEvent(ready);
+        DWORD status = WaitForSingleObject(release, 30000);
+        CloseHandle(ready); CloseHandle(release);
+        return status == WAIT_OBJECT_0 ? 0 : 97;
+    }
     if (argc > 1 && !strcmp(argv[1], "child")) {
         /* A UTF-8-aware child consumes the Unicode Windows command line,
            rather than the legacy ANSI argv supplied by the CRT. */
@@ -95,6 +150,8 @@ int main(int argc, char **argv) {
     WaitForMultipleObjects(4, threads, TRUE, INFINITE);
     int failed = 0;
     for (size_t i = 0; i < 4; i += 1) { CloseHandle(threads[i]); failed |= tests[i].failed; }
+    failed |= check_handle_isolation(program, directory, false);
+    failed |= check_handle_isolation(program, directory, true);
     wchar_t after[1024]; GetCurrentDirectoryW(1024, after);
     failed |= wcscmp(original, after) != 0;
     FILE *capture = encore_windows_capture_file();
@@ -104,6 +161,6 @@ int main(int argc, char **argv) {
     failed |= encore_windows_capture(missing, "", capture) != -1;
     fclose(capture);
     RemoveDirectoryW(directory); free(program); free(cwd);
-    if (!failed) puts("Windows process capture passed: Unicode temporary files, binary IO, delete-on-close, argv, Unicode cwd, stderr, exit status, parallel isolation, startup failures");
+    if (!failed) puts("Windows process capture passed: Unicode temporary files, binary IO, delete-on-close, argv, Unicode cwd, stderr, exit status, parallel handle isolation, startup failures");
     return failed;
 }
