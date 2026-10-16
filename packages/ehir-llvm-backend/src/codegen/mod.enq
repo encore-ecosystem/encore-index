@@ -1547,18 +1547,7 @@ fn lower_enum_equality(params: frozen Vec[Type], variants: frozen Vec[EnumVarian
                 llvm_term_cbr(active, payload_block, next),))
         let mut instructions = Vec[LLVMInstruction]::new()
         let result = match variant.payload_type {
-            Some(template) => {
-                let typ = substitute_generic_type(template, params, concrete.generics)
-                if typ.name == "void" || typ.name == "()" {
-                    const_text("1", i1_type())
-                } else {
-                    let lhs = equality_payload(left, typ, "left_payload_" + suffix, instructions)
-                    let rhs = equality_payload(right, typ, "right_payload_" + suffix, instructions)
-                    let equal = reg("payload_equal_" + suffix, i1_type())
-                    instructions.extend(lower_equality_value(lhs, rhs, typ, equal))
-                    equal
-                }
-            }
+            Some(template) => lower_enum_payload_equality(left, right, template, params, concrete, suffix, instructions)
             None => const_text("1", i1_type())
         }
         blocks.push(llvm_block(payload_block, instructions, llvm_term_ret(Option[LLVMValue]::Some(result), i1_type())))
@@ -1566,6 +1555,22 @@ fn lower_enum_equality(params: frozen Vec[Type], variants: frozen Vec[EnumVarian
     }
     blocks.push(llvm_block("unequal", Vec[LLVMInstruction]::new(), llvm_term_ret(Option[LLVMValue]::Some(const_text("0", i1_type())), i1_type())))
     ret llvm_define_fn(equality_symbol(concrete), i1_type(), equality_params(concrete), blocks)
+}
+
+// Keep the backend itself buildable by the published bootstrap compiler,
+// before expression statements in value-producing blocks were supported.
+fn lower_enum_payload_equality(left: LLVMValue, right: LLVMValue, template: frozen Type,
+    params: frozen Vec[Type], concrete: frozen Type, suffix: str,
+    instructions: mut Vec[LLVMInstruction],) -> LLVMValue {
+    let typ = substitute_generic_type(template, params, concrete.generics)
+    if typ.name == "void" || typ.name == "()" {
+        ret const_text("1", i1_type())
+    }
+    let lhs = equality_payload(left, typ, "left_payload_" + suffix, instructions)
+    let rhs = equality_payload(right, typ, "right_payload_" + suffix, instructions)
+    let equal = reg("payload_equal_" + suffix, i1_type())
+    instructions.extend(lower_equality_value(lhs, rhs, typ, equal))
+    ret equal
 }
 
 fn lower_dyn_equality(concrete: frozen Type) -> LLVMFunction {
