@@ -1,0 +1,27 @@
+//! Graph-edge updates follow raw mutable projections, not slot spelling.
+
+import ehirlib::parse_module_text
+import refrain::codegen::emit_ir
+
+fn main() -> u32 {
+    let source = "struct Node {\n  value: u32\n}\n" +
+        "struct Rows {\n  child: Node<H>\n}\n" +
+        "fn replace_field(rows: mut Rows, child: Node<H>) -> () {\n  $entry:\n" +
+        "    setfield rows: mut Rows > 0: usize, child: Node<H>\n    ret void: ()\n}\n" +
+        "fn replace_slot(rows: mut Rows, value: Rows) -> () {\n  $entry:\n" +
+        "    store value, rows\n    ret void: ()\n}\n" +
+        "extern fn observe(slot: Rows*) -> ()\n" +
+        "fn initialize_local(value: Rows) -> () {\n  $entry:\n" +
+        "    local: Rows* = salloc Rows\n    store value, local\n" +
+        "    ignored: () = call observe(local)\n    ret void: ()\n}\n"
+    let ir = emit_ir(parse_module_text("projected_place_edges", source))
+    if !ir.contains("call i8* @encore_node_owner_of_place(i8* %raw_place)") { ret 1 }
+    if !ir.contains("call void @__replace_place_edges_Node_H(") { ret 2 }
+    if !ir.contains("call void @__replace_place_edges_Rows(%Rows* %rows, %Rows %value)") { ret 3 }
+    if ir.contains("call void @__replace_place_edges_Rows(%Rows* %local,") { ret 4 }
+    if !ir.contains("br i1 %owned, label %replace, label %done") { ret 5 }
+    if !ir.contains("call void @encore_node_replace_edge(") { ret 6 }
+    if !ir.contains("call void @__remove_edges_Rows(") { ret 7 }
+    if !ir.contains("call void @__add_edges_Rows(") { ret 8 }
+    ret 0
+}
