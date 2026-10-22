@@ -1,0 +1,227 @@
+//! Registry SQL runs on the storage worker through the public SQLite API.
+import core::ops::ContextManager
+import core::option::Option
+import core::result::Result
+import core::vec::Vec
+import refrain::storage_schema::initialize
+import sqlite::{Connection, Row, SqliteError, Transaction, Value}
+
+/// A connection or a transaction-scoped view of the same connection.
+pub struct Store {
+    connection: Connection
+    transaction: Option[Transaction]
+}
+
+pub fn storage_error(message: str) -> SqliteError {
+    ret SqliteError {
+        21_i32, 21_i32, message
+    }
+}
+pub fn p1(a: Value) -> Vec[Value] {
+    let mut p = Vec[Value]::new() p.push(a) ret p
+}
+pub fn p2(a: Value, b: Value) -> Vec[Value] {
+    let mut p = p1(a) p.push(b) ret p
+}
+pub fn p3(a: Value, b: Value, c: Value) -> Vec[Value] {
+    let mut p = p2(a, b) p.push(c) ret p
+}
+
+impl for Store {
+    /// Opens and migrates a database; filesystem ownership is checked by the server first.
+    pub fn open(path: str) -> Result[Store, SqliteError] {
+        let db = Connection::open(path)?
+        match initialize(db) {
+            Result::Ok(_) => {
+                ret Result::Ok(Store {
+                        db, Option[Transaction]::None
+                    }
+                    ,
+                )
+            }
+            Result::Err(error) => {
+                let _closed = db.close() ret Result::Err(error)
+            }
+        }
+    }
+    pub fn close(self: Self) -> Result[bool, SqliteError] {
+        ret self.connection.close()
+    }
+    pub fn begin(self: Self) -> Result[Store, SqliteError] {
+        match self.transaction {
+            Option::Some(_) => {
+                ret Result::Err(storage_error("nested registry transaction"))
+            }
+            Option::None => {
+                ret Result::Ok(Store {
+                        self.connection, Option::Some(self.connection.transaction(true)?)
+                    }
+                    ,
+                )
+            }
+        }
+    }
+    pub fn commit(self: Self) -> Result[bool, SqliteError] {
+        match self.transaction {
+            Option::Some(tx) => {
+                ret tx.commit()
+            }
+            Option::None => {
+                ret Result::Err(storage_error("no active registry transaction"))
+            }
+        }
+    }
+    pub fn execute(self: Self, sql: str, values: Vec[Value]) -> Result[i64, SqliteError] {
+        match self.transaction {
+            Option::Some(tx) => {
+                ret tx.execute(sql, values)
+            }
+            Option::None => {
+                ret self.connection.execute(sql, values)
+            }
+        }
+    }
+    pub fn query(self: Self, sql: str, values: Vec[Value]) -> Result[Vec[Row], SqliteError] {
+        match self.transaction {
+            Option::Some(tx) => {
+                ret tx.query(sql, values)
+            }
+            Option::None => {
+                ret self.connection.query(sql, values)
+            }
+        }
+    }
+    pub fn rowid(self: Self) -> Result[i64, SqliteError] {
+        match self.transaction {
+            Option::Some(tx) => {
+                ret tx.last_insert_rowid()
+            }
+            Option::None => {
+                ret self.connection.last_insert_rowid()
+            }
+        }
+    }
+    pub fn scalar(self: Self, sql: str, values: Vec[Value]) -> Result[i64, SqliteError] {
+        let rows = self.query(sql, values)?
+        match rows.get(0_usize) {
+            Option::Some(row) => {
+                ret row.integer(0_usize)
+            }
+            Option::None => {
+                ret Result::Ok(0_i64)
+            }
+        }
+    }
+    pub fn text(self: Self, sql: str, values: Vec[Value]) -> Result[str, SqliteError] {
+        let rows = self.query(sql, values)?
+        match rows.get(0_usize) {
+            Option::Some(row) => {
+                ret row.text(0_usize)
+            }
+            Option::None => {
+                ret Result::Ok("")
+            }
+        }
+    }
+}
+
+impl ContextManager for Store {
+    pub fn with_enter(self: Self) -> Self {
+        ret self
+    }
+    pub fn with_exit(self: Self) -> bool {
+        match self.transaction {
+            Option::Some(tx) => {
+                ret tx.with_exit()
+            }
+            Option::None => {
+                ret self.connection.with_exit()
+            }
+        }
+    }
+}
+
+pub fn valid_name(name: str) -> bool {
+    if name == "" || name.len() > 64_usize {
+        ret false
+    }
+    let mut i = 0_usize
+    while i < name.len() {
+        let b = name.byte_at(i)
+        if !((b >= 97_u8 && b <= 122_u8) ||(b >= 48_u8 && b <= 57_u8) || b == 45_u8 || b == 95_u8) {
+            ret false
+        }
+        i += 1_usize
+    }
+    ret true
+}
+pub fn user_add(db: Store, name: str) -> Result[bool, SqliteError] {
+    if !valid_name(name) {
+        ret Result::Err(storage_error("invalid user name"))
+    }
+    ret Result::Ok(db.execute("INSERT INTO users(name) VALUES(?1)", p1(Value::Text(name)))? == 1_i64)
+}
+pub fn reserve(db: Store, name: str, owner: str) -> Result[bool, SqliteError] {
+    if !valid_name(name) {
+        ret Result::Err(storage_error("invalid package name"))
+    }
+    with db.begin()? as tx {
+        let _package = tx.execute("INSERT INTO packages(name) VALUES(?1)", p1(Value::Text(name)))?
+        if tx.execute("INSERT INTO owners(package,owner) SELECT ?1,id FROM users WHERE name=?2 AND active=1",
+            p2(Value::Text(name), Value::Text(owner)),)? != 1_i64 {
+            ret Result::Err(storage_error("unknown package owner"))
+        }
+        ret tx.commit()
+    }
+}
+pub fn link_github(db: Store, owner: str, subject: str) -> Result[bool, SqliteError] {
+    if numeric_id(subject) == 0_i64 {
+        ret Result::Err(storage_error("invalid GitHub identity"))
+    }
+    ret Result::Ok(db.execute("INSERT INTO identities(provider,subject,owner) SELECT 'github',?2,id FROM users WHERE name=?1 AND active=1",
+            p2(Value::Text(owner), Value::Text(subject)),)? == 1_i64)
+}
+pub fn numeric_id(value: str) -> i64 {
+    if value == "" || value.len() > 18_usize {
+        ret 0_i64
+    }
+    let mut id = 0_i64
+    let mut i = 0_usize
+    while i < value.len() {
+        let b = value.byte_at(i)
+        if b < 48_u8 || b > 57_u8 {
+            ret 0_i64
+        }
+        id = id * 10_i64 +(b - 48_u8) as i64
+        i += 1_usize
+    }
+    ret id
+}
+
+/// Records an event inside the caller's transaction.
+pub fn audit(db: Store, owner: i64, credential: i64, action: str) -> Result[bool, SqliteError] {
+    ret Result::Ok(db.execute("INSERT INTO auth_audit(owner,credential,action) VALUES(?1,?2,?3)",
+            p3(Value::Integer(owner), Value::Integer(credential), Value::Text(action)),)? == 1_i64)
+}
+pub fn revoke(db: Store, owner: i64, credential: i64) -> Result[bool, SqliteError] {
+    with db.begin()? as tx {
+        if tx.execute("UPDATE credentials SET revoked=1 WHERE id=?1 AND owner=?2",
+            p2(Value::Integer(credential), Value::Integer(owner)),)? != 1_i64 {
+            ret Result::Ok(false)
+        }
+        let _audit = audit(tx, owner, credential, "revoke")?
+        ret tx.commit()
+    }
+}
+pub fn revoke_legacy(db: Store, id: str) -> Result[bool, SqliteError] {
+    if numeric_id(id) == 0_i64 {
+        ret Result::Ok(false)
+    }
+    ret Result::Ok(db.execute("UPDATE tokens SET revoked=1 WHERE id=?1 AND revoked=0",
+            p1(Value::Integer(numeric_id(id))),)? == 1_i64)
+}
+/// Tests ownership independently of any credential's publication permission.
+pub fn owns(db: Store, owner: i64, name: str) -> Result[bool, SqliteError] {
+    ret Result::Ok(db.scalar("SELECT 1 FROM owners WHERE owner=?1 AND package=?2",
+            p2(Value::Integer(owner), Value::Text(name)),)? == 1_i64)
+}

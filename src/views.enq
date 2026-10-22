@@ -1,0 +1,155 @@
+//! Server-rendered registry pages. No scripts or external assets.
+import blaze::Response
+import core::fmt::Debug
+import core::result::Result
+import core::vec::Vec
+import json::{Json, parse, stringify}
+import refrain::validation::string_field
+
+pub fn escape(value: str) -> str {
+    let mut out = ""
+    let mut i = 0_usize
+    while i < value.len() {
+        let ch = value.slice(i, 1_usize)
+        out += if ch == "&" {
+            "&amp;"
+        } elif ch == "<" {
+            "&lt;"
+        } elif ch == ">" {
+            "&gt;"
+        } elif ch == "\"" {
+            "&quot;"
+        } elif ch == "'" {
+            "&#39;"
+        } else {
+            ch
+        }
+        i += 1_usize
+    }
+    ret out
+}
+fn search_form(query: str) -> str {
+    ret "<form class=\"search\" action=\"/\" method=\"get\" role=\"search\"><label class=\"sr-only\" for=\"search\">Find a package</label><div class=\"search-row\"><input id=\"search\" name=\"q\" type=\"search\" placeholder=\"Search packages…\" value=\"" + escape(query) + "\"><button type=\"submit\">Search</button></div></form>"
+}
+pub fn page(title: str, contents: str, query: str) -> Response {
+    ret page_status(title, contents, query, 200_u16)
+}
+pub fn page_status(title: str, contents: str, query: str, status: u16) -> Response {
+    let contents = "<script defer src=\"/assets/copy.js\"></script><p id=\"copy-status\" class=\"sr-only\" role=\"status\" aria-live=\"polite\"></p>" + contents
+    ret Response::status(status).with_body("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"color-scheme\" content=\"light dark\"><title>" + escape(title)
+        + " — Encore Index</title><link rel=\"stylesheet\" href=\"/assets/index.css\"></head><body><a class=\"skip\" href=\"#main\">Skip to content</a><header class=\"site-header\"><div class=\"shell header-inner\"><a class=\"brand\" href=\"/\">Encore <span class=\"brand-sub\">Index</span></a>" + search_form(query) + "<nav aria-label=\"Main navigation\"><a href=\"/account\">Account <span aria-hidden=\"true\">↗</span></a></nav></div></header><main id=\"main\" class=\"shell\">"
+        + contents + "</main><footer class=\"site-footer\"><div class=\"shell footer\"><div class=\"footer-about\"><a class=\"footer-title\" href=\"/\">Encore Index</a></div><nav aria-label=\"Footer navigation\"><a href=\"/\">Browse packages</a><a href=\"/account\">Account</a><a href=\"/api/v1/packages\">Index API ↗</a></nav><div class=\"footer-bottom\"><span>Refrain index</span><a href=\"#main\">Back to top ↑</a></div></div></footer></body></html>")
+    .with_header("Content-Type", "text/html; charset=utf-8")
+    .with_header("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+    .with_header("X-Content-Type-Options", "nosniff")
+}
+pub fn catalogue(data: str, query: str) -> Response {
+    let document = match parse(data) {
+        Result::Ok(value) => value Result::Err(_) => Json::Null
+    }
+    if document.is_null() {
+        ret Response::status(503_u16).with_body("Storage unavailable")
+    }
+    let packages = document.as_array().unwrap_or(Vec[Json]::new())
+    let mut html = "<section class=\"catalogue\" aria-label=\"Package catalogue\">"
+    html += "<section aria-labelledby=\"packages-title\"><div class=\"section-heading\"><h1 id=\"packages-title\">" + if query == "" {
+        "Packages"
+    } else {
+        "Search results"
+    }
+    + "</h1><span class=\"muted\">" + Debug::fmt(packages.len()) + " on this page</span></div>"
+    if query != "" {
+        html += "<p class=\"search-context\">Results for <strong>" + escape(query) + "</strong> · <a href=\"/\">Clear search</a></p>"
+    }
+    if packages.len() == 0_usize {
+        html += "<div class=\"empty\"><h3>" + if query == "" {
+            "No packages yet."
+        } else {
+            "No packages found."
+        }
+        + "</h3><p>" + if query == "" {
+            "Published packages will appear here."
+        } else {
+            "Try a different name or browse all packages."
+        }
+        + "</p>"
+        if query != "" {
+            html += "<a href=\"/\">Browse all packages →</a>"
+        }
+        html += "</div>"
+    }
+    html += "<ul class=\"package-list\">"
+    for package in packages {
+        let name = escape(string_field(package, "name"))
+        let count = stringify(package.get("versions").unwrap_or(Json::Number("0")))
+        let label = if count == "1" {
+            " version"
+        } else {
+            " versions"
+        }
+        let latest = package.get("latest").unwrap_or(Json::Null)
+        html += "<li class=\"package-row\"><div><h3><a href=\"/packages/" + name + "\">" + name + "</a></h3><p>" + escape(string_field(package, "description")) + "</p><div class=\"row-actions\"><a href=\"/packages/" + name + "#install\">Install →</a><a href=\"/packages/" + name + "#versions-title\">" + escape(count) + label + "</a></div></div><div class=\"package-meta\">"
+        if latest.is_null() {
+            html += "<span class=\"badge\">All versions yanked</span>"
+        } else {
+            html += "<span title=\"Latest available version; stable releases preferred\">v" + escape(string_field(latest, "version")) + "</span><span>Encore " + escape(string_field(latest, "encore")) + "</span>"
+        }
+        html += copy_button(string_field(package, "name")) + "</div></li>"
+    }
+    html += "</ul>"
+    if packages.len() == 100_usize {
+        let last = packages.get(99_usize).unwrap_or(Json::Null)
+        html += "<nav class=\"pagination\" aria-label=\"Pagination\"><a class=\"button-secondary\" href=\"/?q=" + url_encode(query) + "&amp;after=" + escape(string_field(last, "name")) + "\">Next page →</a></nav>"
+    }
+    ret page("Packages", html + "</section></section>", query)
+}
+pub fn package_page(name: str, data: str) -> Response {
+    let document = match parse(data) {
+        Result::Ok(value) => value Result::Err(_) => Json::Null
+    }
+    let versions = document.get("versions").unwrap_or(Json::Null).as_array().unwrap_or(Vec[Json]::new())
+    let latest = string_field(document, "latest")
+    let mut heading = escape(name)
+    if latest != "" {
+        heading += " <span class=\"muted\">v" + escape(latest) + "</span>"
+    }
+    let mut html = "<a class=\"back\" href=\"/\">← All packages</a><section class=\"package-hero\"><h1>" + heading + "</h1></section><section id=\"install\" class=\"install\" aria-label=\"Installation command\"><span class=\"eyebrow\">ADD TO YOUR PROJECT</span><div class=\"install-command\"><code><span class=\"prompt\" aria-hidden=\"true\">$ </span>encore add " + escape(name) + "</code>" + copy_button(name) + "</div></section><section aria-labelledby=\"versions-title\"><div class=\"section-heading\"><h2 id=\"versions-title\">Version history</h2><span class=\"muted\">" + Debug::fmt(versions.len()) + " published</span></div><ul class=\"version-list\">"
+    html += "<li class=\"metadata-link\"><a href=\"/index/" + escape(name.slice(0_usize, 2_usize)) + "/" + escape(name) + ".json\">Package metadata (JSON) ↗</a></li>"
+    for version in versions {
+        html += "<li class=\"version-row\"><div class=\"version-heading\"><h3>" + escape(string_field(version, "version")) + "</h3>"
+        let yanked = version.get("yanked").unwrap_or(Json::Bool(false)).as_bool().unwrap_or(false)
+        if yanked {
+            html += "<span class=\"badge\">Yanked</span>"
+        } else {
+            if string_field(version, "version") == latest {
+                html += "<span class=\"badge\">Latest</span>"
+            } else {
+                html += "<span class=\"muted\">Other release</span>"
+            }
+        }
+        html += "<span class=\"requirement\">Encore <code>" + escape(string_field(version, "encore")) + "</code></span></div><p>" + escape(string_field(version, "description")) + "</p><details><summary>SHA-256 checksum</summary><code class=\"checksum\">" + escape(string_field(version, "checksum")) + "</code></details></li>"
+    }
+    ret page(name, html + "</ul></section>", "")
+}
+fn copy_button(name: str) -> str {
+    let name = escape(name)
+    ret "<button hidden type=\"button\" class=\"copy-button\" data-copy-package=\"" + name + "\" aria-label=\"Copy encore add " + name + "\" title=\"Copy encore add " + name + "\"><svg aria-hidden=\"true\" width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><g class=\"copy-icon\"><rect x=\"8\" y=\"8\" width=\"12\" height=\"12\" rx=\"2\"/><path d=\"M16 8V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h4\"/></g><path class=\"copied-icon\" d=\"m5 12 4 4 10-10\"/></svg></button>"
+}
+fn url_encode(value: str) -> str {
+    let mut out = ""
+    let mut i = 0_usize
+    while i < value.len() {
+        let byte = value.byte_at(i) as usize
+        if (byte >= 97_usize && byte <= 122_usize) ||(byte >= 65_usize && byte <= 90_usize) ||(byte >= 48_usize && byte <= 57_usize) || byte == 45_usize || byte == 95_usize {
+            out += value.slice(i, 1_usize)
+        } else {
+            out += "%" + "0123456789ABCDEF".slice(byte / 16_usize, 1_usize) + "0123456789ABCDEF".slice(byte % 16_usize, 1_usize)
+        }
+        i += 1_usize
+    }
+    ret out
+}
+#attr(test)
+fn escapes_user_text() -> bool {
+    ret escape("<script>\"&'") == "&lt;script&gt;&quot;&amp;&#39;" && url_encode("a&b") == "a%26b"
+}

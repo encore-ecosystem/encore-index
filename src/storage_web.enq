@@ -1,0 +1,287 @@
+//! Browser/device authorization policy, owned by the single storage worker.
+import core::result::Result
+import core::vec::Vec
+import json::{Json, field, number, object, parse, string, stringify}
+import refrain::oauth::form_encode
+import refrain::storage::{Store, numeric_id, p1, revoke, storage_error}
+import refrain::storage_auth::{authenticate, ci_create, credential_owner, device_decide, device_poll, device_start, digest, now, secret}
+import refrain::storage_sessions::{account, oauth_consume, oauth_finish, oauth_start, whoami}
+import refrain::validation::string_field
+import sqlite::{SqliteError, Value}
+
+extern fn registry_crypto_equal(left: str, right: str) -> bool
+extern fn registry_crypto_pkce(verifier: str) -> str
+
+pub struct WebRequest {
+    op: i32
+    a: str
+    b: str
+    token: str
+    body: str
+}
+pub struct WebConfig {
+    url: str
+    client: str
+    enabled: bool
+    authorize_url: str
+}
+/// Status zero hands the network exchange to an OAuth worker, without a DB transaction.
+pub struct WebReply {
+    status: i32
+    body: str
+    destination: str
+}
+pub struct RateLimits {
+    windows: Vec[i64]
+    counts: Vec[i64]
+}
+
+impl for RateLimits {
+    pub fn new() -> Self {
+        let mut windows = Vec[i64]::new()
+        let mut counts = Vec[i64]::new()
+        let mut index = 0_usize
+        while index < 4_usize {
+            windows.push(0_i64)
+            counts.push(0_i64)
+            index += 1_usize
+        }
+        ret Self {
+            windows, counts
+        }
+    }
+    pub fn allow(self: mut Self, slot: usize, limit: i64) -> bool {
+        let clock = now()
+        let window = self.windows.get(slot).unwrap_or(0_i64)
+        if clock < window || clock - window >= 60_i64 {
+            self.windows.set(slot, clock)
+            self.counts.set(slot, 0_i64)
+        }
+        let count = self.counts.get(slot).unwrap_or(limit)
+        if count >= limit {
+            ret false
+        }
+        self.counts.set(slot, count + 1_i64)
+        ret true
+    }
+}
+fn reply(status: i32, body: str) -> WebReply {
+    ret WebReply {
+        status, body, ""
+    }
+}
+fn failure(status: i32, message: str) -> WebReply {
+    ret reply(status, stringify(object(vec![field("error", string(message))])))
+}
+fn redirect(destination: str, cookie: str) -> WebReply {
+    ret reply(200_i32, stringify(object(vec![field("redirect", string(destination)), field("cookie", string(cookie))])))
+}
+pub fn session_cookie(config: WebConfig, token: str, oauth: bool, clear: bool) -> str {
+    let secure = config.url.len() >= 8_usize && config.url.slice(0_usize, 8_usize) == "https://"
+    ret(if secure {
+            "__Host-"
+        } else {
+            ""
+        }
+    ) + "encore_" +(if oauth {
+            "oauth"
+        } else {
+            "session"
+        }
+    ) + "=" + token +
+    "; Path=/; HttpOnly; SameSite=Lax; Max-Age=" +(if clear {
+            "0"
+        } elif oauth {
+            "600"
+        } else {
+            "2592000"
+        }
+    ) +(if secure {
+            "; Secure"
+        } else {
+            ""
+        }
+    )
+}
+#attr(safe)
+fn csrf_matches(token: str, provided: str) -> Result[bool, SqliteError] {
+    if token.len() != 68_usize || provided.len() != 64_usize {
+        ret Result::Ok(false)
+    }
+    let expected = digest("csrf:" + token)?
+    ret Result::Ok(unsafe {
+            registry_crypto_equal(expected, provided)
+        }
+    )
+}
+#attr(safe)
+fn challenge(verifier: str) -> Result[str, SqliteError] {
+    let output = unsafe {
+        registry_crypto_pkce(verifier)
+    }
+    if output.len() != 43_usize {
+        ret Result::Err(storage_error("PKCE unavailable"))
+    }
+    ret Result::Ok(output)
+}
+fn revoke_token(db: Store, owner: i64, token: str) -> Result[bool, SqliteError] {
+    let id = db.scalar("SELECT id FROM credentials WHERE digest=?1", p1(Value::Text(digest(token)?)))?
+    ret revoke(db, owner, id)
+}
+fn package_names(source: str) -> Vec[str] {
+    let mut names = Vec[str]::new()
+    let mut start = 0_usize
+    let mut index = 0_usize
+    while index <= source.len() {
+        if index == source.len() || source.byte_at(index) == 44_u8 {
+            if index > start {
+                names.push(source.slice(start, index - start))
+            }
+            start = index + 1_usize
+        }
+        index += 1_usize
+    }
+    ret names
+}
+fn action(db: Store, request: WebRequest, config: WebConfig, limits: mut RateLimits, owner: i64) -> Result[WebReply, SqliteError] {
+    let form = parse(request.body).unwrap_or(Json::Null)
+    if request.b != config.url || !csrf_matches(request.token, string_field(form, "csrf"))? || !limits.allow(3_usize, 120_i64) {
+        ret Result::Ok(failure(403_i32, "invalid form origin or CSRF token"))
+    }
+    let operation = string_field(form, "action")
+    if operation == "logout" {
+        if !revoke_token(db, owner, request.token)? {
+            ret Result::Ok(failure(503_i32, "logout failed"))
+        }
+        ret Result::Ok(redirect("/", session_cookie(config, "", false, true)))
+    }
+    if operation == "revoke" {
+        if !revoke(db, owner, numeric_id(string_field(form, "id")))? {
+            ret Result::Ok(failure(403_i32, "credential not owned"))
+        }
+        ret Result::Ok(redirect("/account", ""))
+    }
+    if operation == "approve" || operation == "deny" {
+        if !device_decide(db, string_field(form, "code"), owner, operation == "approve")? {
+            ret Result::Ok(failure(400_i32, "unknown, expired or already handled device code"))
+        }
+        ret Result::Ok(reply(200_i32, "{\"message\":\"Device request updated. Return to your terminal.\"}"))
+    }
+    if operation == "ci" {
+        let names = package_names(string_field(form, "packages"))
+        if names.len() > 100_usize {
+            ret Result::Ok(failure(400_i32, "invalid token settings or package ownership"))
+        }
+        match ci_create(db, owner, string_field(form, "label"), numeric_id(string_field(form, "days")),
+            string_field(form, "publish") == "on", string_field(form, "yank") == "on", names,) {
+            Result::Ok(token) => {
+                ret Result::Ok(reply(200_i32, stringify(object(vec![field("issued_token", string(token))]))))
+            }
+            Result::Err(_) => {
+                ret Result::Ok(failure(400_i32, "invalid token settings or package ownership"))
+            }
+        }
+    }
+    ret Result::Ok(failure(400_i32, "unknown action"))
+}
+
+pub fn process(db: Store, request: WebRequest, config: WebConfig, limits: mut RateLimits) -> Result[WebReply, SqliteError] {
+    if request.op == 20_i32 {
+        if !config.enabled {
+            ret Result::Ok(failure(503_i32, "GitHub login is not configured"))
+        }
+        if !limits.allow(0_usize, 30_i64) {
+            ret Result::Ok(failure(429_i32, "login rate limit"))
+        }
+        let state = secret("eos_")?
+        let binding = secret("eob_")?
+        let verifier = secret("epk_")?.slice(4_usize, 64_usize)
+        let encoded = challenge(verifier)?
+        let destination = if request.a == "device" {
+            "/auth/device"
+        } else {
+            "/account"
+        }
+        if !oauth_start(db, digest(state)?, digest(binding)?, verifier, destination)? {
+            ret Result::Ok(failure(503_i32, "too many pending logins"))
+        }
+        let location = config.authorize_url + "?client_id=" + form_encode(config.client) + "&redirect_uri=" +
+        form_encode(config.url + "/auth/github/callback") + "&state=" + state + "&code_challenge=" + encoded +
+        "&code_challenge_method=S256&scope=&prompt=select_account"
+        ret Result::Ok(redirect(location, session_cookie(config, binding, true, false)))
+    }
+    if request.op == 21_i32 {
+        if !config.enabled || request.a.len() != 68_usize || request.token.len() != 68_usize || request.b == "" || request.b.len() > 256_usize || !limits.allow(0_usize, 30_i64) {
+            ret Result::Ok(failure(400_i32, "invalid OAuth callback"))
+        }
+        let state = oauth_consume(db, digest(request.a)?, digest(request.token)?)?
+        if state.0 == "" {
+            ret Result::Ok(failure(400_i32, "expired or mismatched OAuth state"))
+        }
+        ret Result::Ok(WebReply {
+                0_i32, stringify(object(vec![field("code", string(request.b)), field("verifier", string(state.0))])), state.1
+            }
+            ,
+        )
+    }
+    if request.op == 31_i32 {
+        if numeric_id(request.b) == 0_i64 ||(request.a != "/account" && request.a != "/auth/device") {
+            ret Result::Ok(failure(502_i32, "GitHub authentication failed; retry sign-in"))
+        }
+        match oauth_finish(db, request.b) {
+            Result::Ok(token) => {
+                ret Result::Ok(redirect(request.a, session_cookie(config, token, false, false)))
+            }
+            Result::Err(_) => {
+                ret Result::Ok(failure(403_i32, "account unavailable; contact administrator"))
+            }
+        }
+    }
+    if request.op == 24_i32 {
+        if !config.enabled {
+            ret Result::Ok(failure(503_i32, "GitHub login is not configured"))
+        }
+        if !limits.allow(1_usize, 30_i64) {
+            ret Result::Ok(failure(429_i32, "device rate limit"))
+        }
+        let codes = device_start(db, request.a)?
+        ret Result::Ok(reply(200_i32, stringify(object(vec![field("device_code", string(codes.0)), field("user_code", string(codes.1)),
+                            field("verification_uri", string(config.url + "/auth/device")), field("expires_in", number("600")), field("interval", number("5"))],))))
+    }
+    if request.op == 25_i32 {
+        if !limits.allow(2_usize, 600_i64) {
+            ret Result::Ok(failure(429_i32, "slow_down"))
+        }
+        let result = device_poll(db, request.a)?
+        if result.error != "" {
+            ret Result::Ok(failure(400_i32, result.error))
+        }
+        ret Result::Ok(reply(200_i32, stringify(object(vec![field("access_token", string(result.token)), field("token_type", string("Bearer")), field("expires_in", number("7776000"))]))))
+    }
+    if request.op == 27_i32 || request.op == 28_i32 {
+        let owner = authenticate(db, request.token)?
+        if owner == 0_i64 {
+            ret Result::Ok(failure(401_i32, "invalid or expired credential"))
+        }
+        if request.op == 27_i32 {
+            ret Result::Ok(reply(200_i32, whoami(db, owner)?))
+        }
+        if !revoke_token(db, owner, request.token)? {
+            ret Result::Ok(failure(400_i32, "not a device or CI credential"))
+        }
+        ret Result::Ok(reply(200_i32, "{\"ok\":true}"))
+    }
+    let owner = credential_owner(db, request.token, true)?
+    if owner == 0_i64 {
+        ret Result::Ok(failure(401_i32, "sign in required"))
+    }
+    if request.op == 26_i32 {
+        ret action(db, request, config, limits, owner)
+    }
+    let code = if request.op == 29_i32 && request.a.len() == 8_usize && limits.allow(3_usize, 120_i64) {
+        digest(request.a)?
+    } else {
+        ""
+    }
+    ret Result::Ok(reply(200_i32, account(db, owner, digest("csrf:" + request.token)?, code)?))
+}

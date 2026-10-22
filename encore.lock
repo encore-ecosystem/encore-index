@@ -1,0 +1,51 @@
+version = 2
+
+[[packages]]
+name = "std"
+ref = "index@std@0.0.8"
+version = "0.0.8"
+archive = "http://127.0.0.1:8137/archives/aebaf85350327d57a665d1ca95760783ff14803c160a78ab45f532df08c7458f.tar.gz"
+checksum = "aebaf85350327d57a665d1ca95760783ff14803c160a78ab45f532df08c7458f"
+registry = "http://127.0.0.1:8137/index"
+
+[[packages]]
+name = "json"
+ref = "index@json@0.0.3"
+version = "0.0.3"
+archive = "http://127.0.0.1:8137/archives/018cce6bcbca73c3aa1afa26d0ec09156b1cf0c915e2e0334e07207588f55258.tar.gz"
+checksum = "018cce6bcbca73c3aa1afa26d0ec09156b1cf0c915e2e0334e07207588f55258"
+registry = "http://127.0.0.1:8137/index"
+
+[[packages]]
+name = "toml"
+ref = "index@toml@0.0.0"
+version = "0.0.0"
+archive = "http://127.0.0.1:8137/archives/380ba13376749438fce08431f68d5d143b2e761c88bbd1b4ff99bcb49771b992.tar.gz"
+checksum = "380ba13376749438fce08431f68d5d143b2e761c88bbd1b4ff99bcb49771b992"
+registry = "http://127.0.0.1:8137/index"
+
+[[packages]]
+name = "sqlite"
+ref = "index@sqlite@0.1.0"
+version = "0.1.0"
+archive = "http://127.0.0.1:8137/archives/da47633cf8d355f13dc4242a3c6f7136303af9b138cdb7623218aaf4a87c9b01.tar.gz"
+checksum = "da47633cf8d355f13dc4242a3c6f7136303af9b138cdb7623218aaf4a87c9b01"
+registry = "http://127.0.0.1:8137/index"
+
+[[packages]]
+name = "blaze"
+ref = "index@blaze@0.1.0-beta.2"
+version = "0.1.0-beta.2"
+archive = "http://127.0.0.1:8137/archives/4ff65072dd8b487ab68ddeec17eb2dff261aa7cad063d23ebb11656be4c7ea7f.tar.gz"
+checksum = "4ff65072dd8b487ab68ddeec17eb2dff261aa7cad063d23ebb11656be4c7ea7f"
+registry = "http://127.0.0.1:8137/index"
+
+[[packages]]
+name = "core"
+ref = "sys@core"
+version = "0.0.0"
+
+[[packages]]
+name = "platform"
+ref = "sys@platform"
+version = "0.0.0"

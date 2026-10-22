@@ -1,0 +1,267 @@
+//! Credential and device authorization SQL; never performs provider network I/O.
+import core::option::Option
+import core::result::Result
+import core::vec::Vec
+import refrain::storage::{Store, audit, p1, p2, p3, storage_error}
+import sqlite::{SqliteError, Value}
+
+extern fn registry_crypto_digest(input: str) -> str
+extern fn registry_crypto_secret(prefix: str) -> str
+extern fn registry_crypto_user_code() -> str
+extern fn registry_clock_seconds() -> i64
+
+#attr(safe)
+pub fn digest(value: str) -> Result[str, SqliteError] {
+    let result = unsafe {
+        registry_crypto_digest(value)
+    }
+    if result.len() != 64_usize {
+        ret Result::Err(storage_error("hash unavailable"))
+    }
+    ret Result::Ok(result)
+}
+#attr(safe)
+pub fn secret(prefix: str) -> Result[str, SqliteError] {
+    let result = unsafe {
+        registry_crypto_secret(prefix)
+    }
+    if result.len() != 68_usize {
+        ret Result::Err(storage_error("random source unavailable"))
+    }
+    ret Result::Ok(result)
+}
+#attr(safe)
+fn user_code() -> Result[str, SqliteError] {
+    let result = unsafe {
+        registry_crypto_user_code()
+    }
+    if result.len() != 8_usize {
+        ret Result::Err(storage_error("random source unavailable"))
+    }
+    ret Result::Ok(result)
+}
+#attr(safe)
+pub fn now() -> i64 {
+    ret unsafe {
+        registry_clock_seconds()
+    }
+}
+pub fn valid_label(value: str) -> bool {
+    if value == "" || value.len() > 64_usize {
+        ret false
+    }
+    let mut i = 0_usize
+    while i < value.len() {
+        if value.byte_at(i) < 32_u8 || value.byte_at(i) == 127_u8 {
+            ret false
+        }
+        i += 1_usize
+    }
+    ret true
+}
+pub fn legacy_token(db: Store, owner: str) -> Result[str, SqliteError] {
+    let token = secret("enr_")?
+    if db.execute("INSERT INTO tokens(owner,digest,expires) SELECT id,?2,unixepoch()+2592000 FROM users WHERE name=?1 AND active=1",
+        p2(Value::Text(owner), Value::Text(digest(token)?)),)? != 1_i64 {
+        ret Result::Err(storage_error("unknown owner"))
+    }
+    ret Result::Ok(token)
+}
+pub fn credential_owner(db: Store, token: str, browser: bool) -> Result[i64, SqliteError] {
+    if token.len() != 68_usize {
+        ret Result::Ok(0_i64)
+    }
+    let prefix = token.slice(0_usize, 4_usize)
+    if (browser && prefix != "ens_") ||(!browser && prefix != "end_" && prefix != "enc_") {
+        ret Result::Ok(0_i64)
+    }
+    ret db.scalar("UPDATE credentials SET last_used=unixepoch() WHERE digest=?1 AND (kind='browser')=?2 AND revoked=0 AND expires>unixepoch() AND (idle_seconds=0 OR last_used+idle_seconds>unixepoch()) AND owner IN(SELECT id FROM users WHERE active=1) RETURNING owner",
+        p2(Value::Text(digest(token)?), Value::Integer(if browser {
+                    1_i64
+                } else {
+                    0_i64
+                }
+            )),)
+}
+pub fn authenticate(db: Store, token: str) -> Result[i64, SqliteError] {
+    if token.len() != 68_usize {
+        ret Result::Ok(0_i64)
+    }
+    let prefix = token.slice(0_usize, 4_usize)
+    if prefix == "end_" || prefix == "enc_" {
+        ret credential_owner(db, token, false)
+    }
+    if prefix != "enr_" {
+        ret Result::Ok(0_i64)
+    }
+    ret db.scalar("SELECT u.id FROM tokens t JOIN users u ON u.id=t.owner WHERE t.digest=?1 AND t.revoked=0 AND t.expires>unixepoch() AND u.active=1", p1(Value::Text(digest(token)?)))
+}
+pub fn allows(db: Store, token: str, package: str, yank: bool) -> Result[bool, SqliteError] {
+    if token.len() != 68_usize {
+        ret Result::Ok(false)
+    }
+    if token.slice(0_usize, 4_usize) == "enr_" {
+        ret Result::Ok(authenticate(db, token)? != 0_i64)
+    }
+    let package_value = if package == "" {
+        Value::Null
+    } else {
+        Value::Text(package)
+    }
+    ret Result::Ok(db.scalar("SELECT 1 FROM credentials c JOIN users u ON u.id=c.owner WHERE c.digest=?1 AND u.active=1 AND c.revoked=0 AND c.expires>unixepoch() AND (c.idle_seconds=0 OR c.last_used+c.idle_seconds>unixepoch()) AND ((?3=0 AND c.can_publish=1) OR (?3=1 AND c.can_yank=1)) AND (c.kind='device' OR (c.kind='ci' AND EXISTS(SELECT 1 FROM credential_packages p JOIN owners o ON o.package=p.package AND o.owner=c.owner WHERE p.credential=c.id AND (?2 IS NULL OR p.package=?2))))",
+            p3(Value::Text(digest(token)?), package_value, Value::Integer(if yank {
+                        1_i64
+                    } else {
+                        0_i64
+                    }
+                )),)? == 1_i64)
+}
+/// Caller owns the transaction, so credential, scopes and audit commit together.
+pub fn credential_insert(db: Store, owner: i64, kind: str, label: str, days: i64,
+    publish: bool, yank: bool,) -> Result[(i64, str), SqliteError] {
+    if !valid_label(label) || days < 1_i64 || days > 90_i64 ||(kind == "browser" && days > 30_i64) ||
+    (kind != "browser" && kind != "device" && kind != "ci") {
+        ret Result::Err(storage_error("invalid credential settings"))
+    }
+    let token = secret(if kind == "device" {
+            "end_"
+        } elif kind == "browser" {
+            "ens_"
+        } else {
+            "enc_"
+        }
+    )?
+    let mut values = p3(Value::Text(digest(token)?), Value::Text(kind), Value::Integer(owner))
+    values.push(Value::Text(label))
+    values.push(Value::Integer(days * 86400_i64))
+    values.push(Value::Integer(if kind == "device" {
+                2592000_i64
+            } elif kind == "browser" {
+                604800_i64
+            } else {
+                0_i64
+            }
+        ))
+    values.push(Value::Integer(if publish {
+                1_i64
+            } else {
+                0_i64
+            }
+        ))
+    values.push(Value::Integer(if yank {
+                1_i64
+            } else {
+                0_i64
+            }
+        ))
+    if db.execute("INSERT INTO credentials(owner,kind,digest,label,created,last_used,expires,idle_seconds,can_publish,can_yank) SELECT id,?2,?1,?4,unixepoch(),unixepoch(),unixepoch()+?5,?6,?7,?8 FROM users WHERE id=?3 AND active=1", values)? != 1_i64 {
+        ret Result::Err(storage_error("unknown credential owner"))
+    }
+    ret Result::Ok((db.rowid()?, token))
+}
+pub fn ci_create(db: Store, owner: i64, label: str, days: i64, publish: bool, yank: bool,
+    packages: Vec[str],) -> Result[str, SqliteError] {
+    if (!publish && !yank) || packages.len() == 0_usize || packages.len() > 100_usize {
+        ret Result::Err(storage_error("invalid CI scope"))
+    }
+    with db.begin()? as tx {
+        let credential = credential_insert(tx, owner, "ci", label, days, publish, yank)?
+        for package in packages {
+            if tx.execute("INSERT INTO credential_packages(credential,package) SELECT ?2,package FROM owners WHERE package=?1 AND owner=?3",
+                p3(Value::Text(package), Value::Integer(credential.0), Value::Integer(owner)),)? != 1_i64 {
+                ret Result::Err(storage_error("package not owned"))
+            }
+        }
+        let _audit = audit(tx, owner, credential.0, "issue-ci")?
+        let _commit = tx.commit()?
+        ret Result::Ok(credential.1)
+    }
+}
+pub fn device_start(db: Store, label: str) -> Result[(str, str), SqliteError] {
+    if !valid_label(label) {
+        ret Result::Err(storage_error("invalid device label"))
+    }
+    with db.begin()? as tx {
+        let _expired = tx.execute("DELETE FROM device_authorizations WHERE expires<=unixepoch()", Vec[Value]::new())?
+        if tx.scalar("SELECT count(*) FROM device_authorizations", Vec[Value]::new())? >= 128_i64 {
+            ret Result::Err(storage_error("too many pending devices"))
+        }
+        let device = secret("edc_")?
+        let code = user_code()?
+        let _insert = tx.execute("INSERT INTO device_authorizations(digest,code_digest,label,expires,next_poll,state) VALUES(?1,?2,?3,unixepoch()+600,unixepoch()+5,'pending')",
+            p3(Value::Text(digest(device)?), Value::Text(digest(code)?), Value::Text(label)),)?
+        let _commit = tx.commit()?
+        ret Result::Ok((device, code))
+    }
+}
+pub fn device_decide(db: Store, code: str, owner: i64, approve: bool) -> Result[bool, SqliteError] {
+    if code.len() != 8_usize {
+        ret Result::Ok(false)
+    }
+    ret Result::Ok(db.execute("UPDATE device_authorizations SET state=?2,owner=?3 WHERE code_digest=?1 AND state='pending' AND expires>unixepoch() AND EXISTS(SELECT 1 FROM users WHERE id=?3 AND active=1)",
+            p3(Value::Text(digest(code)?), Value::Text(if approve {
+                        "approved"
+                    } else {
+                        "denied"
+                    }
+                ), Value::Integer(owner)),)? == 1_i64)
+}
+/// Empty error means authorized; only that case includes a bearer credential.
+pub struct DeviceResult {
+    error: str
+    token: str
+}
+pub fn device_poll(db: Store, code: str) -> Result[DeviceResult, SqliteError] {
+    if code.len() != 68_usize || code.slice(0_usize, 4_usize) != "edc_" {
+        ret Result::Ok(DeviceResult {
+                "expired_token", ""
+            }
+            ,
+        )
+    }
+    let hash = digest(code)?
+    with db.begin()? as tx {
+        let rows = tx.query("SELECT state,expires,next_poll,owner,label FROM device_authorizations WHERE digest=?1", p1(Value::Text(hash)))?
+        let mut error = "expired_token"
+        let mut token = ""
+        match rows.get(0_usize) {
+            Option::None => {
+            }
+            Option::Some(row) => {
+                let state = row.text(0_usize)?
+                let time = now()
+                if row.integer(1_usize)? <= time || state == "consumed" {
+                    error = "expired_token"
+                } elif state == "denied" {
+                    error = "access_denied"
+                } elif row.integer(2_usize)? > time {
+                    error = "slow_down"
+                } elif state == "approved" {
+                    error = ""
+                } else {
+                    error = "authorization_pending"
+                }
+                if error == "authorization_pending" || error == "slow_down" {
+                    let sql = if error == "authorization_pending" {
+                        "UPDATE device_authorizations SET next_poll=unixepoch()+interval WHERE digest=?1"
+                    } else {
+                        "UPDATE device_authorizations SET interval=min(interval+5,60),next_poll=unixepoch()+min(interval+5,60) WHERE digest=?1"
+                    }
+                    let _poll = tx.execute(sql, p1(Value::Text(hash)))?
+                } elif error == "" {
+                    let owner = row.integer(3_usize)?
+                    let credential = credential_insert(tx, owner, "device", row.text(4_usize)?, 90_i64, true, true)?
+                    let _audit = audit(tx, owner, credential.0, "issue-device")?
+                    let _consume = tx.execute("UPDATE device_authorizations SET state='consumed' WHERE digest=?1", p1(Value::Text(hash)))?
+                    token = credential.1
+                }
+            }
+        }
+        let _commit = tx.commit()?
+        ret Result::Ok(DeviceResult {
+                error, token
+            }
+            ,
+        )
+    }
+}

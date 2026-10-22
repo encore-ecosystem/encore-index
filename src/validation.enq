@@ -1,0 +1,358 @@
+//! Publication policy; uploaded code and build scripts are never executed.
+import core::option::Option
+import core::result::Result
+import core::vec::Vec
+import json::{Json, field, parse, stringify, object, string}
+import toml::{TomlValue, toml_parse_document, toml_get_string}
+
+pub fn identifier(value: str) -> bool {
+    if value.len() < 2_usize || value.len() > 64_usize {
+        ret false
+    }
+    let mut i = 0_usize
+    while i < value.len() {
+        let ch = value.byte_at(i)
+        if !(ch >= 97_u8 && ch <= 122_u8) && !(ch >= 48_u8 && ch <= 57_u8) && ch != 45_u8 && ch != 95_u8 {
+            ret false
+        }
+        i += 1_usize
+    }
+    ret true
+}
+
+fn version_core_valid(value: str) -> bool {
+    let mut dots = 0_usize
+    let mut digits = 0_usize
+    let mut zero = false
+    let mut i = 0_usize
+    while i < value.len() {
+        let ch = value.byte_at(i)
+        if ch == 46_u8 {
+            if digits == 0_usize {
+                ret false
+            }
+            dots += 1_usize digits = 0_usize zero = false
+        } elif ch >= 48_u8 && ch <= 57_u8 {
+            if zero {
+                ret false
+            }
+            if digits == 0_usize && ch == 48_u8 {
+                zero = true
+            }
+            digits += 1_usize
+        } else {
+            ret false
+        }
+        i += 1_usize
+    }
+    ret dots == 2_usize && digits > 0_usize && value.len() <= 32_usize
+}
+
+fn find(value: str, needle: str, start: usize) -> usize {
+    let mut i = start
+    while i < value.len() {
+        if value.slice(i, 1_usize) == needle {
+            ret i
+        }
+        i += 1_usize
+    }
+    ret value.len()
+}
+fn identifiers_valid(value: str, numeric_zero: bool) -> bool {
+    if value == "" {
+        ret false
+    }
+    let mut start = 0_usize
+    let mut i = 0_usize
+    let mut numeric = true
+    while i <= value.len() {
+        if i == value.len() || value.slice(i, 1_usize) == "." {
+            if i == start ||(numeric_zero && numeric && i - start > 1_usize && value.slice(start, 1_usize) == "0") {
+                ret false
+            }
+            start = i + 1_usize numeric = true
+        } else {
+            let ch = value.byte_at(i)
+            if ch < 48_u8 || ch > 57_u8 {
+                numeric = false
+                if !(ch >= 97_u8 && ch <= 122_u8) && !(ch >= 65_u8 && ch <= 90_u8) && ch != 45_u8 {
+                    ret false
+                }
+            }
+        }
+        i += 1_usize
+    }
+    ret true
+}
+fn version_valid(value: str) -> bool {
+    if value.len() > 128_usize {
+        ret false
+    }
+    let plus = find(value, "+", 0_usize)
+    let base = value.slice(0_usize, plus)
+    let dash = find(base, "-", 0_usize)
+    if !version_core_valid(base.slice(0_usize, dash)) {
+        ret false
+    }
+    if dash < base.len() && !identifiers_valid(base.slice(dash + 1_usize, base.len() - dash - 1_usize), true) {
+        ret false
+    }
+    if plus < value.len() && !identifiers_valid(value.slice(plus + 1_usize, value.len() - plus - 1_usize), false) {
+        ret false
+    }
+    ret true
+}
+fn trim(value: str) -> str {
+    let mut start = 0_usize
+    let mut end = value.len()
+    while start < end &&(value.slice(start, 1_usize) == " " || value.slice(start, 1_usize) == "\t") {
+        start += 1_usize
+    }
+    while end > start &&(value.slice(end - 1_usize, 1_usize) == " " || value.slice(end - 1_usize, 1_usize) == "\t") {
+        end -= 1_usize
+    }
+    ret value.slice(start, end - start)
+}
+fn requirement_part_valid(value: str) -> bool {
+    if value == "*" {
+        ret true
+    }
+    let mut start = 0_usize
+    if value.len() > 0_usize {
+        let ch = value.slice(0_usize, 1_usize)
+        if ch == ">" || ch == "<" || ch == "=" || ch == "^" || ch == "~" {
+            start = 1_usize
+        }
+        if start == 1_usize && value.len() > 1_usize && value.slice(1_usize, 1_usize) == "=" {
+            if ch != ">" && ch != "<" {
+                ret false
+            }
+            start = 2_usize
+        }
+    }
+    let core = trim(value.slice(start, value.len() - start))
+    if version_valid(core) {
+        ret true
+    }
+    if start != 0_usize || core == "" {
+        ret false
+    }
+    let mut i = 0_usize
+    let mut part = 0_usize
+    let mut count = 0_usize
+    let mut wildcard = false
+    while i <= core.len() {
+        if i == core.len() || core.slice(i, 1_usize) == "." {
+            let item = core.slice(part, i - part)
+            if item == "*" || item == "x" || item == "X" {
+                wildcard = true
+            } elif wildcard || !version_core_valid(item + ".0.0") {
+                ret false
+            }
+            count += 1_usize part = i + 1_usize
+        }
+        i += 1_usize
+    }
+    ret count <= 3_usize
+}
+fn requirement_valid(value: str) -> bool {
+    if value == "" || value.len() > 128_usize {
+        ret false
+    }
+    let mut start = 0_usize
+    let mut i = 0_usize
+    while i <= value.len() {
+        if i == value.len() || value.slice(i, 1_usize) == "," {
+            if !requirement_part_valid(trim(value.slice(start, i - start))) {
+                ret false
+            }
+            start = i + 1_usize
+        }
+        i += 1_usize
+    }
+    ret true
+}
+fn dependency_valid(value: str, documents: Vec[Json]) -> bool {
+    let open = find(value, "[", 0_usize)
+    let base = value.slice(0_usize, open)
+    if open < value.len() {
+        if value.slice(value.len() - 1_usize, 1_usize) != "]" {
+            ret false
+        }
+        let mut i = open + 1_usize
+        while i < value.len() - 1_usize {
+            let ch = value.byte_at(i)
+            if !(ch >= 97_u8 && ch <= 122_u8) && !(ch >= 65_u8 && ch <= 90_u8) && !(ch >= 48_u8 && ch <= 57_u8) && ch != 45_u8 && ch != 95_u8 && ch != 44_u8 && ch != 32_u8 {
+                ret false
+            }
+            i += 1_usize
+        }
+    }
+    let at = find(base, "@", 0_usize)
+    if at == base.len() {
+        ret false
+    }
+    let kind = base.slice(0_usize, at)
+    let next = find(base, "@", at + 1_usize)
+    let name = base.slice(at + 1_usize, next - at - 1_usize)
+    if !identifier(name) {
+        ret false
+    }
+    if kind == "workspace" {
+        if next != base.len() {
+            ret false
+        }
+        for document in documents {
+            if string_field(document, "path") == "workspace/" + name + "/encore.toml" {
+                ret true
+            }
+        }
+        ret false
+    }
+    if kind != "index" && kind != "sys" {
+        ret false
+    }
+    if next < base.len() && !requirement_valid(base.slice(next + 1_usize, base.len() - next - 1_usize)) {
+        ret false
+    }
+    ret true
+}
+
+pub fn string_field(value: Json, key: str) -> str {
+    ret value.get(key).unwrap_or(Json::Null).as_str().unwrap_or("")
+}
+
+pub fn publication_metadata(source: str, nametag: str) -> str {
+    if !nametag_valid(nametag) {
+        ret ""
+    }
+    let items = match parse(source) {
+        Result::Ok(value) => value Result::Err(_) => {
+            ret ""
+        }
+    }
+    let documents = match items.as_array() {
+        Option::Some(values) => values Option::None => {
+            ret ""
+        }
+    }
+    let mut metadata = ""
+    if documents.len() > 128_usize {
+        ret ""
+    }
+    for item in documents {
+        let path = string_field(item, "path")
+        let text = string_field(item, "source")
+        if text.len() > 65536_usize {
+            ret ""
+        }
+        let doc = toml_parse_document(text)
+        if doc.sections.len() > 64_usize {
+            ret ""
+        }
+        let mut sections = Vec[str]::new()
+        for section in doc.sections {
+            if section.entries.len() > 128_usize {
+                ret ""
+            }
+            for previous in sections {
+                if previous == section.name {
+                    ret ""
+                }
+            }
+            sections.push(section.name)
+            let mut keys = Vec[str]::new()
+            for entry in section.entries {
+                for previous in keys {
+                    if previous == entry.key {
+                        ret ""
+                    }
+                }
+                keys.push(entry.key)
+                if section.name == "features" {
+                    match entry.value {
+                        TomlValue::StringArray(members) => {
+                            for member in members {
+                                if find(member, "@", 0_usize) < member.len() && !dependency_valid(member, documents) {
+                                    ret ""
+                                }
+                            }
+                        }
+                        _ => {
+                            ret ""
+                        }
+                    }
+                }
+                if section.name == "project" && entry.key == "dependencies" {
+                    match entry.value {
+                        TomlValue::StringArray(dependencies) => {
+                            for dependency in dependencies {
+                                if !dependency_valid(dependency, documents) {
+                                    ret ""
+                                }
+                            }
+                        }
+                        _ => {
+                            ret ""
+                        }
+                    }
+                }
+            }
+            // Workspace publication needs an explicit multi-package transaction.
+            if section.name == "workspace" {
+                ret ""
+            }
+        }
+        if path == "encore.toml" {
+            let name = toml_get_string(doc, "project", "name").unwrap_or("")
+            let version = toml_get_string(doc, "project", "version").unwrap_or("")
+            let requirement = toml_get_string(doc, "project", "encore").unwrap_or("")
+            if toml_get_string(doc, "project", "description").unwrap_or("").len() > 1024_usize {
+                ret ""
+            }
+            if !identifier(name) || !version_valid(version) || !requirement_valid(requirement) {
+                ret ""
+            }
+            metadata = stringify(object(vec![field("name", string(name)), field("version", string(version)),
+                        field("release", string(version + "-" + nametag)), field("nametag", string(nametag)),
+                        field("encore", string(requirement)), field("description", string(toml_get_string(doc, "project", "description").unwrap_or("")))],))
+        }
+    }
+    ret metadata
+}
+
+fn nametag_valid(value: str) -> bool {
+    if value.len() == 0_usize || value.len() > 64_usize {
+        ret false
+    }
+    if value.slice(0_usize, 1_usize) == "-" || value.slice(value.len() - 1_usize, 1_usize) == "-" {
+        ret false
+    }
+    let mut i = 0_usize
+    while i < value.len() {
+        let ch = value.byte_at(i)
+        if !(ch >= 97_u8 && ch <= 122_u8) && !(ch >= 48_u8 && ch <= 57_u8) && ch != 45_u8 {
+            ret false
+        }
+        i += 1_usize
+    }
+    ret true
+}
+
+#attr(test)
+fn accepts_dependency_lint_policy() -> bool {
+    let manifest = "[project]\nname = \"blaze\"\nversion = \"0.1.0-beta.1\"\nencore = \">=0.1.1\"\ndependencies = [\"index@std@0.0.1\", \"sys@core\"]\n[lint]\ndependencies = \"allow\"\n"
+    let source = stringify(Json::Array(vec![object(vec![field("path", string("encore.toml")), field("source", string(manifest))])]))
+    ret publication_metadata(source, "neumann") != ""
+}
+
+#attr(test)
+fn rejects_ambiguous_publication() -> bool {
+    ret !version_valid("01.0.0") && version_valid("0.1.1") && !identifier("../escape")
+    && version_valid("1.2.3-beta.1+build-123") && !version_valid("1.2.3-beta.01")
+    && requirement_valid(">= 0.0.0, <2.0.0") && requirement_valid("1.2.*")
+    && !requirement_valid("garbage") && !requirement_valid(">=>1.0.0")
+    && dependency_valid("index@std@^1.2.3[io]", Vec[Json]::new())
+    && !dependency_valid("workspace@missing", Vec[Json]::new())
+    && !dependency_valid("path@/tmp/escape", Vec[Json]::new())
+}

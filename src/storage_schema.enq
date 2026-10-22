@@ -1,0 +1,59 @@
+//! Schema-compatible migrations through the Encore SQLite driver.
+import core::option::Option
+import core::result::Result
+import core::vec::Vec
+import sqlite::{Connection, SqliteError, Value}
+
+pub fn initialize(db: Connection) -> Result[bool, SqliteError] {
+    let _limit = db.length_limit(1048576_i32)?
+    let _timeout = db.busy_timeout(5000_i32)?
+    let _foreign = db.execute("PRAGMA foreign_keys=ON", Vec[Value]::new())?
+    let _wal = db.execute("PRAGMA journal_mode=WAL", Vec[Value]::new())?
+    let _full = db.execute("PRAGMA synchronous=FULL", Vec[Value]::new())?
+    let rows = db.query("PRAGMA user_version", Vec[Value]::new())?
+    let version = match rows.get(0_usize) {
+        Option::Some(row) => row.integer(0_usize)?
+        Option::None => - 1_i64
+    }
+    if version < 0_i64 || version > 3_i64 {
+        ret Result::Err(SqliteError {
+                21_i32, 21_i32, "unsupported registry schema"
+            }
+            ,
+        )
+    }
+    if version < 1_i64 {
+        with db.transaction(true)? as tx {
+            let _step = tx.execute("CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, active INTEGER NOT NULL DEFAULT 1 CHECK(active IN(0,1)))", Vec[Value]::new())?
+            let _step = tx.execute("CREATE TABLE tokens(id INTEGER PRIMARY KEY, owner INTEGER NOT NULL REFERENCES users(id), digest TEXT NOT NULL UNIQUE, created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, revoked INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN(0,1)))", Vec[Value]::new())?
+            let _step = tx.execute("CREATE TABLE packages(name TEXT PRIMARY KEY, description TEXT NOT NULL DEFAULT '', created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)", Vec[Value]::new())?
+            let _step = tx.execute("CREATE TABLE owners(package TEXT NOT NULL REFERENCES packages(name), owner INTEGER NOT NULL REFERENCES users(id), PRIMARY KEY(package,owner))", Vec[Value]::new())?
+            let _step = tx.execute("CREATE TABLE versions(package TEXT NOT NULL REFERENCES packages(name), version TEXT NOT NULL, release TEXT NOT NULL, checksum TEXT NOT NULL, size INTEGER NOT NULL CHECK(size>=0), manifest TEXT NOT NULL, metadata TEXT NOT NULL CHECK(json_valid(metadata)), yanked INTEGER NOT NULL DEFAULT 0 CHECK(yanked IN(0,1)), created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(package,version))", Vec[Value]::new())?
+            let _step = tx.execute("CREATE TABLE audit(id INTEGER PRIMARY KEY, owner INTEGER REFERENCES users(id), action TEXT NOT NULL, package TEXT, version TEXT, created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)", Vec[Value]::new())?
+            let _step = tx.execute("PRAGMA user_version=1", Vec[Value]::new())?
+            let _commit = tx.commit()?
+        }
+    }
+    if version < 2_i64 {
+        with db.transaction(true)? as tx {
+            let _step = tx.execute("ALTER TABLE tokens ADD COLUMN expires INTEGER NOT NULL DEFAULT 0", Vec[Value]::new())?
+            let _step = tx.execute("UPDATE tokens SET expires=unixepoch()+2592000", Vec[Value]::new())?
+            let _step = tx.execute("CREATE TABLE identities(provider TEXT NOT NULL,subject TEXT NOT NULL,owner INTEGER NOT NULL REFERENCES users(id),PRIMARY KEY(provider,subject),UNIQUE(provider,owner))", Vec[Value]::new())?
+            let _step = tx.execute("CREATE TABLE credentials(id INTEGER PRIMARY KEY,owner INTEGER NOT NULL REFERENCES users(id),kind TEXT NOT NULL CHECK(kind IN('device','browser','ci')),digest TEXT NOT NULL UNIQUE,label TEXT NOT NULL,created INTEGER NOT NULL,last_used INTEGER NOT NULL,expires INTEGER NOT NULL,idle_seconds INTEGER NOT NULL,revoked INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN(0,1)),can_publish INTEGER NOT NULL DEFAULT 0 CHECK(can_publish IN(0,1)),can_yank INTEGER NOT NULL DEFAULT 0 CHECK(can_yank IN(0,1)))", Vec[Value]::new())?
+            let _step = tx.execute("CREATE INDEX credential_owner ON credentials(owner)", Vec[Value]::new())?
+            let _step = tx.execute("CREATE TABLE credential_packages(credential INTEGER NOT NULL REFERENCES credentials(id) ON DELETE CASCADE,package TEXT NOT NULL REFERENCES packages(name),PRIMARY KEY(credential,package))", Vec[Value]::new())?
+            let _step = tx.execute("CREATE TABLE device_authorizations(digest TEXT PRIMARY KEY,code_digest TEXT NOT NULL UNIQUE,label TEXT NOT NULL,expires INTEGER NOT NULL,next_poll INTEGER NOT NULL,interval INTEGER NOT NULL DEFAULT 5,owner INTEGER REFERENCES users(id),state TEXT NOT NULL CHECK(state IN('pending','approved','denied','consumed')))", Vec[Value]::new())?
+            let _step = tx.execute("CREATE TABLE auth_audit(id INTEGER PRIMARY KEY,owner INTEGER REFERENCES users(id),credential INTEGER REFERENCES credentials(id),action TEXT NOT NULL,created INTEGER NOT NULL DEFAULT(unixepoch()))", Vec[Value]::new())?
+            let _step = tx.execute("PRAGMA user_version=2", Vec[Value]::new())?
+            let _commit = tx.commit()?
+        }
+    }
+    if version < 3_i64 {
+        with db.transaction(true)? as tx {
+            let _step = tx.execute("CREATE TABLE oauth_attempts(digest TEXT PRIMARY KEY,binding TEXT NOT NULL,verifier TEXT NOT NULL,destination TEXT NOT NULL,expires INTEGER NOT NULL)", Vec[Value]::new())?
+            let _step = tx.execute("PRAGMA user_version=3", Vec[Value]::new())?
+            let _commit = tx.commit()?
+        }
+    }
+    ret Result::Ok(true)
+}

@@ -1,0 +1,54 @@
+//! SemVer ordering and latest-selection parity without a native SQL collation.
+import core::result::Result
+import core::vec::Vec
+import json::{Json, parse}
+import refrain::storage::{Store, p1, p2, p3, reserve, user_add}
+import refrain::storage_auth::legacy_token
+import refrain::storage_catalog::{catalog, metadata, version_compare, yank}
+import sqlite::{SqliteError, Value}
+
+fn run() -> Result[bool, SqliteError] {
+    if version_compare("0.0.10", "0.0.2") <= 0_i32 || version_compare("1.0.0-beta.10", "1.0.0-beta.2") <= 0_i32 ||
+    version_compare("1.0.0", "1.0.0-beta") <= 0_i32 || version_compare("1.0.0+build", "1.0.0") != 0_i32 {
+        ret Result::Ok(false)
+    }
+    if version_compare("1.0.0-alpha", "1.0.0-alpha.1") >= 0_i32 || version_compare("1.0.0-1", "1.0.0-alpha") >= 0_i32 {
+        ret Result::Ok(false)
+    }
+    with Store::open(":memory:")? as db {
+        let _user = user_add(db, "alice")?
+        let _package = reserve(db, "std", "alice")?
+        let token = legacy_token(db, "alice")?
+        let _a = db.execute("INSERT INTO versions(package,version,release,checksum,size,manifest,metadata) VALUES('std','0.0.2','r','a',0,'','{\"version\":\"0.0.2\"}'),('std','0.0.10','r','b',0,'','{\"version\":\"0.0.10\"}'),('std','2.0.0-beta.1','r','c',0,'','{\"version\":\"2.0.0-beta.1\"}'),('std','3.0.0','r','d',0,'','{\"version\":\"3.0.0\"}')", Vec[Value]::new())?
+        if yank(db, token, "std", "3.0.0", true)? != 200_i32 {
+            ret Result::Ok(false)
+        }
+        let info = parse(metadata(db, "std")?).unwrap_or(Json::Null)
+        if info.get("latest").unwrap_or(Json::Null).as_str().unwrap_or("") != "0.0.10" {
+            ret Result::Ok(false)
+        }
+        let versions = info.get("versions").unwrap_or(Json::Null).as_array().unwrap_or(Vec[Json]::new())
+        if versions.get(0_usize).unwrap_or(Json::Null).get("version").unwrap_or(Json::Null).as_str().unwrap_or("") != "3.0.0" {
+            ret Result::Ok(false)
+        }
+        let _all = db.execute("UPDATE versions SET yanked=1", Vec[Value]::new())?
+        let listing = parse(catalog(db, "", "")?).unwrap_or(Json::Null).as_array().unwrap_or(Vec[Json]::new())
+        if listing.len() != 1_usize {
+            ret Result::Ok(false)
+        }
+        if !listing.get(0_usize).unwrap_or(Json::Null).get("latest").unwrap_or(Json::Null).is_null() {
+            ret Result::Ok(false)
+        }
+    }
+    ret Result::Ok(true)
+}
+fn main() -> u32 {
+    match run() {
+        Result::Ok(success) => {
+            ret if success { 0_u32 } else { 1_u32 }
+        }
+        _ => {
+            ret 1_u32
+        }
+    }
+}

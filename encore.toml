@@ -1,0 +1,11 @@
+[project]
+name = "encore-index"
+version = "0.1.0"
+encore = ">=0.1.6"
+description = "Public refrain registry on Blaze"
+licence = "MIT"
+repository = "https://github.com/encore-ecosystem/encore-index"
+dependencies = ["index@std@0.0.8", "index@json@0.0.3", "index@toml@0.0.0", "index@sqlite@0.1.0", "index@blaze@0.1.0-beta.2"]
+
+[target.x86_64-unknown-linux-gnu]
+link-args = ["-lcrypto", "-larchive", "-pthread"]

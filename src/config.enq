@@ -1,0 +1,20 @@
+//! Service settings. Empty values are unset; the Index name wins over legacy names.
+import std::os::env
+
+pub fn setting(name: str, legacy: str, fallback: str) -> str {
+    let value = env(name).unwrap_or("")
+    if value != "" {
+        ret value
+    }
+    let previous = env(legacy).unwrap_or("")
+    ret if previous != "" {
+        previous
+    } else {
+        fallback
+    }
+}
+
+pub fn public_url() -> str {
+    ret setting("ENCORE_INDEX_PUBLIC_URL", "ENCORE_REGISTRY_PUBLIC_URL",
+        "http://127.0.0.1:" + setting("ENCORE_INDEX_PORT", "ENCORE_REGISTRY_PORT", "8137"),)
+}

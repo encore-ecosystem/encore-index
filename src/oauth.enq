@@ -1,0 +1,106 @@
+import refrain::config::{setting, public_url}
+//! Bounded OAuth workers; only fixed provider URLs are used in production.
+import core::result::Result
+import json::{Json, parse}
+import refrain::validation::string_field
+import std::http::{HttpClient, HttpClientConfig, HttpRequest, Url}
+
+extern fn registry_oauth_wait() -> usize
+extern fn registry_oauth_input(job: usize) -> str
+extern fn registry_oauth_finish(job: usize, subject: str) ->()
+extern fn registry_oauth_endpoint(kind: i32) -> str
+
+/// Percent-encodes form fields without passing secrets to a shell.
+pub fn form_encode(value: str) -> str {
+    let mut out = ""
+    let mut i = 0_usize
+    while i < value.len() {
+        let byte = value.byte_at(i) as usize
+        if (byte >= 65_usize && byte <= 90_usize) ||(byte >= 97_usize && byte <= 122_usize) ||(byte >= 48_usize && byte <= 57_usize) || byte == 45_usize || byte == 46_usize || byte == 95_usize || byte == 126_usize {
+            out += value.slice(i, 1_usize)
+        } else {
+            out += "%" + "0123456789ABCDEF".slice(byte / 16_usize, 1_usize) + "0123456789ABCDEF".slice(byte % 16_usize, 1_usize)
+        }
+        i += 1_usize
+    }
+    ret out
+}
+fn exchange(input: str) -> str {
+    let document = parse(input).unwrap_or(Json::Null)
+    let code = string_field(document, "code")
+    let verifier = string_field(document, "verifier")
+    if code == "" || verifier == "" {
+        ret ""
+    }
+    let token_url = Url::parse(unsafe {
+            registry_oauth_endpoint(0_i32)
+        }
+    ).unwrap_or(Url::empty())
+    let user_url = Url::parse(unsafe {
+            registry_oauth_endpoint(1_i32)
+        }
+    ).unwrap_or(Url::empty())
+    let ca_file = unsafe {
+        registry_oauth_endpoint(2_i32)
+    }
+    let client = HttpClient::with_config(HttpClientConfig::default().with_max_redirects(0_usize).with_max_body_size(65536_usize).with_timeout_ms(5000_usize).with_ca_file(ca_file))
+    let body = "client_id=" + form_encode(setting("ENCORE_INDEX_GITHUB_CLIENT_ID", "ENCORE_GITHUB_CLIENT_ID", "")) +
+    "&client_secret=" + form_encode(setting("ENCORE_INDEX_GITHUB_CLIENT_SECRET", "ENCORE_GITHUB_CLIENT_SECRET", "")) +
+    "&code=" + form_encode(code) + "&code_verifier=" + form_encode(verifier) +
+    "&redirect_uri=" + form_encode(public_url() + "/auth/github/callback")
+    let token_response = match client.send(HttpRequest::new("POST", token_url).with_header("Accept", "application/json").with_header("User-Agent", "Encore-Index").with_header("Content-Type", "application/x-www-form-urlencoded").with_body(body)) {
+        Result::Ok(value) => value
+        Result::Err(_) => {
+            ret ""
+        }
+    }
+    if token_response.status() != 200_u16 {
+        ret ""
+    }
+    let tokens = parse(token_response.body()).unwrap_or(Json::Null)
+    let token = string_field(tokens, "access_token")
+    if token == "" || token.len() > 4096_usize || string_field(tokens, "token_type") != "bearer" {
+        ret ""
+    }
+    let user_response = match client.send(HttpRequest::get(user_url).with_header("Accept", "application/json").with_header("User-Agent", "Encore-Index").with_header("Authorization", "Bearer " + token)) {
+        Result::Ok(value) => value
+        Result::Err(_) => {
+            ret ""
+        }
+    }
+    if user_response.status() != 200_u16 {
+        ret ""
+    }
+    let user = parse(user_response.body()).unwrap_or(Json::Null)
+    ret match user.get("id").unwrap_or(Json::Null) {
+        Json::Number(value) => value
+        _ => ""
+    }
+}
+/// Runs on one of exactly two long-lived native worker threads.
+pub fn oauth_worker() -> u32 {
+    loop {
+        let job = unsafe {
+            registry_oauth_wait()
+        }
+        if job == 0_usize {
+            ret 0_u32
+        }
+        let input = unsafe {
+            registry_oauth_input(job)
+        }
+        let subject = if input == "" {
+            ""
+        } else {
+            exchange(input)
+        }
+        unsafe {
+            registry_oauth_finish(job, subject)
+        }
+    }
+    ret 0_u32
+}
+#attr(test)
+fn encodes_oauth_form_fields() -> bool {
+    ret form_encode("a+b&c=d") == "a%2Bb%26c%3Dd"
+}

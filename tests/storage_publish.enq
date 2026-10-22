@@ -1,0 +1,81 @@
+//! Publication rollback, ownership and immutable version contracts.
+import core::result::Result
+import core::vec::Vec
+import refrain::storage::{Store, user_add}
+import refrain::storage_auth::legacy_token
+import refrain::storage_publish::{ArchiveInstaller, Publication, publish}
+import sqlite::{SqliteError, Value}
+
+struct Files {
+    available: bool
+}
+impl ArchiveInstaller for Files {
+    fn install(self: Self, checksum: str) -> bool {
+        ret self.available
+    }
+}
+fn publication(owner: i64, token: str, checksum: str) -> Publication {
+    ret Publication {
+        owner, token,
+        "{\"name\":\"example\",\"version\":\"0.1.0\",\"release\":\"0.1.0-neumann\",\"description\":\"Example\"}",
+        "[]", checksum, 42_i64, "http://127.0.0.1:8137"
+    }
+}
+fn run() -> Result[bool, SqliteError] {
+    with Store::open(":memory:")? as db {
+        let _alice = user_add(db, "alice")?
+        let _bob = user_add(db, "bob")?
+        let alice = legacy_token(db, "alice")?
+        let bob = legacy_token(db, "bob")?
+        let hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        let other = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        let unavailable = Files {
+            false
+        }
+        let available = Files {
+            true
+        }
+        if publish[Files](db, publication(1_i64, alice, hash), unavailable)?.status != 503_i32 {
+            ret Result::Ok(false)
+        }
+        if db.scalar("SELECT count(*) FROM packages", Vec[Value]::new())? != 0_i64 {
+            ret Result::Ok(false)
+        }
+        if publish[Files](db, publication(1_i64, bob, hash), available)?.status != 403_i32 {
+            ret Result::Ok(false)
+        }
+        if publish[Files](db, publication(1_i64, alice, hash), available)?.status != 201_i32 {
+            ret Result::Ok(false)
+        }
+        // Idempotent retries do not touch archive files again.
+        if publish[Files](db, publication(1_i64, alice, hash), unavailable)?.status != 200_i32 {
+            ret Result::Ok(false)
+        }
+        if publish[Files](db, publication(1_i64, alice, other), available)?.status != 409_i32 {
+            ret Result::Ok(false)
+        }
+        if publish[Files](db, publication(2_i64, bob, hash), available)?.status != 403_i32 {
+            ret Result::Ok(false)
+        }
+        if db.scalar("SELECT count(*) FROM versions", Vec[Value]::new())? != 1_i64 {
+            ret Result::Ok(false)
+        }
+        if db.scalar("SELECT count(*) FROM audit WHERE action='publish'", Vec[Value]::new())? != 1_i64 {
+            ret Result::Ok(false)
+        }
+        if db.query("PRAGMA foreign_key_check", Vec[Value]::new())?.len() != 0_usize {
+            ret Result::Ok(false)
+        }
+    }
+    ret Result::Ok(true)
+}
+fn main() -> u32 {
+    match run() {
+        Result::Ok(success) => {
+            ret if success { 0_u32 } else { 1_u32 }
+        }
+        _ => {
+            ret 1_u32
+        }
+    }
+}

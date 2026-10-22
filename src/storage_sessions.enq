@@ -1,0 +1,54 @@
+//! Browser/OAuth persistence. The provider exchange happens outside this layer.
+import core::option::Option
+import core::result::Result
+import core::vec::Vec
+import refrain::storage::{Store, audit, numeric_id, p1, p2, p3, storage_error, user_add}
+import refrain::storage_auth::credential_insert
+import sqlite::{SqliteError, Value}
+
+pub fn oauth_start(db: Store, state: str, binding: str, verifier: str, destination: str) -> Result[bool, SqliteError] {
+    with db.begin()? as tx {
+        let _expired = tx.execute("DELETE FROM oauth_attempts WHERE expires<=unixepoch()", Vec[Value]::new())?
+        let mut values = p3(Value::Text(state), Value::Text(binding), Value::Text(verifier))
+        values.push(Value::Text(destination))
+        if tx.execute("INSERT INTO oauth_attempts(digest,binding,verifier,destination,expires) SELECT ?1,?2,?3,?4,unixepoch()+600 WHERE (SELECT count(*) FROM oauth_attempts)<128", values)? != 1_i64 {
+            ret Result::Ok(false)
+        }
+        ret tx.commit()
+    }
+}
+pub fn oauth_consume(db: Store, state: str, binding: str) -> Result[(str, str), SqliteError] {
+    let rows = db.query("DELETE FROM oauth_attempts WHERE digest=?1 AND binding=?2 AND expires>unixepoch() RETURNING verifier,destination", p2(Value::Text(state), Value::Text(binding)))?
+    match rows.get(0_usize) {
+        Option::Some(row) => {
+            ret Result::Ok((row.text(0_usize)?, row.text(1_usize)?))
+        }
+        Option::None => {
+            ret Result::Ok(("", ""))
+        }
+    }
+}
+pub fn oauth_finish(db: Store, subject: str) -> Result[str, SqliteError] {
+    if numeric_id(subject) == 0_i64 {
+        ret Result::Err(storage_error("invalid provider identity"))
+    }
+    with db.begin()? as tx {
+        let mut owner = tx.scalar("SELECT owner FROM identities WHERE provider='github' AND subject=?1", p1(Value::Text(subject)))?
+        if owner == 0_i64 {
+            let _user = user_add(tx, "github_" + subject)?
+            owner = tx.rowid()?
+            let _identity = tx.execute("INSERT INTO identities(provider,subject,owner) VALUES('github',?1,?2)", p2(Value::Text(subject), Value::Integer(owner)))?
+        }
+        let credential = credential_insert(tx, owner, "browser", "Browser", 30_i64, false, false)?
+        let _audit = audit(tx, owner, credential.0, "github-login")?
+        let _commit = tx.commit()?
+        ret Result::Ok(credential.1)
+    }
+}
+pub fn account(db: Store, owner: i64, csrf: str, code_digest: str) -> Result[str, SqliteError] {
+    ret db.text("SELECT json_object('name',name,'csrf',?2,'device_label',coalesce((SELECT label FROM device_authorizations WHERE code_digest=?3 AND state='pending' AND expires>unixepoch()),''),'credentials',json((SELECT json_group_array(json_object('id',id,'kind',kind,'label',label,'last_used',strftime('%Y-%m-%d %H:%M UTC',last_used,'unixepoch'),'expires',strftime('%Y-%m-%d %H:%M UTC',expires,'unixepoch'),'revoked',revoked,'permissions',CASE WHEN can_publish=1 AND can_yank=1 THEN 'publish, yank' WHEN can_publish=1 THEN 'publish' WHEN can_yank=1 THEN 'yank' ELSE 'account' END,'packages',json((SELECT json_group_array(package) FROM credential_packages WHERE credential=c.id)))) FROM (SELECT * FROM credentials WHERE owner=?1 ORDER BY id DESC LIMIT 100)c)),'packages',json((SELECT json_group_array(package) FROM owners WHERE owner=?1))) FROM users WHERE id=?1",
+        p3(Value::Integer(owner), Value::Text(csrf), Value::Text(code_digest)),)
+}
+pub fn whoami(db: Store, owner: i64) -> Result[str, SqliteError] {
+    ret db.text("SELECT json_object('name',name,'id',id) FROM users WHERE id=?1", p1(Value::Integer(owner)))
+}

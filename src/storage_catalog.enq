@@ -1,0 +1,286 @@
+//! Catalogue ordering in Encore, without a database-specific SemVer collation.
+import core::fmt::Debug
+import core::result::Result
+import core::vec::Vec
+import json::{Json, field, parse, stringify}
+import refrain::storage::{Store, p1, p2, p3, storage_error}
+import refrain::storage_auth::{allows, authenticate}
+import sqlite::{SqliteError, Value}
+
+fn numeric(value: str) -> bool {
+    if value == "" {
+        ret false
+    }
+    let mut i = 0_usize
+    while i < value.len() {
+        if value.byte_at(i) < 48_u8 || value.byte_at(i) > 57_u8 {
+            ret false
+        }
+        i += 1_usize
+    }
+    ret true
+}
+fn lexical(a: str, b: str) -> i32 {
+    let mut i = 0_usize
+    while i < a.len() && i < b.len() {
+        if a.byte_at(i) != b.byte_at(i) {
+            ret if a.byte_at(i) < b.byte_at(i) {
+                - 1_i32
+            } else {
+                1_i32
+            }
+        }
+        i += 1_usize
+    }
+    ret if a.len() == b.len() {
+        0_i32
+    } elif a.len() < b.len() {
+        - 1_i32
+    } else {
+        1_i32
+    }
+}
+fn part(a: str, b: str) -> i32 {
+    let ad = numeric(a)
+    let bd = numeric(b)
+    if ad != bd {
+        ret if ad {
+            - 1_i32
+        } else {
+            1_i32
+        }
+    }
+    if ad && a.len() != b.len() {
+        ret if a.len() < b.len() {
+            - 1_i32
+        } else {
+            1_i32
+        }
+    }
+    ret lexical(a, b)
+}
+fn digit_end(value: str, start: usize) -> usize {
+    let mut i = start
+    while i < value.len() && value.byte_at(i) >= 48_u8 && value.byte_at(i) <= 57_u8 {
+        i += 1_usize
+    }
+    ret i
+}
+fn identifier_end(value: str, start: usize) -> usize {
+    let mut i = start
+    while i < value.len() && value.slice(i, 1_usize) != "." && value.slice(i, 1_usize) != "+" {
+        i += 1_usize
+    }
+    ret i
+}
+pub fn version_compare(a: str, b: str) -> i32 {
+    let mut ai = 0_usize
+    let mut bi = 0_usize
+    let mut index = 0_usize
+    while index < 3_usize {
+        let ae = digit_end(a, ai)
+        let be = digit_end(b, bi)
+        let order = part(a.slice(ai, ae - ai), b.slice(bi, be - bi))
+        if order != 0_i32 {
+            ret order
+        }
+        ai = ae
+        bi = be
+        if index < 2_usize {
+            if ai < a.len() {
+                ai += 1_usize
+            }
+            if bi < b.len() {
+                bi += 1_usize
+            }
+        }
+        index += 1_usize
+    }
+    let ap = ai < a.len() && a.slice(ai, 1_usize) == "-"
+    let bp = bi < b.len() && b.slice(bi, 1_usize) == "-"
+    if ap != bp {
+        ret if ap {
+            - 1_i32
+        } else {
+            1_i32
+        }
+    }
+    if !ap {
+        ret 0_i32
+    }
+    ai += 1_usize
+    bi += 1_usize
+    loop {
+        let ae = identifier_end(a, ai)
+        let be = identifier_end(b, bi)
+        let order = part(a.slice(ai, ae - ai), b.slice(bi, be - bi))
+        if order != 0_i32 {
+            ret order
+        }
+        let am = ae < a.len() && a.slice(ae, 1_usize) == "."
+        let bm = be < b.len() && b.slice(be, 1_usize) == "."
+        if am != bm {
+            ret if am {
+                1_i32
+            } else {
+                - 1_i32
+            }
+        }
+        if !am {
+            ret 0_i32
+        }
+        ai = ae + 1_usize
+        bi = be + 1_usize
+    }
+    ret 0_i32
+}
+fn prerelease(version: str) -> bool {
+    let mut i = 0_usize
+    while i < version.len() {
+        if version.slice(i, 1_usize) == "+" {
+            ret false
+        }
+        if version.slice(i, 1_usize) == "-" {
+            ret true
+        }
+        i += 1_usize
+    }
+    ret false
+}
+struct Version {
+    version: str
+    metadata: Json
+    yanked: bool
+}
+fn empty_version() -> Version {
+    ret Version {
+        "", Json::Null, true
+    }
+}
+fn before(a: Version, b: Version) -> bool {
+    let order = version_compare(a.version, b.version)
+    ret order > 0_i32 ||(order == 0_i32 && lexical(a.version, b.version) > 0_i32)
+}
+fn versions(db: Store, name: str) -> Result[Vec[Version], SqliteError] {
+    let rows = db.query("SELECT version,json_set(metadata,'$.yanked',json(CASE yanked WHEN 1 THEN 'true' ELSE 'false' END)),yanked FROM versions WHERE package=?1", p1(Value::Text(name)))?
+    let mut out = Vec[Version]::new()
+    for row in rows {
+        let metadata = match parse(row.text(1_usize)?) {
+            Result::Ok(value) => value
+            Result::Err(_) => {
+                ret Result::Err(storage_error("invalid stored metadata"))
+            }
+        }
+        out.push(Version {
+                row.text(0_usize)?, metadata, row.integer(2_usize)? != 0_i64
+            }
+            ,
+        )
+    }
+    // Bottom-up mergesort, avoiding quadratic histories for popular packages.
+    let mut width = 1_usize
+    while width < out.len() {
+        let mut merged = Vec[Version]::new()
+        let mut start = 0_usize
+        while start < out.len() {
+            let middle = if start + width < out.len() {
+                start + width
+            } else {
+                out.len()
+            }
+            let end = if middle + width < out.len() {
+                middle + width
+            } else {
+                out.len()
+            }
+            let mut left = start
+            let mut right = middle
+            while left < middle || right < end {
+                if left < middle &&(right == end || before(out.get(left).unwrap_or(empty_version()), out.get(right).unwrap_or(empty_version()))) {
+                    merged.push(out.get(left).unwrap_or(empty_version())) left += 1_usize
+                } else {
+                    merged.push(out.get(right).unwrap_or(empty_version())) right += 1_usize
+                }
+            }
+            start = end
+        }
+        out = merged
+        width *= 2_usize
+    }
+    ret Result::Ok(out)
+}
+fn latest(versions: Vec[Version]) -> Version {
+    let mut selected = empty_version()
+    for version in versions {
+        if !version.yanked &&(selected.version == "" ||(prerelease(selected.version) && !prerelease(version.version))) {
+            selected = version
+        }
+    }
+    ret selected
+}
+pub fn metadata(db: Store, name: str) -> Result[str, SqliteError] {
+    let history = versions(db, name)?
+    if history.len() == 0_usize {
+        ret Result::Ok("")
+    }
+    let selected = latest(history)
+    let mut values = Vec[Json]::new()
+    for version in history {
+        values.push(version.metadata)
+    }
+    let mut fields = Vec[(str, Json)]::new()
+    fields.push(field("name", Json::String(name)))
+    fields.push(field("latest", if selected.version == "" {
+                Json::Null
+            } else {
+                Json::String(selected.version)
+            }
+            ,
+        ))
+    fields.push(field("versions", Json::Array(values)))
+    ret Result::Ok(stringify(Json::Object(fields)))
+}
+pub fn catalog(db: Store, search: str, after: str) -> Result[str, SqliteError] {
+    let packages = db.query("SELECT name,description FROM packages p WHERE EXISTS(SELECT 1 FROM versions v WHERE v.package=p.name) AND (instr(lower(name),lower(?1))>0 OR instr(lower(description),lower(?1))>0) AND name>?2 ORDER BY name LIMIT 100", p2(Value::Text(search), Value::Text(after)))?
+    let mut entries = Vec[Json]::new()
+    for package in packages {
+        let name = package.text(0_usize)?
+        let history = versions(db, name)?
+        let mut fields = Vec[(str, Json)]::new()
+        fields.push(field("name", Json::String(name)))
+        fields.push(field("description", Json::String(package.text(1_usize)?)))
+        fields.push(field("versions", Json::Number(Debug::fmt(history.len()))))
+        fields.push(field("latest", latest(history).metadata))
+        entries.push(Json::Object(fields))
+    }
+    ret Result::Ok(stringify(Json::Array(entries)))
+}
+pub fn yank(db: Store, token: str, name: str, version: str, withdrawn: bool) -> Result[i32, SqliteError] {
+    with db.begin()? as tx {
+        let owner = authenticate(tx, token)?
+        if owner == 0_i64 {
+            ret Result::Ok(401_i32)
+        }
+        if !allows(tx, token, name, true)? || tx.scalar("SELECT 1 FROM owners WHERE package=?1 AND owner=?2", p2(Value::Text(name), Value::Integer(owner)))? != 1_i64 {
+            ret Result::Ok(403_i32)
+        }
+        if tx.execute("UPDATE versions SET yanked=?3 WHERE package=?1 AND version=?2", p3(Value::Text(name), Value::Text(version), Value::Integer(if withdrawn {
+                        1_i64
+                    } else {
+                        0_i64
+                    }
+                )))? != 1_i64 {
+            ret Result::Ok(404_i32)
+        }
+        let mut values = p3(Value::Integer(owner), Value::Text(name), Value::Text(version))
+        values.push(Value::Text(if withdrawn {
+                    "yank"
+                } else {
+                    "unyank"
+                }
+            ))
+        let _audit = tx.execute("INSERT INTO audit(owner,action,package,version) VALUES(?1,?4,?2,?3)", values)?
+        let _commit = tx.commit()?
+        ret Result::Ok(200_i32)
+    }
+}

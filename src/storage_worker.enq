@@ -1,0 +1,214 @@
+import refrain::config::{setting, public_url}
+//! One connection, owned by one long-lived worker; bounded transport owns bytes.
+import core::result::Result
+import json::{Json, parse}
+import refrain::storage::{Store, p1, numeric_id, valid_name}
+import refrain::storage_auth::{allows, authenticate}
+import refrain::storage_catalog::{catalog, metadata, yank}
+import refrain::storage_publish::{ArchiveInstaller, Publication, publish}
+import refrain::storage_web::{RateLimits, WebConfig, WebRequest, process}
+import refrain::validation::string_field
+import sqlite::{SqliteError, Value}
+
+extern fn registry_storage_wait() -> usize
+extern fn registry_storage_ready(ok: i32) ->()
+extern fn registry_storage_op(job: usize) -> i32
+extern fn registry_storage_field(job: usize, field: i32) -> str
+extern fn registry_storage_finish(job: usize, status: i32, body: str) ->()
+extern fn registry_storage_files(job: usize, owner: i64) ->()
+extern fn registry_storage_upload(job: usize, owner: i64) -> str
+extern fn registry_archive_install(job: usize, owner: i64, checksum: str) -> bool
+extern fn registry_storage_publish_finish(job: usize, owner: i64, status: i32, body: str) ->()
+extern fn registry_oauth_schedule(job: usize, input: str, destination: str) -> bool
+extern fn registry_oauth_authorize_url() -> str
+extern fn registry_auth_enabled() -> i32
+
+struct UploadFiles {
+    job: usize
+    owner: i64
+}
+
+impl ArchiveInstaller for UploadFiles {
+    #attr(safe)
+    fn install(self: Self, checksum: str) -> bool {
+        ret unsafe {
+            registry_archive_install(self.job, self.owner, checksum)
+        }
+    }
+}
+#attr(safe)
+fn finish(job: usize, status: i32, body: str) ->() {
+    unsafe {
+        registry_storage_finish(job, status, body)
+    }
+}
+#attr(safe)
+fn handle(db: Store, job: usize, config: WebConfig, limits: mut RateLimits) -> Result[bool, SqliteError] {
+    let op = unsafe {
+        registry_storage_op(job)
+    }
+    let a = unsafe {
+        registry_storage_field(job, 0_i32)
+    }
+    let b = unsafe {
+        registry_storage_field(job, 1_i32)
+    }
+    let token = unsafe {
+        registry_storage_field(job, 2_i32)
+    }
+    let body = unsafe {
+        registry_storage_field(job, 3_i32)
+    }
+    if op >= 20_i32 {
+        let request = WebRequest {
+            op, a, b, token, body
+        }
+        let result = process(db, request, config, limits)?
+        if result.status == 0_i32 {
+            if !unsafe {
+                registry_oauth_schedule(job, result.body, result.destination)
+            }
+            {
+                finish(job, 503_i32, "{\"error\":\"OAuth worker unavailable\"}")
+            }
+        } else {
+            finish(job, result.status, result.body)
+        }
+        ret Result::Ok(true)
+    }
+    if op == 1_i32 {
+        finish(job, 200_i32, catalog(db, a, b)?) ret Result::Ok(true)
+    }
+    if op == 2_i32 {
+        let result = if valid_name(a) {
+            metadata(db, a)?
+        } else {
+            ""
+        }
+        finish(job, if result == "" {
+                404_i32
+            } else {
+                200_i32
+            }
+            , if result == "" {
+                "{\"error\":\"not available\"}"
+            } else {
+                result
+            }
+            ,
+        )
+        ret Result::Ok(true)
+    }
+    if op == 8_i32 {
+        if db.scalar("SELECT 1 FROM versions WHERE checksum=?1 LIMIT 1", p1(Value::Text(a)))? != 1_i64 {
+            finish(job, 404_i32, "{\"error\":\"archive not found\"}")
+        } else {
+            unsafe {
+                registry_storage_files(job, 0_i64)
+            }
+        }
+        ret Result::Ok(true)
+    }
+    let owner = authenticate(db, token)?
+    if owner == 0_i64 {
+        finish(job, 401_i32, "{\"error\":\"invalid or revoked token\"}") ret Result::Ok(true)
+    }
+    let withdrawing = op == 7_i32 || op == 9_i32
+    if !allows(db, token, if withdrawing {
+            a
+        } else {
+            ""
+        }
+        , withdrawing,)? {
+        finish(job, 403_i32, "{\"error\":\"credential scope denied\"}") ret Result::Ok(true)
+    }
+    if withdrawing {
+        let status = yank(db, token, a, b, op == 7_i32)?
+        finish(job, status, if status == 200_i32 {
+                "{\"ok\":true}"
+            } else {
+                "{\"error\":\"version not updated\"}"
+            }
+            ,
+        )
+        ret Result::Ok(true)
+    }
+    if op == 6_i32 {
+        let info = unsafe {
+            registry_storage_upload(job, owner)
+        }
+        if info == "" {
+            finish(job, 409_i32, "{\"error\":\"upload not validated\"}") ret Result::Ok(true)
+        }
+        if info == "{\"existing\":true}" {
+            finish(job, 200_i32, "{\"published\":true,\"existing\":true}") ret Result::Ok(true)
+        }
+        let document = parse(info).unwrap_or(Json::Null)
+        let size = match document.get("size").unwrap_or(Json::Null) {
+            Json::Number(value) => numeric_id(value) _ => - 1_i64
+        }
+        let input = Publication {
+            owner, token, body, string_field(document, "manifests"), string_field(document, "checksum"), size, config.url
+        }
+        let files = UploadFiles {
+            job, owner
+        }
+        let result = publish[UploadFiles](db, input, files)?
+        unsafe {
+            registry_storage_publish_finish(job, owner, result.status, result.body)
+        }
+        ret Result::Ok(true)
+    }
+    unsafe {
+        registry_storage_files(job, owner)
+    }
+    ret Result::Ok(true)
+}
+
+/// No connection or prepared statement is transferred between threads.
+#attr(safe)
+pub fn storage_worker(directory: str, url: str) -> u32 {
+    let opened = Store::open(directory + "/registry.sqlite3")
+    match opened {
+        Result::Err(_) => {
+            unsafe {
+                registry_storage_ready(0_i32)
+            }
+            ret 1_u32
+        }
+        Result::Ok(store) => {
+            with store as db {
+                let enabled = unsafe {
+                    registry_auth_enabled()
+                }
+                != 0_i32
+                let authorize_url = unsafe {
+                    registry_oauth_authorize_url()
+                }
+                let config = WebConfig {
+                    url, setting("ENCORE_INDEX_GITHUB_CLIENT_ID", "ENCORE_GITHUB_CLIENT_ID", ""), enabled, authorize_url
+                }
+                let mut limits = RateLimits::new()
+                unsafe {
+                    registry_storage_ready(1_i32)
+                }
+                loop {
+                    let job = unsafe {
+                        registry_storage_wait()
+                    }
+                    if job == 0_usize {
+                        ret 0_u32
+                    }
+                    match handle(db, job, config, limits) {
+                        Result::Ok(_) => {
+                        }
+                        Result::Err(_) => {
+                            finish(job, 503_i32, "{\"error\":\"storage operation failed\"}")
+                        }
+                    }
+                }
+            }
+        }
+    }
+    ret 0_u32
+}

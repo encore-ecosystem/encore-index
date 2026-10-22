@@ -1,0 +1,378 @@
+import refrain::config::{setting, public_url}
+//! Bounded asynchronous registry API on Blaze; one Encore worker owns SQLite.
+import blaze::routing::{get, post, put, delete}
+import blaze::{AppFactory, AsyncHandler, Request, Response, Router, ServerConfig, ShutdownToken, serve}
+import core::future::{Context, Future, Poll}
+import core::result::Result
+import json::{Json, parse, stringify}
+import refrain::auth::{cookie, form, auth_response}
+import refrain::oauth::oauth_worker
+import refrain::storage::{Store, user_add, reserve, revoke_legacy, link_github, numeric_id}
+import refrain::storage_auth::legacy_token
+import refrain::storage_worker::storage_worker
+import refrain::validation::{publication_metadata, string_field}
+import refrain::views::{catalogue, package_page}
+import sqlite::SqliteError
+import std::io::{eprintln, println}
+import std::os::{argv, read_file}
+
+extern fn registry_store_open(directory: str) -> i32
+extern fn registry_store_close() ->()
+extern fn registry_service_start(url: str) -> i32
+extern fn registry_storage_started() -> i32
+extern fn registry_submit(operation: i32, a: str, b: str, token: str, body: str) -> usize
+extern fn registry_job_status(job: usize) -> i32
+extern fn registry_job_take(job: usize) -> str
+extern fn registry_query_decode(value: str) -> str
+extern fn registry_auth_enabled() -> i32
+extern fn registry_oauth_stop() ->()
+
+enum Route {
+    Health
+    Config
+    Catalog
+    Metadata
+    ApiPackage
+    Home
+    Package
+    Upload
+    Cancel
+    Chunk
+    Finish
+    Archive
+    Yank
+    Unyank
+    Styles
+    CopyScript
+    AuthStart
+    AuthCallback
+    Account
+    AuthAction
+    Device
+    DeviceStart
+    DeviceToken
+    Me
+    Logout
+}
+struct IndexApp {
+    css: str
+    copy_script: str
+}
+struct Pending {
+    job: usize
+    stage: i32
+    upload: str
+    token: str
+    nametag: str
+    immediate: Response
+}
+
+fn parameter(request: Request, name: str) -> str {
+    ret request.param(name).unwrap_or("")
+}
+fn response(status: u16, body: str) -> Response {
+    ret Response::status(status).with_body(body).with_header("Content-Type", "application/json")
+    .with_header("X-Content-Type-Options", "nosniff")
+}
+fn immediate(value: Response) -> Pending {
+    ret Pending {
+        0_usize, 0_i32, "", "", "", value
+    }
+}
+fn enqueue(op: i32, a: str, b: str, token: str, body: str, stage: i32, nametag: str) -> Pending {
+    let job = unsafe {
+        registry_submit(op, a, b, token, body)
+    }
+    ret Pending {
+        job, stage, a, token, nametag, response(503_u16, "{\"error\":\"registry busy; retry later\"}")
+    }
+}
+
+impl Future[Response] for Pending {
+    fn poll(self: Self, context: Context) -> Poll[Self, Response] {
+        if self.job == 0_usize {
+            ret Poll[Self, Response]::Ready(self.immediate)
+        }
+        let status = unsafe {
+            registry_job_status(self.job)
+        }
+        if status == 0_i32 {
+            ret Poll[Self, Response]::Pending(self)
+        }
+        let body = unsafe {
+            registry_job_take(self.job)
+        }
+        if self.stage == 20_i32 || self.stage == 29_i32 {
+            ret Poll[Self, Response]::Ready(auth_response(status as u16, body, self.stage == 29_i32, self.upload))
+        }
+        if self.stage == 30_i32 {
+            ret Poll[Self, Response]::Ready(response(status as u16, body).with_header("Cache-Control", "no-store").with_header("Referrer-Policy", "no-referrer"))
+        }
+        if self.stage == 5_i32 && status == 200_i32 && body.len() > 0_usize && body.slice(0_usize, 1_usize) == "[" {
+            let metadata = publication_metadata(body, self.nametag)
+            if metadata == "" {
+                ret Poll[Self, Response]::Ready(response(400_u16, "{\"error\":\"invalid manifest, identity, dependency or unsupported workspace\"}"))
+            }
+            ret Poll[Self, Response]::Pending(enqueue(6_i32, self.upload, "", self.token, metadata, 0_i32, ""))
+        }
+        if status == 200_i32 && self.stage == 10_i32 {
+            ret Poll[Self, Response]::Ready(catalogue(body, self.upload))
+        }
+        if status == 200_i32 && self.stage == 11_i32 {
+            ret Poll[Self, Response]::Ready(package_page(self.upload, body))
+        }
+        if status == 200_i32 && self.stage == 8_i32 {
+            ret Poll[Self, Response]::Ready(Response::text(body).with_header("Content-Type", "application/gzip").with_header("Cache-Control", "public, max-age=31536000, immutable").with_header("X-Content-Type-Options", "nosniff"))
+        }
+        ret Poll[Self, Response]::Ready(response(status as u16, body))
+    }
+}
+
+fn query_value(request: Request, key: str) -> str {
+    let query = request.query()
+    let mut start = 0_usize
+    let mut i = 0_usize
+    while i <= query.len() && query.len() <= 256_usize {
+        if i == query.len() || query.slice(i, 1_usize) == "&" {
+            let item = query.slice(start, i - start)
+            if item.len() > key.len() && item.slice(0_usize, key.len() + 1_usize) == key + "=" {
+                ret unsafe {
+                    registry_query_decode(item.slice(key.len() + 1_usize, item.len() - key.len() - 1_usize))
+                }
+            }
+            start = i + 1_usize
+        }
+        i += 1_usize
+    }
+    ret ""
+}
+
+impl AsyncHandler[Route, Pending] for IndexApp {
+    fn handle(self: Self, route: Route, request: Request) -> Pending {
+        let auth = request.header("Authorization").unwrap_or("")
+        let token = if auth.len() > 7_usize && auth.slice(0_usize, 7_usize) == "Bearer " {
+            auth.slice(7_usize, auth.len() - 7_usize)
+        } else {
+            ""
+        }
+        ret match route {
+            Route::AuthStart => enqueue(20_i32, query_value(request, "next"), "", "", "", 20_i32, "")
+            Route::AuthCallback => enqueue(21_i32, query_value(request, "state"), query_value(request, "code"), cookie(request, true), "", 20_i32, "")
+            Route::Account => enqueue(22_i32, "", "", cookie(request, false), "", 20_i32, "")
+            Route::Device => enqueue(29_i32, query_value(request, "code"), "", cookie(request, false), "", 29_i32, "")
+            Route::AuthAction => enqueue(26_i32, "", request.header("Origin").unwrap_or(""), cookie(request, false), stringify(form(request)), 20_i32, "")
+            Route::Me => enqueue(27_i32, "", "", token, "", 30_i32, "")
+            Route::Logout => enqueue(28_i32, "", "", token, "", 30_i32, "")
+            Route::DeviceStart => {
+                let fields = form(request)
+                if string_field(fields, "client_id") != "encore" {
+                    immediate(response(400_u16, "{\"error\":\"invalid_client\"}").with_header("Cache-Control", "no-store"))
+                } else {
+                    enqueue(24_i32, string_field(fields, "device_name"), "", "", "", 30_i32, "")
+                }
+            }
+            Route::DeviceToken => {
+                let fields = form(request)
+                if string_field(fields, "client_id") != "encore" || string_field(fields, "grant_type") != "urn:ietf:params:oauth:grant-type:device_code" {
+                    immediate(response(400_u16, "{\"error\":\"invalid_request\"}").with_header("Cache-Control", "no-store"))
+                } else {
+                    enqueue(25_i32, string_field(fields, "device_code"), "", "", "", 30_i32, "")
+                }
+            }
+            Route::Styles => immediate(Response::text(self.css).with_header("Content-Type", "text/css; charset=utf-8").with_header("Cache-Control", "no-cache").with_header("X-Content-Type-Options", "nosniff"))
+            Route::CopyScript => immediate(Response::text(self.copy_script).with_header("Content-Type", "text/javascript; charset=utf-8").with_header("Cache-Control", "no-cache").with_header("X-Content-Type-Options", "nosniff"))
+            Route::Health => immediate(response(200_u16, "{\"status\":\"ok\",\"publication\":true}"))
+            Route::Config => {
+                let auth = if unsafe {
+                    registry_auth_enabled()
+                }
+                != 0_i32 {
+                    ",\"auth\":{\"version\":1,\"device\":\"/api/v1/auth/device\",\"token\":\"/api/v1/auth/token\",\"me\":\"/api/v1/me\",\"logout\":\"/api/v1/auth/logout\"}"
+                } else {
+                    ""
+                }
+                immediate(response(200_u16, "{\"schema\":1,\"api\":\"/api/v1\",\"chunk_size\":65536,\"max_archive_size\":4194304" + auth + "}"))
+            }
+            Route::Catalog => enqueue(1_i32, query_value(request, "q"), query_value(request, "after"), "", "", 0_i32, "")
+            Route::Home => enqueue(1_i32, query_value(request, "q"), query_value(request, "after"), "", "", 10_i32, "")
+            Route::Package => enqueue(2_i32, parameter(request, "name"), "", "", "", 11_i32, "")
+            Route::ApiPackage => enqueue(2_i32, parameter(request, "name"), "", "", "", 0_i32, "")
+            Route::Metadata => {
+                let file = parameter(request, "file")
+                if file.len() < 7_usize || file.slice(file.len() - 5_usize, 5_usize) != ".json" || file.slice(0_usize, 2_usize) != parameter(request, "prefix") {
+                    immediate(response(404_u16, "{}"))
+                } else {
+                    enqueue(2_i32, file.slice(0_usize, file.len() - 5_usize), "", "", "", 0_i32, "")
+                }
+            }
+            Route::Upload => enqueue(3_i32, "", "", token, "", 0_i32, "")
+            Route::Cancel => enqueue(10_i32, parameter(request, "id"), "", token, "", 0_i32, "")
+            Route::Chunk => enqueue(4_i32, parameter(request, "id"), parameter(request, "offset"), token, request.body(), 0_i32, "")
+            Route::Finish => {
+                let value = match parse(request.body()) {
+                    Result::Ok(data) => data Result::Err(_) => Json::Null
+                }
+                enqueue(5_i32, parameter(request, "id"), string_field(value, "checksum"), token, "", 5_i32, string_field(value, "nametag"))
+            }
+            Route::Archive => {
+                let file = parameter(request, "file")
+                if file.len() != 71_usize || file.slice(64_usize, 7_usize) != ".tar.gz" {
+                    immediate(response(404_u16, "{}"))
+                } else {
+                    enqueue(8_i32, file.slice(0_usize, 64_usize), "", "", "", 8_i32, "")
+                }
+            }
+            Route::Yank => enqueue(7_i32, parameter(request, "name"), parameter(request, "version"), token, "", 0_i32, "")
+            Route::Unyank => enqueue(9_i32, parameter(request, "name"), parameter(request, "version"), token, "", 0_i32, "")
+        }
+    }
+}
+
+impl AppFactory[Route, IndexApp] for IndexApp {
+    fn build(self: Self) -> Router[Route, IndexApp] {
+        ret Router[Route, IndexApp]::new(self)
+        .route("/auth/github/start", get[Route](Route::AuthStart))
+        .route("/auth/github/callback", get[Route](Route::AuthCallback))
+        .route("/account", get[Route](Route::Account))
+        .route("/account/action", post[Route](Route::AuthAction))
+        .route("/auth/device", get[Route](Route::Device))
+        .route("/api/v1/auth/device", post[Route](Route::DeviceStart))
+        .route("/api/v1/auth/token", post[Route](Route::DeviceToken))
+        .route("/api/v1/me", get[Route](Route::Me))
+        .route("/api/v1/auth/logout", post[Route](Route::Logout))
+        .route("/assets/index.css", get[Route](Route::Styles))
+        .route("/assets/registry.css", get[Route](Route::Styles))
+        .route("/assets/copy.js", get[Route](Route::CopyScript))
+        .route("/healthz", get[Route](Route::Health))
+        .route("/index/config.json", get[Route](Route::Config))
+        .route("/api/v1/packages", get[Route](Route::Catalog))
+        .route("/api/v1/packages/{name}", get[Route](Route::ApiPackage))
+        .route("/index/{prefix}/{file}", get[Route](Route::Metadata))
+        .route("/packages/{name}", get[Route](Route::Package))
+        .route("/api/v1/uploads", post[Route](Route::Upload))
+        .route("/api/v1/uploads/{id}", delete[Route](Route::Cancel))
+        .route("/api/v1/uploads/{id}/{offset}", put[Route](Route::Chunk))
+        .route("/api/v1/uploads/{id}/finish", post[Route](Route::Finish))
+        .route("/api/v1/packages/{name}/{version}/yank", post[Route](Route::Yank))
+        .route("/api/v1/packages/{name}/{version}/unyank", post[Route](Route::Unyank))
+        .route("/archives/{file}", get[Route](Route::Archive))
+        .route("/", get[Route](Route::Home))
+    }
+}
+fn argument(index: usize) -> str {
+    ret argv(index).unwrap_or("")
+}
+fn admin(command: str, directory: str) -> Result[str, SqliteError] {
+    with Store::open(directory + "/registry.sqlite3")? as db {
+        if command == "init" {
+            ret Result::Ok("ok")
+        }
+        if command == "token-create" {
+            ret legacy_token(db, argument(2_usize))
+        }
+        let ok = if command == "user-add" {
+            user_add(db, argument(2_usize))?
+        } elif command == "reserve" {
+            reserve(db, argument(2_usize), argument(3_usize))?
+        } elif command == "token-revoke" {
+            revoke_legacy(db, argument(2_usize))?
+        } elif command == "github-link" {
+            link_github(db, argument(2_usize), argument(3_usize))?
+        } else {
+            false
+        }
+        ret Result::Ok(if ok {
+                "ok"
+            } else {
+                ""
+            }
+        )
+    }
+}
+fn main() -> u32 {
+    let command = argument(1_usize)
+    if command != "serve" && command != "init" && command != "user-add" && command != "token-create" && command != "token-revoke" && command != "reserve" && command != "github-link" {
+        eprintln("Usage: encore-index init | serve | user-add NAME | token-create OWNER | token-revoke ID | reserve PACKAGE OWNER | github-link OWNER GITHUB_ID") ret 2_u32
+    }
+    if unsafe {
+        registry_store_open(setting("ENCORE_INDEX_DATA", "ENCORE_REGISTRY_DATA", "data"))
+    }
+    == 0_i32 {
+        eprintln("Cannot open storage: check permissions, schema and running instances") ret 1_u32
+    }
+    let code = run_command(command)
+    unsafe {
+        registry_store_close()
+    }
+    ret code
+}
+fn run_command(command: str) -> u32 {
+    if command == "serve" {
+        let port = numeric_id(setting("ENCORE_INDEX_PORT", "ENCORE_REGISTRY_PORT", "8137"))
+        if port < 1_i64 || port > 65535_i64 {
+            eprintln("Invalid ENCORE_INDEX_PORT") ret 2_u32
+        }
+        let css = read_file(setting("ENCORE_INDEX_CSS", "ENCORE_REGISTRY_CSS", "assets/index.css"))
+        if css == "" {
+            eprintln("Cannot load registry CSS; run from the project directory or set ENCORE_INDEX_CSS") ret 1_u32
+        }
+        if unsafe {
+            registry_service_start(public_url())
+        }
+        == 0_i32 {
+            eprintln("Cannot start storage workers") ret 1_u32
+        }
+        let config = ServerConfig::new("127.0.0.1", port as usize).with_workers(1_usize).with_max_request_body(65536_usize).with_max_pipeline_depth(4_usize).with_max_write_queue(5000000_usize)
+        let copy_script = read_file("assets/copy.js")
+        if copy_script == "" {
+            eprintln("Cannot load assets/copy.js") ret 1_u32
+        }
+        let factory = IndexApp {
+            css, copy_script
+        }
+        let shutdown = ShutdownToken::new()
+        let directory = setting("ENCORE_INDEX_DATA", "ENCORE_REGISTRY_DATA", "data")
+        let url = public_url()
+        println("Encore Index: " + url)
+        let storage = spawn storage_worker(directory, url)
+        let started = unsafe {
+            registry_storage_started()
+        }
+        != 0_i32
+        let oauth_left = spawn oauth_worker()
+        let oauth_right = spawn oauth_worker()
+        let mut code = 1_u32
+        if started {
+            match serve[Route, Pending, IndexApp, IndexApp](config, factory, shutdown) {
+                Result::Ok(_) => {
+                    code = 0_u32
+                }
+                Result::Err(error) => {
+                    eprintln(error.message())
+                }
+            }
+        } else {
+            eprintln("Cannot initialize storage worker")
+        }
+        unsafe {
+            registry_oauth_stop()
+        }
+        let _left = oauth_left.join()
+        let _right = oauth_right.join()
+        let _storage = storage.join()
+        ret code
+    } else {
+        let result = match admin(command, setting("ENCORE_INDEX_DATA", "ENCORE_REGISTRY_DATA", "data")) {
+            Result::Ok(value) => value
+            Result::Err(_) => ""
+        }
+        if result == "" {
+            eprintln("Administrative operation failed") ret 1_u32
+        }
+        if command != "init" {
+            println(result)
+        }
+        ret 0_u32
+    }
+    ret 1_u32
+}

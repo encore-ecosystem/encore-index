@@ -1,0 +1,161 @@
+//! Cookie/form boundaries and server-rendered account/device pages.
+import blaze::{Request, Response}
+import core::vec::Vec
+import json::{Json, field, object, parse, stringify}
+import refrain::validation::string_field
+import refrain::views::{escape, page_status}
+
+extern fn registry_query_decode(value: str) -> str
+extern fn registry_cookie_name(oauth: bool) -> str
+
+/// Returns one unambiguous cookie; duplicate names are rejected.
+pub fn cookie(request: Request, oauth: bool) -> str {
+    let name = unsafe {
+        registry_cookie_name(oauth)
+    }
+    let value = request.header("Cookie").unwrap_or("")
+    if value.len() > 8192_usize {
+        ret ""
+    }
+    let mut out = ""
+    let mut found = false
+    let mut start = 0_usize
+    let mut i = 0_usize
+    while i <= value.len() {
+        if i == value.len() || value.slice(i, 1_usize) == ";" {
+            while start < i && value.slice(start, 1_usize) == " " {
+                start += 1_usize
+            }
+            let part = value.slice(start, i - start)
+            if part.len() > name.len() && part.slice(0_usize, name.len() + 1_usize) == name + "=" {
+                if found {
+                    ret ""
+                }
+                found = true
+                out = part.slice(name.len() + 1_usize, part.len() - name.len() - 1_usize)
+            }
+            start = i + 1_usize
+        }
+        i += 1_usize
+    }
+    ret out
+}
+/// Parses bounded forms. Duplicate parameters cannot override security fields.
+pub fn form(request: Request) -> Json {
+    if request.header("Content-Type").unwrap_or("") != "application/x-www-form-urlencoded" {
+        ret Json::Null
+    }
+    ret form_data(request.body())
+}
+fn form_data(body: str) -> Json {
+    if body.len() > 8192_usize {
+        ret Json::Null
+    }
+    let mut fields = Vec[(str, Json)]::new()
+    let mut start = 0_usize
+    let mut i = 0_usize
+    while i <= body.len() {
+        if i == body.len() || body.slice(i, 1_usize) == "&" {
+            let item = body.slice(start, i - start)
+            let mut equal = 0_usize
+            while equal < item.len() && item.slice(equal, 1_usize) != "=" {
+                equal += 1_usize
+            }
+            if equal == 0_usize || equal == item.len() || fields.len() >= 16_usize {
+                ret Json::Null
+            }
+            let name = unsafe {
+                registry_query_decode(item.slice(0_usize, equal))
+            }
+            if name == "" || object(fields).get(name).is_some() {
+                ret Json::Null
+            }
+            let value = unsafe {
+                registry_query_decode(item.slice(equal + 1_usize, item.len() - equal - 1_usize))
+            }
+            fields.push(field(name, Json::String(value)))
+            start = i + 1_usize
+        }
+        i += 1_usize
+    }
+    ret object(fields)
+}
+fn hidden(name: str, value: str) -> str {
+    ret "<input type=\"hidden\" name=\"" + name + "\" value=\"" + escape(value) + "\">"
+}
+fn begin_form(csrf: str, action: str) -> str {
+    ret "<form class=\"account-form\" method=\"post\" action=\"/account/action\">" + hidden("csrf", csrf) + hidden("action", action)
+}
+/// Formats only trusted redirect/cookie envelopes and escaped user content.
+pub fn auth_response(status: u16, body: str, device: bool, code: str) -> Response {
+    let data = parse(body).unwrap_or(Json::Null)
+    let redirect = string_field(data, "redirect")
+    if status == 200_u16 && redirect != "" {
+        let response = Response::status(303_u16).with_header("Location", redirect).with_header("Cache-Control", "no-store").with_header("Referrer-Policy", "no-referrer")
+        let set_cookie = string_field(data, "cookie")
+        if set_cookie != "" {
+            ret response.with_header("Set-Cookie", set_cookie)
+        }
+        ret response
+    }
+    let mut html = "<section class=\"catalogue\"><h1>" + if device {
+        "Connect Encore"
+    } else {
+        "Account"
+    }
+    + "</h1>"
+    if status == 401_u16 {
+        html += "<a class=\"button-secondary\" href=\"/auth/github/start?next=" + if device {
+            "device"
+        } else {
+            "account"
+        }
+        + "\">Sign in with GitHub →</a>"
+    } elif status != 200_u16 {
+        html += "<p>" + escape(string_field(data, "error")) + "</p><a href=\"/account\">Back to account</a>"
+    } elif string_field(data, "issued_token") != "" {
+        html += "<p>Save this CI token now. It will not be shown again.</p><code class=\"checksum\">" + escape(string_field(data, "issued_token")) + "</code><a href=\"/account\">Done</a>"
+    } elif string_field(data, "message") != "" {
+        html += "<p>" + escape(string_field(data, "message")) + "</p><a href=\"/account\">Account</a>"
+    } else {
+        let csrf = string_field(data, "csrf")
+        html += "<p>Signed in as <strong>" + escape(string_field(data, "name")) + "</strong></p>"
+        if device {
+            html += "<form class=\"account-form\" method=\"get\" action=\"/auth/device\"><label>Device code<input name=\"code\" required maxlength=\"8\" value=\"" + escape(code) + "\" autocomplete=\"off\"></label><button>Review device</button></form>"
+            let label = string_field(data, "device_label")
+            if label != "" {
+                html += "<p>Code <strong>" + escape(code) + "</strong> · Device: " + escape(label) + "</p><p>Allow publishing and yanking packages you own. Approve only a request you started in your terminal.</p>"
+                html += begin_form(csrf, "approve") + hidden("code", code) + "<button>Approve device</button></form>"
+                html += begin_form(csrf, "deny") + hidden("code", code) + "<button>Deny</button></form>"
+            }
+        } else {
+            html += "<h2>Your packages</h2><ul>"
+            for package in data.get("packages").unwrap_or(Json::Null).as_array().unwrap_or(Vec[Json]::new()) {
+                let name = package.as_str().unwrap_or("")
+                html += "<li><a href=\"/packages/" + escape(name) + "\">" + escape(name) + "</a></li>"
+            }
+            html += "</ul><a href=\"/auth/device\">Connect a device →</a><h2>Devices, sessions and CI tokens</h2><ul class=\"version-list\">"
+            for credential in data.get("credentials").unwrap_or(Json::Null).as_array().unwrap_or(Vec[Json]::new()) {
+                let id = stringify(credential.get("id").unwrap_or(Json::Null))
+                html += "<li class=\"version-row\"><h3>" + escape(string_field(credential, "label")) + "</h3><p>" + escape(string_field(credential, "kind")) + " · " + escape(string_field(credential, "permissions")) + "</p><p>Last used: " + escape(string_field(credential, "last_used")) + " · Expires: " + escape(string_field(credential, "expires")) + "</p>"
+                if string_field(credential, "kind") == "ci" {
+                    html += "<p>Packages: " + escape(stringify(credential.get("packages").unwrap_or(Json::Null))) + "</p>"
+                }
+                if stringify(credential.get("revoked").unwrap_or(Json::Null)) == "0" {
+                    html += begin_form(csrf, "revoke") + hidden("id", id) + "<button>Revoke</button></form>"
+                } else {
+                    html += "<span class=\"badge\">Revoked</span>"
+                }
+                html += "</li>"
+            }
+            html += "</ul><h2>Create CI token</h2>" + begin_form(csrf, "ci") +
+            "<label>Label<input name=\"label\" required maxlength=\"64\"></label><label>Packages (comma-separated)<input name=\"packages\" required></label><label>Lifetime (days)<input name=\"days\" type=\"number\" min=\"1\" max=\"90\" value=\"30\" required></label><label><input type=\"checkbox\" name=\"publish\" checked> Publish</label><label><input type=\"checkbox\" name=\"yank\"> Yank / unyank</label><button>Create token</button></form>"
+            html += begin_form(csrf, "logout") + "<button>Sign out</button></form>"
+        }
+    }
+    ret page_status("Account", html + "</section>", "", status).with_header("Cache-Control", "no-store").with_header("Referrer-Policy", "no-referrer")
+}
+#attr(test)
+fn rejects_duplicate_security_fields() -> bool {
+    ret form_data("csrf=one&csrf=two").is_null() && string_field(form_data("label=a%2Bb"), "label") == "a+b"
+}

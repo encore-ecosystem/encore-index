@@ -1,0 +1,102 @@
+//! Immutable publication policy. Files become durable before SQL is committed.
+import core::result::Result
+import json::{Json, parse}
+import refrain::storage::{Store, owns, p1, p2, p3}
+import refrain::storage_auth::{authenticate, allows}
+import refrain::validation::{identifier, string_field}
+import sqlite::{SqliteError, Value}
+
+/// The upload adapter installs validated bytes, verifies their hash and fsyncs.
+/// Failure must never make an existing archive disappear or change its bytes.
+pub trait ArchiveInstaller {
+    fn install(self: Self, checksum: str) -> bool
+}
+pub struct Publication {
+    owner: i64
+    token: str
+    metadata: str
+    manifests: str
+    checksum: str
+    size: i64
+    public_url: str
+}
+pub struct PublishResult {
+    status: i32
+    body: str
+}
+fn error(status: i32, body: str) -> PublishResult {
+    ret PublishResult {
+        status, body
+    }
+}
+fn checksum_valid(value: str) -> bool {
+    if value.len() != 64_usize {
+        ret false
+    }
+    let mut index = 0_usize
+    while index < value.len() {
+        let byte = value.byte_at(index)
+        if !((byte >= 48_u8 && byte <= 57_u8) ||(byte >= 97_u8 && byte <= 102_u8)) {
+            ret false
+        }
+        index += 1_usize
+    }
+    ret true
+}
+
+/// Input metadata has already passed manifest validation on the HTTP side.
+/// Rechecks identity, authentication and ownership inside one transaction.
+pub fn publish[I: ArchiveInstaller](db: Store, input: Publication, files: I) -> Result[PublishResult, SqliteError] {
+    let document = match parse(input.metadata) {
+        Result::Ok(value) => value Result::Err(_) => Json::Null
+    }
+    let name = string_field(document, "name")
+    let version = string_field(document, "version")
+    if !identifier(name) || version == "" || version.len() > 128_usize ||
+    !checksum_valid(input.checksum) || input.size < 0_i64 || input.size > 4194304_i64 {
+        ret Result::Ok(error(400_i32, "{\"error\":\"invalid package identity\"}"))
+    }
+    with db.begin()? as tx {
+        if authenticate(tx, input.token)? != input.owner || input.owner == 0_i64 || !allows(tx, input.token, name, false)? {
+            ret Result::Ok(error(403_i32, "{\"error\":\"publication credential scope denied\"}"))
+        }
+        if tx.execute("INSERT OR IGNORE INTO packages(name) VALUES(?1)", p1(Value::Text(name)))? == 1_i64 {
+            let _owner = tx.execute("INSERT INTO owners(package,owner) VALUES(?1,?2)", p2(Value::Text(name), Value::Integer(input.owner)))?
+        }
+        if !owns(tx, input.owner, name)? {
+            ret Result::Ok(error(403_i32, "{\"error\":\"package ownership denied\"}"))
+        }
+        let existing = tx.text("SELECT checksum FROM versions WHERE package=?1 AND version=?2", p2(Value::Text(name), Value::Text(version)))?
+        if existing != "" {
+            if existing == input.checksum {
+                ret Result::Ok(PublishResult {
+                        200_i32, "{\"published\":true,\"existing\":true}"
+                    }
+                    ,
+                )
+            }
+            ret Result::Ok(error(409_i32, "{\"error\":\"version already exists with different bytes\"}"))
+        }
+        let metadata = tx.text("SELECT json_set(?1,'$.archive',?2,'$.checksum',?3,'$.yanked',json('false'))",
+            p3(Value::Text(input.metadata), Value::Text(input.public_url + "/archives/" + input.checksum + ".tar.gz"), Value::Text(input.checksum)),)?
+        let used = tx.scalar("SELECT coalesce(sum(length(CAST(metadata AS BLOB))),0) FROM versions WHERE package=?1", p1(Value::Text(name)))?
+        if used + metadata.len() as i64 > 524288_i64 {
+            ret Result::Ok(error(413_i32, "{\"error\":\"package metadata exceeds 512 KiB\"}"))
+        }
+        // A crash here can leave an unreferenced immutable file, never a visible
+        // package referring to missing bytes. Backup/GC can handle such orphans.
+        if !files.install(input.checksum) {
+            ret Result::Ok(error(503_i32, "{\"error\":\"archive installation failed\"}"))
+        }
+        let _version = tx.execute("INSERT INTO versions(package,version,release,checksum,size,manifest,metadata) SELECT json_extract(?1,'$.name'),json_extract(?1,'$.version'),json_extract(?1,'$.release'),json_extract(?1,'$.checksum'),?3,?2,?1",
+            p3(Value::Text(metadata), Value::Text(input.manifests), Value::Integer(input.size)),)?
+        let _description = tx.execute("UPDATE packages SET description=coalesce(json_extract(?2,'$.description'),'') WHERE name=?1", p2(Value::Text(name), Value::Text(metadata)))?
+        let _audit = tx.execute("INSERT INTO audit(owner,action,package,version) VALUES(?1,'publish',?2,?3)", p3(Value::Integer(input.owner), Value::Text(name), Value::Text(version)))?
+        let _commit = tx.commit()?
+        ret Result::Ok(PublishResult {
+                201_i32, "{\"published\":true}"
+            }
+            ,
+        )
+    }
+}
