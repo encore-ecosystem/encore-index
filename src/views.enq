@@ -3,7 +3,9 @@ import blaze::Response
 import core::fmt::Debug
 import core::result::Result
 import core::vec::Vec
+
 import json::{Json, parse, stringify}
+
 import refrain::validation::string_field
 
 pub fn escape(value: str) -> str {

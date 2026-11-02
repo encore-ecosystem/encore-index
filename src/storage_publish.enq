@@ -1,10 +1,11 @@
 //! Immutable publication policy. Files become durable before SQL is committed.
 import core::result::Result
 import json::{Json, parse}
-import refrain::storage::{Store, owns, p1, p2, p3}
-import refrain::storage_auth::{authenticate, allows}
-import refrain::validation::{identifier, string_field}
 import sqlite::{SqliteError, Value}
+
+import refrain::storage::{Store, owns, p1, p2, p3}
+import refrain::storage_auth::{allows, authenticate}
+import refrain::validation::{identifier, string_field}
 
 /// The upload adapter installs validated bytes, verifies their hash and fsyncs.
 /// Failure must never make an existing archive disappear or change its bytes.

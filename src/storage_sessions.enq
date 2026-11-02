@@ -1,53 +1,156 @@
-//! Browser/OAuth persistence. The provider exchange happens outside this layer.
+//! Provider-independent account, identity, registration and browser persistence.
 import core::option::Option
 import core::result::Result
 import core::vec::Vec
-import refrain::storage::{Store, audit, numeric_id, p1, p2, p3, storage_error, user_add}
-import refrain::storage_auth::credential_insert
+
 import sqlite::{SqliteError, Value}
 
+import refrain::storage::{Store, audit, p1, p2, p3, storage_error, user_add, valid_name}
+import refrain::storage_auth::{credential_insert, digest, secret}
+
+/// Provider adapters supply a verified stable subject, never an email match.
+pub struct ExternalIdentity {
+    provider: str
+    subject: str
+    login: str
+}
+
 pub fn oauth_start(db: Store, state: str, binding: str, verifier: str, destination: str) -> Result[bool, SqliteError] {
+    ret oauth_start_flow(db, state, binding, verifier, destination, "login", "")
+}
+pub fn oauth_start_flow(db: Store, state: str, binding: str, verifier: str, destination: str, purpose: str, session: str) -> Result[bool, SqliteError] {
+    ret oauth_start_provider(db, state, binding, verifier, destination, purpose, session, "github")
+}
+pub fn oauth_start_provider(db: Store, state: str, binding: str, verifier: str, destination: str, purpose: str, session: str, provider: str) -> Result[bool, SqliteError] {
     with db.begin()? as tx {
         let _expired = tx.execute("DELETE FROM oauth_attempts WHERE expires<=unixepoch()", Vec[Value]::new())?
         let mut values = p3(Value::Text(state), Value::Text(binding), Value::Text(verifier))
         values.push(Value::Text(destination))
-        if tx.execute("INSERT INTO oauth_attempts(digest,binding,verifier,destination,expires) SELECT ?1,?2,?3,?4,unixepoch()+600 WHERE (SELECT count(*) FROM oauth_attempts)<128", values)? != 1_i64 {
+        values.push(Value::Text(purpose))
+        values.push(Value::Text(session))
+        values.push(Value::Text(provider))
+        if tx.execute("INSERT INTO oauth_attempts(digest,binding,verifier,destination,purpose,session_digest,provider,expires) SELECT ?1,?2,?3,?4,?5,?6,?7,unixepoch()+600 WHERE (SELECT count(*) FROM oauth_attempts)<128", values)? != 1_i64 {
             ret Result::Ok(false)
         }
         ret tx.commit()
     }
 }
-pub fn oauth_consume(db: Store, state: str, binding: str) -> Result[(str, str), SqliteError] {
-    let rows = db.query("DELETE FROM oauth_attempts WHERE digest=?1 AND binding=?2 AND expires>unixepoch() RETURNING verifier,destination", p2(Value::Text(state), Value::Text(binding)))?
+pub fn oauth_consume(db: Store, state: str, binding: str) -> Result[(str, str, str, str, str), SqliteError] {
+    let rows = db.query("DELETE FROM oauth_attempts WHERE digest=?1 AND binding=?2 AND expires>unixepoch() RETURNING verifier,destination,purpose,session_digest,provider", p2(Value::Text(state), Value::Text(binding)))?
     match rows.get(0_usize) {
         Option::Some(row) => {
-            ret Result::Ok((row.text(0_usize)?, row.text(1_usize)?))
+            ret Result::Ok((row.text(0_usize)?, row.text(1_usize)?, row.text(2_usize)?, row.text(3_usize)?, row.text(4_usize)?))
         }
         Option::None => {
-            ret Result::Ok(("", ""))
+            ret Result::Ok(("", "", "", "", ""))
         }
     }
 }
-pub fn oauth_finish(db: Store, subject: str) -> Result[str, SqliteError] {
-    if numeric_id(subject) == 0_i64 {
+pub fn session_owner(db: Store, hash: str) -> Result[i64, SqliteError] {
+    ret db.scalar("SELECT c.owner FROM credentials c JOIN users u ON u.id=c.owner WHERE c.digest=?1 AND c.kind='browser' AND c.revoked=0 AND c.expires>unixepoch() AND c.last_used+c.idle_seconds>unixepoch() AND u.active=1", p1(Value::Text(hash)))
+}
+fn identity_valid(identity: ExternalIdentity) -> bool {
+    ret identity.provider != "" && identity.provider.len() <= 64_usize && identity.subject != "" && identity.subject.len() <= 255_usize && identity.login.len() <= 256_usize
+}
+pub fn identity_login(db: Store, identity: ExternalIdentity) -> Result[str, SqliteError] {
+    if !identity_valid(identity) {
         ret Result::Err(storage_error("invalid provider identity"))
     }
     with db.begin()? as tx {
-        let mut owner = tx.scalar("SELECT owner FROM identities WHERE provider='github' AND subject=?1", p1(Value::Text(subject)))?
+        let owner = tx.scalar("SELECT owner FROM identities WHERE provider=?1 AND subject=?2", p2(Value::Text(identity.provider), Value::Text(identity.subject)))?
         if owner == 0_i64 {
-            let _user = user_add(tx, "github_" + subject)?
-            owner = tx.rowid()?
-            let _identity = tx.execute("INSERT INTO identities(provider,subject,owner) VALUES('github',?1,?2)", p2(Value::Text(subject), Value::Integer(owner)))?
+            ret Result::Ok("")
         }
+        let _profile = tx.execute("UPDATE identities SET login=?3 WHERE provider=?1 AND subject=?2", p3(Value::Text(identity.provider), Value::Text(identity.subject), Value::Text(identity.login)))?
         let credential = credential_insert(tx, owner, "browser", "Browser", 30_i64, false, false)?
-        let _audit = audit(tx, owner, credential.0, "github-login")?
+        let _audit = audit(tx, owner, credential.0, "identity-login")?
         let _commit = tx.commit()?
         ret Result::Ok(credential.1)
     }
 }
-pub fn account(db: Store, owner: i64, csrf: str, code_digest: str) -> Result[str, SqliteError] {
-    ret db.text("SELECT json_object('name',name,'csrf',?2,'device_label',coalesce((SELECT label FROM device_authorizations WHERE code_digest=?3 AND state='pending' AND expires>unixepoch()),''),'credentials',json((SELECT json_group_array(json_object('id',id,'kind',kind,'label',label,'last_used',strftime('%Y-%m-%d %H:%M UTC',last_used,'unixepoch'),'expires',strftime('%Y-%m-%d %H:%M UTC',expires,'unixepoch'),'revoked',revoked,'permissions',CASE WHEN can_publish=1 AND can_yank=1 THEN 'publish, yank' WHEN can_publish=1 THEN 'publish' WHEN can_yank=1 THEN 'yank' ELSE 'account' END,'packages',json((SELECT json_group_array(package) FROM credential_packages WHERE credential=c.id)))) FROM (SELECT * FROM credentials WHERE owner=?1 ORDER BY id DESC LIMIT 100)c)),'packages',json((SELECT json_group_array(package) FROM owners WHERE owner=?1))) FROM users WHERE id=?1",
-        p3(Value::Integer(owner), Value::Text(csrf), Value::Text(code_digest)),)
+pub fn identity_link(db: Store, session: str, identity: ExternalIdentity) -> Result[bool, SqliteError] {
+    if !identity_valid(identity) {
+        ret Result::Err(storage_error("invalid provider identity"))
+    }
+    with db.begin()? as tx {
+        let owner = session_owner(tx, session)?
+        if owner == 0_i64 {
+            ret Result::Ok(false)
+        }
+        let mut values = p3(Value::Text(identity.provider), Value::Text(identity.subject), Value::Integer(owner))
+        values.push(Value::Text(identity.login))
+        // A different account or a second identity for this provider is never replaced.
+        if tx.execute("INSERT INTO identities(provider,subject,owner,login) VALUES(?1,?2,?3,?4) ON CONFLICT(provider,subject) DO UPDATE SET login=excluded.login WHERE identities.owner=excluded.owner", values)? != 1_i64 {
+            ret Result::Ok(false)
+        }
+        let _audit = audit(tx, owner, 0_i64, "identity-link")?
+        let _commit = tx.commit()?
+        ret Result::Ok(true)
+    }
+}
+pub fn identity_unlink(db: Store, owner: i64, provider: str) -> Result[bool, SqliteError] {
+    with db.begin()? as tx {
+        if tx.execute("DELETE FROM identities WHERE owner=?1 AND provider=?2 AND (SELECT count(*) FROM identities WHERE owner=?1)>1", p2(Value::Integer(owner), Value::Text(provider)))? != 1_i64 {
+            ret Result::Ok(false)
+        }
+        let _audit = audit(tx, owner, 0_i64, "identity-unlink")?
+        let _commit = tx.commit()?
+        ret Result::Ok(true)
+    }
+}
+pub fn registration_start(db: Store, identity: ExternalIdentity, destination: str) -> Result[str, SqliteError] {
+    if !identity_valid(identity) {
+        ret Result::Err(storage_error("invalid provider identity"))
+    }
+    with db.begin()? as tx {
+        let _expired = tx.execute("DELETE FROM registrations WHERE expires<=unixepoch()", Vec[Value]::new())?
+        let token = secret("eob_")?
+        let mut values = p3(Value::Text(digest(token)?), Value::Text(identity.provider), Value::Text(identity.subject))
+        values.push(Value::Text(identity.login))
+        values.push(Value::Text(destination))
+        if tx.execute("INSERT INTO registrations(digest,provider,subject,login,destination,expires) SELECT ?1,?2,?3,?4,?5,unixepoch()+600 WHERE (SELECT count(*) FROM registrations)<128", values)? != 1_i64 {
+            ret Result::Err(storage_error("too many pending registrations"))
+        }
+        let _commit = tx.commit()?
+        ret Result::Ok(token)
+    }
+}
+pub fn registration_view(db: Store, token: str, error: str, name: str) -> Result[str, SqliteError] {
+    if token.len() != 68_usize || token.slice(0_usize, 4_usize) != "eob_" {
+        ret Result::Ok("")
+    }
+    let mut values = p3(Value::Text(digest(token)?), Value::Text(digest("registration:" + token)?), Value::Text(error))
+    values.push(Value::Text(name))
+    ret db.text("SELECT json_object('registration',json('true'),'csrf',?2,'error',?3,'suggested',CASE WHEN ?4='' THEN lower(login) ELSE ?4 END,'login',login,'provider',provider) FROM registrations WHERE digest=?1 AND expires>unixepoch()", values)
+}
+pub fn registration_finish(db: Store, token: str, name: str) -> Result[(str, str), SqliteError] {
+    if !valid_name(name) {
+        ret Result::Err(storage_error("use 1-64 lowercase letters, digits, hyphens or underscores"))
+    }
+    with db.begin()? as tx {
+        let rows = tx.query("DELETE FROM registrations WHERE digest=?1 AND expires>unixepoch() RETURNING provider,subject,login,destination", p1(Value::Text(digest(token)?)))?
+        let row = match rows.get(0_usize) {
+            Option::Some(value) => value
+            Option::None => {
+                ret Result::Err(storage_error("registration expired; sign in again"))
+            }
+        }
+        let _user = user_add(tx, name)?
+        let owner = tx.rowid()?
+        let mut values = p3(Value::Text(row.text(0_usize)?), Value::Text(row.text(1_usize)?), Value::Integer(owner))
+        values.push(Value::Text(row.text(2_usize)?))
+        let _identity = tx.execute("INSERT INTO identities(provider,subject,owner,login) VALUES(?1,?2,?3,?4)", values)?
+        let credential = credential_insert(tx, owner, "browser", "Browser", 30_i64, false, false)?
+        let _audit = audit(tx, owner, credential.0, "register")?
+        let _commit = tx.commit()?
+        ret Result::Ok((credential.1, row.text(3_usize)?))
+    }
+}
+pub fn account(db: Store, owner: i64, csrf: str, code_digest: str, providers: str) -> Result[str, SqliteError] {
+    let mut values = p3(Value::Integer(owner), Value::Text(csrf), Value::Text(code_digest))
+    values.push(Value::Text(providers))
+    ret db.text("SELECT json_object('name',name,'csrf',?2,'providers',json(?4),'identities',json((SELECT json_group_array(json_object('provider',provider,'login',login)) FROM identities WHERE owner=?1)),'device_label',coalesce((SELECT label FROM device_authorizations WHERE code_digest=?3 AND state='pending' AND expires>unixepoch()),''),'credentials',json((SELECT json_group_array(json_object('id',id,'kind',kind,'label',label,'last_used',strftime('%Y-%m-%d %H:%M UTC',last_used,'unixepoch'),'expires',strftime('%Y-%m-%d %H:%M UTC',expires,'unixepoch'),'revoked',revoked,'permissions',CASE WHEN can_publish=1 AND can_yank=1 THEN 'publish, yank' WHEN can_publish=1 THEN 'publish' WHEN can_yank=1 THEN 'yank' ELSE 'account' END,'packages',json((SELECT json_group_array(package) FROM credential_packages WHERE credential=c.id)))) FROM (SELECT * FROM credentials WHERE owner=?1 ORDER BY id DESC LIMIT 100)c)),'packages',json((SELECT json_group_array(package) FROM owners WHERE owner=?1))) FROM users WHERE id=?1",
+        values,)
 }
 pub fn whoami(db: Store, owner: i64) -> Result[str, SqliteError] {
     ret db.text("SELECT json_object('name',name,'id',id) FROM users WHERE id=?1", p1(Value::Integer(owner)))

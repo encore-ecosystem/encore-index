@@ -2,6 +2,7 @@
 import core::option::Option
 import core::result::Result
 import core::vec::Vec
+
 import sqlite::{Connection, SqliteError, Value}
 
 pub fn initialize(db: Connection) -> Result[bool, SqliteError] {
@@ -15,7 +16,7 @@ pub fn initialize(db: Connection) -> Result[bool, SqliteError] {
         Option::Some(row) => row.integer(0_usize)?
         Option::None => - 1_i64
     }
-    if version < 0_i64 || version > 3_i64 {
+    if version < 0_i64 || version > 5_i64 {
         ret Result::Err(SqliteError {
                 21_i32, 21_i32, "unsupported registry schema"
             }
@@ -52,6 +53,35 @@ pub fn initialize(db: Connection) -> Result[bool, SqliteError] {
         with db.transaction(true)? as tx {
             let _step = tx.execute("CREATE TABLE oauth_attempts(digest TEXT PRIMARY KEY,binding TEXT NOT NULL,verifier TEXT NOT NULL,destination TEXT NOT NULL,expires INTEGER NOT NULL)", Vec[Value]::new())?
             let _step = tx.execute("PRAGMA user_version=3", Vec[Value]::new())?
+            let _commit = tx.commit()?
+        }
+    }
+    if version < 4_i64 {
+        // Rebuild the CHECK constraint without renaming referenced tables.
+        // A failed migration closes this connection; the transaction rolls back.
+        let _foreign = db.execute("PRAGMA foreign_keys=OFF", Vec[Value]::new())?
+        with db.transaction(true)? as tx {
+            let _step = tx.execute("CREATE TABLE credentials_v4(id INTEGER PRIMARY KEY,owner INTEGER NOT NULL REFERENCES users(id),kind TEXT NOT NULL CHECK(kind IN('device','browser','ci','personal')),digest TEXT NOT NULL UNIQUE,label TEXT NOT NULL,created INTEGER NOT NULL,last_used INTEGER NOT NULL,expires INTEGER NOT NULL,idle_seconds INTEGER NOT NULL,revoked INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN(0,1)),can_publish INTEGER NOT NULL DEFAULT 0 CHECK(can_publish IN(0,1)),can_yank INTEGER NOT NULL DEFAULT 0 CHECK(can_yank IN(0,1)))", Vec[Value]::new())?
+            let _step = tx.execute("INSERT INTO credentials_v4 SELECT * FROM credentials", Vec[Value]::new())?
+            let _step = tx.execute("DROP TABLE credentials", Vec[Value]::new())?
+            let _step = tx.execute("ALTER TABLE credentials_v4 RENAME TO credentials", Vec[Value]::new())?
+            let _step = tx.execute("CREATE INDEX credential_owner ON credentials(owner)", Vec[Value]::new())?
+            let _step = tx.execute("ALTER TABLE identities ADD COLUMN login TEXT NOT NULL DEFAULT ''", Vec[Value]::new())?
+            let _step = tx.execute("ALTER TABLE oauth_attempts ADD COLUMN purpose TEXT NOT NULL DEFAULT 'login' CHECK(purpose IN('login','link'))", Vec[Value]::new())?
+            let _step = tx.execute("ALTER TABLE oauth_attempts ADD COLUMN session_digest TEXT NOT NULL DEFAULT ''", Vec[Value]::new())?
+            let _step = tx.execute("CREATE TABLE registrations(digest TEXT PRIMARY KEY,provider TEXT NOT NULL,subject TEXT NOT NULL,login TEXT NOT NULL,destination TEXT NOT NULL,expires INTEGER NOT NULL)", Vec[Value]::new())?
+            if tx.query("PRAGMA foreign_key_check", Vec[Value]::new())?.len() != 0_usize {
+                ret Result::Err(SqliteError { 19_i32, 19_i32, "migration foreign key check failed" })
+            }
+            let _step = tx.execute("PRAGMA user_version=4", Vec[Value]::new())?
+            let _commit = tx.commit()?
+        }
+        let _foreign = db.execute("PRAGMA foreign_keys=ON", Vec[Value]::new())?
+    }
+    if version < 5_i64 {
+        with db.transaction(true)? as tx {
+            let _step = tx.execute("ALTER TABLE oauth_attempts ADD COLUMN provider TEXT NOT NULL DEFAULT 'github'", Vec[Value]::new())?
+            let _step = tx.execute("PRAGMA user_version=5", Vec[Value]::new())?
             let _commit = tx.commit()?
         }
     }

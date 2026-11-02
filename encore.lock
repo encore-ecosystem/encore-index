@@ -41,6 +41,30 @@ checksum = "4ff65072dd8b487ab68ddeec17eb2dff261aa7cad063d23ebb11656be4c7ea7f"
 registry = "http://127.0.0.1:8137/index"
 
 [[packages]]
+name = "dotenv"
+ref = "index@dotenv@0.1.1"
+version = "0.1.1"
+archive = "http://127.0.0.1:8137/archives/08cc9802bc52a1f6fbb5bb7299c022460499445b0462c9293efd95bd8bb40de1.tar.gz"
+checksum = "08cc9802bc52a1f6fbb5bb7299c022460499445b0462c9293efd95bd8bb40de1"
+registry = "http://127.0.0.1:8137/index"
+
+[[packages]]
+name = "crypto"
+ref = "index@crypto@0.1.0"
+version = "0.1.0"
+archive = "http://127.0.0.1:8137/archives/28081f05029fadbced361b81a71c1530ab3eaef78b5085bffc71c1fa84cb943d.tar.gz"
+checksum = "28081f05029fadbced361b81a71c1530ab3eaef78b5085bffc71c1fa84cb943d"
+registry = "http://127.0.0.1:8137/index"
+
+[[packages]]
+name = "archive"
+ref = "index@archive@0.1.0"
+version = "0.1.0"
+archive = "http://127.0.0.1:8137/archives/9b4e9f4ce19514278827382917284a55c04016bb879ac816e7460d9849c7ffda.tar.gz"
+checksum = "9b4e9f4ce19514278827382917284a55c04016bb879ac816e7460d9849c7ffda"
+registry = "http://127.0.0.1:8137/index"
+
+[[packages]]
 name = "core"
 ref = "sys@core"
 version = "0.0.0"

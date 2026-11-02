@@ -1,14 +1,15 @@
-import refrain::config::{setting, public_url}
+import refrain::config::{oauth_authorize_url, oauth_client, provider_enabled}
 //! One connection, owned by one long-lived worker; bounded transport owns bytes.
 import core::result::Result
 import json::{Json, parse}
-import refrain::storage::{Store, p1, numeric_id, valid_name}
+import sqlite::{SqliteError, Value}
+
+import refrain::storage::{Store, numeric_id, p1, valid_name}
 import refrain::storage_auth::{allows, authenticate}
 import refrain::storage_catalog::{catalog, metadata, yank}
 import refrain::storage_publish::{ArchiveInstaller, Publication, publish}
 import refrain::storage_web::{RateLimits, WebConfig, WebRequest, process}
 import refrain::validation::string_field
-import sqlite::{SqliteError, Value}
 
 extern fn registry_storage_wait() -> usize
 extern fn registry_storage_ready(ok: i32) ->()
@@ -20,8 +21,6 @@ extern fn registry_storage_upload(job: usize, owner: i64) -> str
 extern fn registry_archive_install(job: usize, owner: i64, checksum: str) -> bool
 extern fn registry_storage_publish_finish(job: usize, owner: i64, status: i32, body: str) ->()
 extern fn registry_oauth_schedule(job: usize, input: str, destination: str) -> bool
-extern fn registry_oauth_authorize_url() -> str
-extern fn registry_auth_enabled() -> i32
 
 struct UploadFiles {
     job: usize
@@ -178,15 +177,9 @@ pub fn storage_worker(directory: str, url: str) -> u32 {
         }
         Result::Ok(store) => {
             with store as db {
-                let enabled = unsafe {
-                    registry_auth_enabled()
-                }
-                != 0_i32
-                let authorize_url = unsafe {
-                    registry_oauth_authorize_url()
-                }
                 let config = WebConfig {
-                    url, setting("ENCORE_INDEX_GITHUB_CLIENT_ID", "ENCORE_GITHUB_CLIENT_ID", ""), enabled, authorize_url
+                    url, oauth_client("github"), provider_enabled("github"), oauth_authorize_url("github"),
+                    oauth_client("google"), provider_enabled("google"), oauth_authorize_url("google")
                 }
                 let mut limits = RateLimits::new()
                 unsafe {

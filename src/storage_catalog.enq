@@ -2,10 +2,13 @@
 import core::fmt::Debug
 import core::result::Result
 import core::vec::Vec
+
 import json::{Json, field, parse, stringify}
+import sqlite::{SqliteError, Value}
+
 import refrain::storage::{Store, p1, p2, p3, storage_error}
 import refrain::storage_auth::{allows, authenticate}
-import sqlite::{SqliteError, Value}
+import refrain::config::public_url
 
 fn numeric(value: str) -> bool {
     if value == "" {
@@ -162,7 +165,7 @@ fn before(a: Version, b: Version) -> bool {
     ret order > 0_i32 ||(order == 0_i32 && lexical(a.version, b.version) > 0_i32)
 }
 fn versions(db: Store, name: str) -> Result[Vec[Version], SqliteError] {
-    let rows = db.query("SELECT version,json_set(metadata,'$.yanked',json(CASE yanked WHEN 1 THEN 'true' ELSE 'false' END)),yanked FROM versions WHERE package=?1", p1(Value::Text(name)))?
+    let rows = db.query("SELECT version,json_set(metadata,'$.archive',?2||checksum||'.tar.gz','$.yanked',json(CASE yanked WHEN 1 THEN 'true' ELSE 'false' END)),yanked FROM versions WHERE package=?1", p2(Value::Text(name), Value::Text(public_url() + "/archives/")))?
     let mut out = Vec[Version]::new()
     for row in rows {
         let metadata = match parse(row.text(1_usize)?) {

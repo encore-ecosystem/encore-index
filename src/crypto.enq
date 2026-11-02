@@ -1,0 +1,80 @@
+//! Credential formatting in Encore; OpenSSL supplies cryptographic primitives.
+import core::vec::Vec
+import crypto::{clear, constant_time_equal, random_bytes, sha256, verify_rs256}
+
+import refrain::encoding::{base64url_decode, base64url_encode, bytes_string, hex_encode}
+
+pub fn digest(value: str) -> str {
+    let hash = sha256(value).unwrap_or("")
+    ret if hash.byte_len() == 32_usize {
+        hex_encode(hash)
+    } else {
+        ""
+    }
+}
+
+pub fn secret(prefix: str) -> str {
+    if prefix.byte_len() != 4_usize {
+        ret ""
+    }
+    let mut bytes = random_bytes(32_usize).unwrap_or(Vec[u8]::new())
+    if bytes.len() != 32_usize {
+        ret ""
+    }
+    let alphabet = "0123456789abcdef"
+    let mut output = Vec[u8]::new()
+    let mut prefix_index = 0_usize
+    while prefix_index < prefix.byte_len() {
+        output.push(prefix.byte_at(prefix_index))
+        prefix_index += 1_usize
+    }
+    let mut i = 0_usize
+    while i < bytes.len() {
+        let byte = bytes.get(i).unwrap_or(0_u8) as usize
+        output.push(alphabet.byte_at(byte / 16_usize))
+        output.push(alphabet.byte_at(byte % 16_usize))
+        i += 1_usize
+    }
+    let result = bytes_string(output)
+    clear(bytes)
+    clear(output)
+    ret result
+}
+
+pub fn user_code() -> str {
+    let mut bytes = random_bytes(8_usize).unwrap_or(Vec[u8]::new())
+    if bytes.len() != 8_usize {
+        ret ""
+    }
+    let alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    let mut output = Vec[u8]::new()
+    let mut i = 0_usize
+    while i < bytes.len() {
+        output.push(alphabet.byte_at((bytes.get(i).unwrap_or(0_u8) & 31_u8) as usize))
+        i += 1_usize
+    }
+    let result = bytes_string(output)
+    clear(bytes)
+    clear(output)
+    ret result
+}
+
+pub fn pkce(verifier: str) -> str {
+    let hash = sha256(verifier).unwrap_or("")
+    ret if hash.byte_len() == 32_usize {
+        base64url_encode(hash)
+    } else {
+        ""
+    }
+}
+
+pub fn equal(left: str, right: str) -> bool {
+    ret left.byte_len() == 64_usize && right.byte_len() == 64_usize && constant_time_equal(left, right)
+}
+
+pub fn rs256_verify(data: str, signature: str, modulus: str, exponent: str) -> bool {
+    if data.byte_len() > 16384_usize {
+        ret false
+    }
+    ret verify_rs256(data, base64url_decode(signature), base64url_decode(modulus), base64url_decode(exponent)).unwrap_or(false)
+}

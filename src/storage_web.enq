@@ -1,16 +1,16 @@
 //! Browser/device authorization policy, owned by the single storage worker.
 import core::result::Result
 import core::vec::Vec
+
 import json::{Json, field, number, object, parse, string, stringify}
-import refrain::oauth::form_encode
-import refrain::storage::{Store, numeric_id, p1, revoke, storage_error}
-import refrain::storage_auth::{authenticate, ci_create, credential_owner, device_decide, device_poll, device_start, digest, now, secret}
-import refrain::storage_sessions::{account, oauth_consume, oauth_finish, oauth_start, whoami}
-import refrain::validation::string_field
 import sqlite::{SqliteError, Value}
 
-extern fn registry_crypto_equal(left: str, right: str) -> bool
-extern fn registry_crypto_pkce(verifier: str) -> str
+import refrain::crypto::{equal, pkce}
+import refrain::oauth::form_encode
+import refrain::storage::{Store, numeric_id, p1, p3, revoke, storage_error}
+import refrain::storage_auth::{authenticate, ci_create, credential_owner, device_decide, device_poll, device_start, digest, now, personal_create, secret}
+import refrain::storage_sessions::{ExternalIdentity, account, identity_link, identity_login, identity_unlink, oauth_consume, oauth_start_provider, registration_finish, registration_start, registration_view, session_owner, whoami}
+import refrain::validation::string_field
 
 pub struct WebRequest {
     op: i32
@@ -24,6 +24,9 @@ pub struct WebConfig {
     client: str
     enabled: bool
     authorize_url: str
+    google_client: str
+    google_enabled: bool
+    google_authorize_url: str
 }
 /// Status zero hands the network exchange to an OAuth worker, without a DB transaction.
 pub struct WebReply {
@@ -103,22 +106,15 @@ pub fn session_cookie(config: WebConfig, token: str, oauth: bool, clear: bool) -
         }
     )
 }
-#attr(safe)
 fn csrf_matches(token: str, provided: str) -> Result[bool, SqliteError] {
     if token.len() != 68_usize || provided.len() != 64_usize {
         ret Result::Ok(false)
     }
     let expected = digest("csrf:" + token)?
-    ret Result::Ok(unsafe {
-            registry_crypto_equal(expected, provided)
-        }
-    )
+    ret Result::Ok(equal(expected, provided))
 }
-#attr(safe)
 fn challenge(verifier: str) -> Result[str, SqliteError] {
-    let output = unsafe {
-        registry_crypto_pkce(verifier)
-    }
+    let output = pkce(verifier)
     if output.len() != 43_usize {
         ret Result::Err(storage_error("PKCE unavailable"))
     }
@@ -143,12 +139,112 @@ fn package_names(source: str) -> Vec[str] {
     }
     ret names
 }
+fn provider_settings(config: WebConfig, provider: str) ->(str, bool, str) {
+    ret if provider == "github" {
+        (config.client, config.enabled, config.authorize_url)
+    } elif provider == "google" {
+        (config.google_client, config.google_enabled, config.google_authorize_url)
+    } else {
+        ("", false, "")
+    }
+}
+fn provider_status(config: WebConfig) -> Json {
+    ret Json::Array(vec![
+            object(vec![field("provider", string("github")), field("enabled", Json::Bool(config.enabled))]),
+            object(vec![field("provider", string("google")), field("enabled", Json::Bool(config.google_enabled))])
+        ],)
+}
+fn sign_in_page(config: WebConfig, status: i32, error: str) -> WebReply {
+    ret reply(status, stringify(object(vec![field("providers", provider_status(config)), field("error", string(error))])))
+}
+fn begin_oauth(db: Store, config: WebConfig, limits: mut RateLimits, destination: str, purpose: str, session: str, provider: str) -> Result[WebReply, SqliteError] {
+    let selected = provider_settings(config, provider)
+    if !selected.1 {
+        ret Result::Ok(sign_in_page(config, 503_i32, "This sign-in provider has not been configured by the server administrator."))
+    }
+    if !limits.allow(0_usize, 30_i64) {
+        ret Result::Ok(failure(429_i32, "login rate limit"))
+    }
+    let state = secret("eos_")?
+    let binding = secret("eob_")?
+    let verifier = secret("epk_")?.slice(4_usize, 64_usize)
+    let encoded = challenge(verifier)?
+    if !oauth_start_provider(db, digest(state)?, digest(binding)?, verifier, destination, purpose, session, provider)? {
+        ret Result::Ok(failure(503_i32, "too many pending logins"))
+    }
+    let extra = if provider == "google" {
+        "&response_type=code&scope=openid%20email%20profile&nonce=" + digest("oidc:" + state)?
+    } else {
+        "&scope="
+    }
+    let location = selected.2 + "?client_id=" + form_encode(selected.0) + "&redirect_uri=" +
+    form_encode(config.url + "/auth/" + provider + "/callback") + "&state=" + state + "&code_challenge=" + encoded +
+    "&code_challenge_method=S256&prompt=select_account" + extra
+    ret Result::Ok(redirect(location, session_cookie(config, binding, true, false)))
+}
+fn register_action(db: Store, request: WebRequest, config: WebConfig, limits: mut RateLimits) -> Result[WebReply, SqliteError] {
+    let form = parse(request.body).unwrap_or(Json::Null)
+    let pending = registration_view(db, request.a, "", "")?
+    if pending == "" {
+        ret Result::Ok(failure(400_i32, "registration expired; sign in again"))
+    }
+    let expected = digest("registration:" + request.a)?
+    if request.b != config.url || !equal(expected, string_field(form, "csrf")) || !limits.allow(3_usize, 120_i64) {
+        ret Result::Ok(failure(403_i32, "invalid form origin or CSRF token"))
+    }
+    let name = string_field(form, "name")
+    match registration_finish(db, request.a, name) {
+        Result::Ok(result) => {
+            ret Result::Ok(redirect(result.1, session_cookie(config, result.0, false, false)))
+        }
+        Result::Err(_) => {
+            ret Result::Ok(reply(400_i32, registration_view(db, request.a, "Name unavailable or invalid. Use 1-64 lowercase letters, digits, hyphens or underscores. An external identity can belong to only one account.", name)?))
+        }
+    }
+}
 fn action(db: Store, request: WebRequest, config: WebConfig, limits: mut RateLimits, owner: i64) -> Result[WebReply, SqliteError] {
     let form = parse(request.body).unwrap_or(Json::Null)
     if request.b != config.url || !csrf_matches(request.token, string_field(form, "csrf"))? || !limits.allow(3_usize, 120_i64) {
         ret Result::Ok(failure(403_i32, "invalid form origin or CSRF token"))
     }
     let operation = string_field(form, "action")
+    if operation == "link" {
+        if string_field(form, "provider") != "github" && string_field(form, "provider") != "google" {
+            ret Result::Ok(failure(400_i32, "unknown provider"))
+        }
+        ret begin_oauth(db, config, limits, "/account", "link", digest(request.token)?, string_field(form, "provider"))
+    }
+    if operation == "unlink" {
+        let mut values = p3(Value::Integer(owner), Value::Text(string_field(form, "provider")), Value::Integer(if config.enabled {
+                    1_i64
+                } else {
+                    0_i64
+                }
+            ))
+        values.push(Value::Integer(if config.google_enabled {
+                    1_i64
+                } else {
+                    0_i64
+                }
+            ))
+        if db.scalar("SELECT count(*) FROM identities WHERE owner=?1 AND provider<>?2 AND ((provider='github' AND ?3=1) OR (provider='google' AND ?4=1))", values)? == 0_i64 {
+            ret Result::Ok(failure(400_i32, "Keep at least one configured sign-in method connected."))
+        }
+        if !identity_unlink(db, owner, string_field(form, "provider"))? {
+            ret Result::Ok(failure(400_i32, "Cannot disconnect the last sign-in method, or provider is not connected."))
+        }
+        ret Result::Ok(redirect("/account", ""))
+    }
+    if operation == "personal" {
+        match personal_create(db, owner, string_field(form, "label"), numeric_id(string_field(form, "days")), string_field(form, "publish") == "on", string_field(form, "yank") == "on") {
+            Result::Ok(token) => {
+                ret Result::Ok(reply(200_i32, stringify(object(vec![field("issued_token", string(token))]))))
+            }
+            Result::Err(_) => {
+                ret Result::Ok(failure(400_i32, "invalid token settings; choose permissions and a lifetime of 1-90 days"))
+            }
+        }
+    }
     if operation == "logout" {
         if !revoke_token(db, owner, request.token)? {
             ret Result::Ok(failure(503_i32, "logout failed"))
@@ -187,50 +283,82 @@ fn action(db: Store, request: WebRequest, config: WebConfig, limits: mut RateLim
 
 pub fn process(db: Store, request: WebRequest, config: WebConfig, limits: mut RateLimits) -> Result[WebReply, SqliteError] {
     if request.op == 20_i32 {
-        if !config.enabled {
-            ret Result::Ok(failure(503_i32, "GitHub login is not configured"))
-        }
-        if !limits.allow(0_usize, 30_i64) {
-            ret Result::Ok(failure(429_i32, "login rate limit"))
-        }
-        let state = secret("eos_")?
-        let binding = secret("eob_")?
-        let verifier = secret("epk_")?.slice(4_usize, 64_usize)
-        let encoded = challenge(verifier)?
         let destination = if request.a == "device" {
             "/auth/device"
         } else {
             "/account"
         }
-        if !oauth_start(db, digest(state)?, digest(binding)?, verifier, destination)? {
-            ret Result::Ok(failure(503_i32, "too many pending logins"))
+        let provider = if request.b == "" {
+            "github"
+        } else {
+            request.b
         }
-        let location = config.authorize_url + "?client_id=" + form_encode(config.client) + "&redirect_uri=" +
-        form_encode(config.url + "/auth/github/callback") + "&state=" + state + "&code_challenge=" + encoded +
-        "&code_challenge_method=S256&scope=&prompt=select_account"
-        ret Result::Ok(redirect(location, session_cookie(config, binding, true, false)))
+        if provider != "github" && provider != "google" {
+            ret Result::Ok(failure(400_i32, "unknown provider"))
+        }
+        ret begin_oauth(db, config, limits, destination, "login", "", provider)
     }
     if request.op == 21_i32 {
-        if !config.enabled || request.a.len() != 68_usize || request.token.len() != 68_usize || request.b == "" || request.b.len() > 256_usize || !limits.allow(0_usize, 30_i64) {
+        let callback = parse(request.body).unwrap_or(Json::Null)
+        let provider = string_field(callback, "provider")
+        if !provider_settings(config, provider).1 || request.a.len() != 68_usize || request.token.len() != 68_usize || request.b.len() > 256_usize || !limits.allow(0_usize, 30_i64) {
             ret Result::Ok(failure(400_i32, "invalid OAuth callback"))
         }
         let state = oauth_consume(db, digest(request.a)?, digest(request.token)?)?
         if state.0 == "" {
             ret Result::Ok(failure(400_i32, "expired or mismatched OAuth state"))
         }
+        if state.4 != provider {
+            ret Result::Ok(failure(403_i32, "sign-in provider mismatch; start again"))
+        }
+        if string_field(callback, "error") != "" || request.b == "" {
+            ret Result::Ok(failure(400_i32, "Authorization was cancelled or rejected. Sign in again to retry."))
+        }
+        if state.2 == "link" {
+            let session = string_field(callback, "session")
+            if session.len() != 68_usize || digest(session)? != state.3 || session_owner(db, state.3)? == 0_i64 {
+                ret Result::Ok(failure(403_i32, "The original account session changed or expired. Start connecting again."))
+            }
+        }
+        let context = stringify(object(vec![field("destination", string(state.1)), field("purpose", string(state.2)), field("session", string(state.3)), field("provider", string(provider))]))
         ret Result::Ok(WebReply {
-                0_i32, stringify(object(vec![field("code", string(request.b)), field("verifier", string(state.0))])), state.1
+                0_i32, stringify(object(vec![field("code", string(request.b)), field("verifier", string(state.0)), field("provider", string(provider)), field("nonce", string(digest("oidc:" + request.a)?))])), context
             }
             ,
         )
     }
     if request.op == 31_i32 {
-        if numeric_id(request.b) == 0_i64 ||(request.a != "/account" && request.a != "/auth/device") {
-            ret Result::Ok(failure(502_i32, "GitHub authentication failed; retry sign-in"))
+        let profile = parse(request.b).unwrap_or(Json::Null)
+        let identity = ExternalIdentity {
+            string_field(profile, "provider"), string_field(profile, "subject"), string_field(profile, "login")
         }
-        match oauth_finish(db, request.b) {
+        let context = parse(request.a).unwrap_or(Json::Null)
+        let destination = string_field(context, "destination")
+        if (identity.provider != "github" && identity.provider != "google") || identity.provider != string_field(context, "provider") || identity.subject == "" ||(destination != "/account" && destination != "/auth/device") {
+            ret Result::Ok(failure(502_i32, "Identity authentication failed; retry sign-in"))
+        }
+        if string_field(context, "purpose") == "link" {
+            match identity_link(db, string_field(context, "session"), identity) {
+                Result::Ok(linked) => {
+                    if linked {
+                        ret Result::Ok(redirect("/account", ""))
+                    }
+                }
+                Result::Err(_) => {
+                }
+            }
+            ret Result::Ok(failure(403_i32, "Cannot connect this identity: it is already connected, belongs to another account, or the original session expired."))
+        }
+        if string_field(context, "purpose") != "login" {
+            ret Result::Ok(failure(400_i32, "invalid login purpose"))
+        }
+        match identity_login(db, identity) {
             Result::Ok(token) => {
-                ret Result::Ok(redirect(request.a, session_cookie(config, token, false, false)))
+                if token != "" {
+                    ret Result::Ok(redirect(destination, session_cookie(config, token, false, false)))
+                }
+                let pending = registration_start(db, identity, destination)?
+                ret Result::Ok(redirect("/account", session_cookie(config, pending, true, false)))
             }
             Result::Err(_) => {
                 ret Result::Ok(failure(403_i32, "account unavailable; contact administrator"))
@@ -238,8 +366,8 @@ pub fn process(db: Store, request: WebRequest, config: WebConfig, limits: mut Ra
         }
     }
     if request.op == 24_i32 {
-        if !config.enabled {
-            ret Result::Ok(failure(503_i32, "GitHub login is not configured"))
+        if !config.enabled && !config.google_enabled {
+            ret Result::Ok(failure(503_i32, "No sign-in provider is configured"))
         }
         if !limits.allow(1_usize, 30_i64) {
             ret Result::Ok(failure(429_i32, "device rate limit"))
@@ -267,13 +395,27 @@ pub fn process(db: Store, request: WebRequest, config: WebConfig, limits: mut Ra
             ret Result::Ok(reply(200_i32, whoami(db, owner)?))
         }
         if !revoke_token(db, owner, request.token)? {
-            ret Result::Ok(failure(400_i32, "not a device or CI credential"))
+            ret Result::Ok(failure(400_i32, "not an API credential"))
         }
         ret Result::Ok(reply(200_i32, "{\"ok\":true}"))
     }
+    let form = parse(request.body).unwrap_or(Json::Null)
+    if request.op == 26_i32 && string_field(form, "action") == "register" {
+        // Registration cannot silently replace an already authenticated account.
+        if credential_owner(db, request.token, true)? != 0_i64 {
+            ret Result::Ok(failure(409_i32, "sign out before creating another account"))
+        }
+        ret register_action(db, request, config, limits)
+    }
     let owner = credential_owner(db, request.token, true)?
     if owner == 0_i64 {
-        ret Result::Ok(failure(401_i32, "sign in required"))
+        if request.op == 22_i32 || request.op == 29_i32 {
+            let pending = registration_view(db, request.b, "", "")?
+            if pending != "" {
+                ret Result::Ok(reply(200_i32, pending))
+            }
+        }
+        ret Result::Ok(sign_in_page(config, 401_i32, ""))
     }
     if request.op == 26_i32 {
         ret action(db, request, config, limits, owner)
@@ -283,5 +425,5 @@ pub fn process(db: Store, request: WebRequest, config: WebConfig, limits: mut Ra
     } else {
         ""
     }
-    ret Result::Ok(reply(200_i32, account(db, owner, digest("csrf:" + request.token)?, code)?))
+    ret Result::Ok(reply(200_i32, account(db, owner, digest("csrf:" + request.token)?, code, stringify(provider_status(config)))?))
 }

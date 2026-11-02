@@ -1,18 +1,17 @@
 //! Cookie/form boundaries and server-rendered account/device pages.
 import blaze::{Request, Response}
 import core::vec::Vec
+
 import json::{Json, field, object, parse, stringify}
+
+import refrain::config::cookie_name
+import refrain::encoding::query_decode
 import refrain::validation::string_field
 import refrain::views::{escape, page_status}
 
-extern fn registry_query_decode(value: str) -> str
-extern fn registry_cookie_name(oauth: bool) -> str
-
 /// Returns one unambiguous cookie; duplicate names are rejected.
 pub fn cookie(request: Request, oauth: bool) -> str {
-    let name = unsafe {
-        registry_cookie_name(oauth)
-    }
+    let name = cookie_name(oauth)
     let value = request.header("Cookie").unwrap_or("")
     if value.len() > 8192_usize {
         ret ""
@@ -22,17 +21,17 @@ pub fn cookie(request: Request, oauth: bool) -> str {
     let mut start = 0_usize
     let mut i = 0_usize
     while i <= value.len() {
-        if i == value.len() || value.slice(i, 1_usize) == ";" {
-            while start < i && value.slice(start, 1_usize) == " " {
+        if i == value.len() || value.slice_bytes(i, 1_usize) == ";" {
+            while start < i && value.slice_bytes(start, 1_usize) == " " {
                 start += 1_usize
             }
-            let part = value.slice(start, i - start)
-            if part.len() > name.len() && part.slice(0_usize, name.len() + 1_usize) == name + "=" {
+            let part = value.slice_bytes(start, i - start)
+            if part.len() > name.len() && part.slice_bytes(0_usize, name.len() + 1_usize) == name + "=" {
                 if found {
                     ret ""
                 }
                 found = true
-                out = part.slice(name.len() + 1_usize, part.len() - name.len() - 1_usize)
+                out = part.slice_bytes(name.len() + 1_usize, part.len() - name.len() - 1_usize)
             }
             start = i + 1_usize
         }
@@ -55,30 +54,61 @@ fn form_data(body: str) -> Json {
     let mut start = 0_usize
     let mut i = 0_usize
     while i <= body.len() {
-        if i == body.len() || body.slice(i, 1_usize) == "&" {
-            let item = body.slice(start, i - start)
+        if i == body.len() || body.slice_bytes(i, 1_usize) == "&" {
+            let item = body.slice_bytes(start, i - start)
             let mut equal = 0_usize
-            while equal < item.len() && item.slice(equal, 1_usize) != "=" {
+            while equal < item.len() && item.slice_bytes(equal, 1_usize) != "=" {
                 equal += 1_usize
             }
             if equal == 0_usize || equal == item.len() || fields.len() >= 16_usize {
                 ret Json::Null
             }
-            let name = unsafe {
-                registry_query_decode(item.slice(0_usize, equal))
-            }
+            let name = query_decode(item.slice_bytes(0_usize, equal))
             if name == "" || object(fields).get(name).is_some() {
                 ret Json::Null
             }
-            let value = unsafe {
-                registry_query_decode(item.slice(equal + 1_usize, item.len() - equal - 1_usize))
-            }
+            let value = query_decode(item.slice_bytes(equal + 1_usize, item.len() - equal - 1_usize))
             fields.push(field(name, Json::String(value)))
             start = i + 1_usize
         }
         i += 1_usize
     }
     ret object(fields)
+}
+fn provider_label(provider: str) -> str {
+    ret if provider == "github" {
+        "GitHub"
+    } elif provider == "google" {
+        "Google"
+    } else {
+        provider
+    }
+}
+fn sign_in_options(data: Json, device: bool) -> str {
+    let mut html = "<p>Sign in to your Encore Index account.</p><div class=\"auth-providers\">"
+    let mut available = false
+    for entry in data.get("providers").unwrap_or(Json::Null).as_array().unwrap_or(Vec[Json]::new()) {
+        let provider = string_field(entry, "provider")
+        if provider == "github" || provider == "google" {
+            let label = provider_label(provider)
+            if entry.get("enabled").unwrap_or(Json::Null).as_bool().unwrap_or(false) {
+                available = true
+                html += "<a class=\"button-secondary\" href=\"/auth/" + provider + "/start?next=" +(if device {
+                        "device"
+                    } else {
+                        "account"
+                    }
+                ) + "\">Sign in with " + label + " →</a>"
+            } else {
+                html += "<div class=\"auth-provider-disabled\"><button type=\"button\" disabled>Sign in with " + label + "</button><span>Not configured</span></div>"
+            }
+        }
+    }
+    html += "</div>"
+    if !available {
+        html += "<p class=\"auth-setup-note\">Sign-in is not configured on this server. The administrator needs to connect GitHub or Google before you can sign in.</p>"
+    }
+    ret html
 }
 fn hidden(name: str, value: str) -> str {
     ret "<input type=\"hidden\" name=\"" + name + "\" value=\"" + escape(value) + "\">"
@@ -104,22 +134,55 @@ pub fn auth_response(status: u16, body: str, device: bool, code: str) -> Respons
         "Account"
     }
     + "</h1>"
-    if status == 401_u16 {
-        html += "<a class=\"button-secondary\" href=\"/auth/github/start?next=" + if device {
-            "device"
-        } else {
-            "account"
+    if stringify(data.get("registration").unwrap_or(Json::Null)) == "true" {
+        html += "<h2>Create your Encore Index account</h2><p>Identity verified with " + escape(provider_label(string_field(data, "provider"))) + " as <strong>" + escape(string_field(data, "login")) + "</strong>. Choose your own Encore Index name.</p>"
+        if string_field(data, "error") != "" {
+            html += "<p role=\"alert\">" + escape(string_field(data, "error")) + "</p>"
         }
-        + "\">Sign in with GitHub →</a>"
+        html += begin_form(string_field(data, "csrf"), "register") + "<label>Account name<input name=\"name\" value=\"" + escape(string_field(data, "suggested")) + "\" required minlength=\"1\" maxlength=\"64\" pattern=\"[a-z0-9_-]+\" autocomplete=\"username\" aria-describedby=\"account-name-help\"></label><p id=\"account-name-help\">1–64 lowercase letters, digits, hyphens or underscores. Independent of your GitHub login.</p><button>Create account</button></form>"
+    } elif status == 401_u16 ||(status == 503_u16 && data.get("providers").is_some()) {
+        html += sign_in_options(data, device)
     } elif status != 200_u16 {
         html += "<p>" + escape(string_field(data, "error")) + "</p><a href=\"/account\">Back to account</a>"
     } elif string_field(data, "issued_token") != "" {
-        html += "<p>Save this CI token now. It will not be shown again.</p><code class=\"checksum\">" + escape(string_field(data, "issued_token")) + "</code><a href=\"/account\">Done</a>"
+        html += "<p>Save this token now. It will not be shown again.</p><code class=\"checksum\">" + escape(string_field(data, "issued_token")) + "</code><a href=\"/account\">Done</a>"
     } elif string_field(data, "message") != "" {
         html += "<p>" + escape(string_field(data, "message")) + "</p><a href=\"/account\">Account</a>"
     } else {
         let csrf = string_field(data, "csrf")
         html += "<p>Signed in as <strong>" + escape(string_field(data, "name")) + "</strong></p>"
+        if !device {
+            html += "<h2>Sign-in methods</h2><ul class=\"version-list\">"
+            let identities = data.get("identities").unwrap_or(Json::Null).as_array().unwrap_or(Vec[Json]::new())
+            for identity in identities {
+                let provider = string_field(identity, "provider")
+                html += "<li class=\"version-row\"><h3>" + escape(provider_label(provider)) + "</h3><p>" + escape(string_field(identity, "login")) + "</p>"
+                if identities.len() > 1_usize {
+                    html += begin_form(csrf, "unlink") + hidden("provider", provider) + "<button>Disconnect</button></form>"
+                } else {
+                    html += "<p>Keep at least one sign-in method connected.</p>"
+                }
+                html += "</li>"
+            }
+            html += "</ul><div class=\"auth-providers\">"
+            for entry in data.get("providers").unwrap_or(Json::Null).as_array().unwrap_or(Vec[Json]::new()) {
+                let provider = string_field(entry, "provider")
+                let mut connected = false
+                for identity in identities {
+                    if string_field(identity, "provider") == provider {
+                        connected = true
+                    }
+                }
+                if !connected &&(provider == "github" || provider == "google") {
+                    if entry.get("enabled").unwrap_or(Json::Null).as_bool().unwrap_or(false) {
+                        html += begin_form(csrf, "link") + hidden("provider", provider) + "<button>Connect " + provider_label(provider) + "</button></form>"
+                    } else {
+                        html += "<div class=\"auth-provider-disabled\"><button type=\"button\" disabled>Connect " + provider_label(provider) + "</button><span>Not configured</span></div>"
+                    }
+                }
+            }
+            html += "</div>"
+        }
         if device {
             html += "<form class=\"account-form\" method=\"get\" action=\"/auth/device\"><label>Device code<input name=\"code\" required maxlength=\"8\" value=\"" + escape(code) + "\" autocomplete=\"off\"></label><button>Review device</button></form>"
             let label = string_field(data, "device_label")
@@ -134,7 +197,7 @@ pub fn auth_response(status: u16, body: str, device: bool, code: str) -> Respons
                 let name = package.as_str().unwrap_or("")
                 html += "<li><a href=\"/packages/" + escape(name) + "\">" + escape(name) + "</a></li>"
             }
-            html += "</ul><a href=\"/auth/device\">Connect a device →</a><h2>Devices, sessions and CI tokens</h2><ul class=\"version-list\">"
+            html += "</ul><a href=\"/auth/device\">Connect a device →</a><h2>Sessions and API tokens</h2><ul class=\"version-list\">"
             for credential in data.get("credentials").unwrap_or(Json::Null).as_array().unwrap_or(Vec[Json]::new()) {
                 let id = stringify(credential.get("id").unwrap_or(Json::Null))
                 html += "<li class=\"version-row\"><h3>" + escape(string_field(credential, "label")) + "</h3><p>" + escape(string_field(credential, "kind")) + " · " + escape(string_field(credential, "permissions")) + "</p><p>Last used: " + escape(string_field(credential, "last_used")) + " · Expires: " + escape(string_field(credential, "expires")) + "</p>"
@@ -148,12 +211,14 @@ pub fn auth_response(status: u16, body: str, device: bool, code: str) -> Respons
                 }
                 html += "</li>"
             }
-            html += "</ul><h2>Create CI token</h2>" + begin_form(csrf, "ci") +
-            "<label>Label<input name=\"label\" required maxlength=\"64\"></label><label>Packages (comma-separated)<input name=\"packages\" required></label><label>Lifetime (days)<input name=\"days\" type=\"number\" min=\"1\" max=\"90\" value=\"30\" required></label><label><input type=\"checkbox\" name=\"publish\" checked> Publish</label><label><input type=\"checkbox\" name=\"yank\"> Yank / unyank</label><button>Create token</button></form>"
+            html += "</ul><h2>Create personal token</h2><p>Publish new packages and updates to packages you own.</p>" + begin_form(csrf, "personal") +
+            "<label>Label<input name=\"label\" required maxlength=\"64\"></label><label>Lifetime (days)<input name=\"days\" type=\"number\" min=\"1\" max=\"90\" value=\"30\" required></label><label class=\"checkbox-label\"><input type=\"checkbox\" name=\"publish\" checked> Publish</label><label class=\"checkbox-label\"><input type=\"checkbox\" name=\"yank\"> Yank / unyank</label><button>Create personal token</button></form>"
+            html += "<h2>Create CI token</h2><p>Limit automated publishing to selected packages you already own.</p>" + begin_form(csrf, "ci") +
+            "<label>Label<input name=\"label\" required maxlength=\"64\"></label><label>Packages (comma-separated)<input name=\"packages\" required></label><label>Lifetime (days)<input name=\"days\" type=\"number\" min=\"1\" max=\"90\" value=\"30\" required></label><label class=\"checkbox-label\"><input type=\"checkbox\" name=\"publish\" checked> Publish</label><label class=\"checkbox-label\"><input type=\"checkbox\" name=\"yank\"> Yank / unyank</label><button>Create token</button></form>"
             html += begin_form(csrf, "logout") + "<button>Sign out</button></form>"
         }
     }
-    ret page_status("Account", html + "</section>", "", status).with_header("Cache-Control", "no-store").with_header("Referrer-Policy", "no-referrer")
+    ret page_status("Account", html + "</section>", "", status).with_header("Cache-Control", "no-store").with_header("Referrer-Policy", "same-origin")
 }
 #attr(test)
 fn rejects_duplicate_security_fields() -> bool {

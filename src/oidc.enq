@@ -1,0 +1,146 @@
+//! Google ID-token policy. Keys come only from the adapter's fixed HTTPS JWKS URL.
+import core::vec::Vec
+import json::{Json, field, object, parse, string, stringify}
+
+import refrain::crypto::{equal, rs256_verify}
+import refrain::encoding::base64url_decode
+import refrain::storage::numeric_id
+import refrain::storage_auth::now
+import refrain::validation::string_field
+
+fn unique_object(value: Json) -> bool {
+    let fields = value.as_object().unwrap_or(Vec[(str, Json)]::new())
+    if fields.len() == 0_usize || fields.len() > 64_usize {
+        ret false
+    }
+    let mut i = 0_usize
+    while i < fields.len() {
+        let name = fields.get(i).unwrap_or(("", Json::Null)).0
+        let mut j = 0_usize
+        while j < i {
+            if fields.get(j).unwrap_or(("", Json::Null)).0 == name {
+                ret false
+            }
+            j += 1_usize
+        }
+        i += 1_usize
+    }
+    ret true
+}
+fn timestamp(value: Json, key: str) -> i64 {
+    ret numeric_id(value.get(key).unwrap_or(Json::Null).as_number().unwrap_or(""))
+}
+fn google_claims(claims: Json, client: str, nonce: str) -> str {
+    if !unique_object(claims) || client == "" || nonce.len() != 64_usize {
+        ret ""
+    }
+    let issuer = string_field(claims, "iss")
+    if issuer != "https://accounts.google.com" && issuer != "accounts.google.com" {
+        ret ""
+    }
+    let clock = now()
+    let issued = timestamp(claims, "iat")
+    let expires = timestamp(claims, "exp")
+    if issued <= 0_i64 || issued > clock + 60_i64 || expires <= clock || expires <= issued {
+        ret ""
+    }
+    if claims.get("nbf").is_some() &&(timestamp(claims, "nbf") <= 0_i64 || timestamp(claims, "nbf") > clock + 60_i64) {
+        ret ""
+    }
+    let audience = claims.get("aud").unwrap_or(Json::Null)
+    let mut matches = audience.as_str().unwrap_or("") == client
+    let audiences = audience.as_array().unwrap_or(Vec[Json]::new())
+    if audiences.len() > 8_usize {
+        ret ""
+    }
+    for item in audiences {
+        if item.as_str().unwrap_or("") == "" {
+            ret ""
+        }
+        if item.as_str().unwrap_or("") == client {
+            matches = true
+        }
+    }
+    if !matches ||(audiences.len() > 1_usize && string_field(claims, "azp") != client) ||
+    (claims.get("azp").is_some() && string_field(claims, "azp") != client) {
+        ret ""
+    }
+    if !equal(nonce, string_field(claims, "nonce")) {
+        ret ""
+    }
+    let subject = string_field(claims, "sub")
+    if subject == "" || subject.len() > 255_usize {
+        ret ""
+    }
+    let mut index = 0_usize
+    while index < subject.len() {
+        if subject.byte_at(index) < 33_u8 || subject.byte_at(index) > 126_u8 {
+            ret ""
+        }
+        index += 1_usize
+    }
+    let mut login = string_field(claims, "name")
+    if claims.get("email_verified").unwrap_or(Json::Null).as_bool().unwrap_or(false) && string_field(claims, "email") != "" {
+        login = string_field(claims, "email")
+    }
+    if login == "" || login.len() > 256_usize {
+        login = "Google account"
+    }
+    ret stringify(object(vec![field("provider", string("google")), field("subject", string(subject)), field("login", string(login))]))
+}
+/// Verify RS256, trusted key ID, issuer, audience/azp, time, nonce and stable subject.
+pub fn verify_google_token(token: str, jwks: str, client: str, nonce: str) -> str {
+    if token == "" || token.len() > 16384_usize || jwks.len() > 65536_usize {
+        ret ""
+    }
+    let mut first = 0_usize
+    let mut second = 0_usize
+    let mut index = 0_usize
+    let mut dots = 0_usize
+    while index < token.len() {
+        if token.byte_at(index) == 46_u8 {
+            dots += 1_usize
+            if dots == 1_usize {
+                first = index
+            } else {
+                second = index
+            }
+        }
+        index += 1_usize
+    }
+    if dots != 2_usize || first == 0_usize || second <= first + 1_usize || second + 1_usize >= token.len() {
+        ret ""
+    }
+    let header = parse(base64url_decode(token.slice(0_usize, first))).unwrap_or(Json::Null)
+    let claims = parse(base64url_decode(token.slice(first + 1_usize, second - first - 1_usize))).unwrap_or(Json::Null)
+    let kid = string_field(header, "kid")
+    if !unique_object(header) || string_field(header, "alg") != "RS256" || kid == "" || kid.len() > 256_usize || header.get("crit").is_some() || header.get("b64").is_some() {
+        ret ""
+    }
+    if header.get("typ").is_some() && string_field(header, "typ") != "JWT" {
+        ret ""
+    }
+    let keys = parse(jwks).unwrap_or(Json::Null).get("keys").unwrap_or(Json::Null).as_array().unwrap_or(Vec[Json]::new())
+    if keys.len() == 0_usize || keys.len() > 32_usize {
+        ret ""
+    }
+    let mut matches = 0_usize
+    let mut verified = false
+    for key in keys {
+        if string_field(key, "kid") == kid {
+            matches += 1_usize
+            if unique_object(key) && string_field(key, "kty") == "RSA" && string_field(key, "alg") == "RS256" && string_field(key, "use") == "sig" {
+                verified = rs256_verify(token.slice(0_usize, second), token.slice(second + 1_usize, token.len() - second - 1_usize), string_field(key, "n"), string_field(key, "e"))
+            }
+        }
+    }
+    if matches != 1_usize || !verified {
+        ret ""
+    }
+    ret google_claims(claims, client, nonce)
+}
+#attr(test)
+fn rejects_unverified_tokens() -> bool {
+    ret verify_google_token("eyJhbGciOiJub25lIn0.e30.AA", "{\"keys\":[]}", "client", "nonce") == "" &&
+    verify_google_token("bad.jwt.with.extra.part", "{}", "client", "nonce") == ""
+}

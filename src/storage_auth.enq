@@ -2,49 +2,37 @@
 import core::option::Option
 import core::result::Result
 import core::vec::Vec
-import refrain::storage::{Store, audit, p1, p2, p3, storage_error}
+
+import std::time::time_ms
+
 import sqlite::{SqliteError, Value}
 
-extern fn registry_crypto_digest(input: str) -> str
-extern fn registry_crypto_secret(prefix: str) -> str
-extern fn registry_crypto_user_code() -> str
-extern fn registry_clock_seconds() -> i64
+import refrain::crypto
+import refrain::storage::{Store, audit, p1, p2, p3, storage_error}
 
-#attr(safe)
 pub fn digest(value: str) -> Result[str, SqliteError] {
-    let result = unsafe {
-        registry_crypto_digest(value)
-    }
+    let result = crypto::digest(value)
     if result.len() != 64_usize {
         ret Result::Err(storage_error("hash unavailable"))
     }
     ret Result::Ok(result)
 }
-#attr(safe)
 pub fn secret(prefix: str) -> Result[str, SqliteError] {
-    let result = unsafe {
-        registry_crypto_secret(prefix)
-    }
+    let result = crypto::secret(prefix)
     if result.len() != 68_usize {
         ret Result::Err(storage_error("random source unavailable"))
     }
     ret Result::Ok(result)
 }
-#attr(safe)
 fn user_code() -> Result[str, SqliteError] {
-    let result = unsafe {
-        registry_crypto_user_code()
-    }
+    let result = crypto::user_code()
     if result.len() != 8_usize {
         ret Result::Err(storage_error("random source unavailable"))
     }
     ret Result::Ok(result)
 }
-#attr(safe)
 pub fn now() -> i64 {
-    ret unsafe {
-        registry_clock_seconds()
-    }
+    ret(time_ms() / 1000_u64) as i64
 }
 pub fn valid_label(value: str) -> bool {
     if value == "" || value.len() > 64_usize {
@@ -108,7 +96,7 @@ pub fn allows(db: Store, token: str, package: str, yank: bool) -> Result[bool, S
     } else {
         Value::Text(package)
     }
-    ret Result::Ok(db.scalar("SELECT 1 FROM credentials c JOIN users u ON u.id=c.owner WHERE c.digest=?1 AND u.active=1 AND c.revoked=0 AND c.expires>unixepoch() AND (c.idle_seconds=0 OR c.last_used+c.idle_seconds>unixepoch()) AND ((?3=0 AND c.can_publish=1) OR (?3=1 AND c.can_yank=1)) AND (c.kind='device' OR (c.kind='ci' AND EXISTS(SELECT 1 FROM credential_packages p JOIN owners o ON o.package=p.package AND o.owner=c.owner WHERE p.credential=c.id AND (?2 IS NULL OR p.package=?2))))",
+    ret Result::Ok(db.scalar("SELECT 1 FROM credentials c JOIN users u ON u.id=c.owner WHERE c.digest=?1 AND u.active=1 AND c.revoked=0 AND c.expires>unixepoch() AND (c.idle_seconds=0 OR c.last_used+c.idle_seconds>unixepoch()) AND ((?3=0 AND c.can_publish=1) OR (?3=1 AND c.can_yank=1)) AND (c.kind IN('device','personal') OR (c.kind='ci' AND EXISTS(SELECT 1 FROM credential_packages p JOIN owners o ON o.package=p.package AND o.owner=c.owner WHERE p.credential=c.id AND (?2 IS NULL OR p.package=?2))))",
             p3(Value::Text(digest(token)?), package_value, Value::Integer(if yank {
                         1_i64
                     } else {
@@ -120,7 +108,7 @@ pub fn allows(db: Store, token: str, package: str, yank: bool) -> Result[bool, S
 pub fn credential_insert(db: Store, owner: i64, kind: str, label: str, days: i64,
     publish: bool, yank: bool,) -> Result[(i64, str), SqliteError] {
     if !valid_label(label) || days < 1_i64 || days > 90_i64 ||(kind == "browser" && days > 30_i64) ||
-    (kind != "browser" && kind != "device" && kind != "ci") {
+    (kind != "browser" && kind != "device" && kind != "ci" && kind != "personal") {
         ret Result::Err(storage_error("invalid credential settings"))
     }
     let token = secret(if kind == "device" {
@@ -158,6 +146,18 @@ pub fn credential_insert(db: Store, owner: i64, kind: str, label: str, days: i64
         ret Result::Err(storage_error("unknown credential owner"))
     }
     ret Result::Ok((db.rowid()?, token))
+}
+/// Personal credentials are account-wide; publication still checks package ownership.
+pub fn personal_create(db: Store, owner: i64, label: str, days: i64, publish: bool, yank: bool) -> Result[str, SqliteError] {
+    if !publish && !yank {
+        ret Result::Err(storage_error("select at least one permission"))
+    }
+    with db.begin()? as tx {
+        let credential = credential_insert(tx, owner, "personal", label, days, publish, yank)?
+        let _audit = audit(tx, owner, credential.0, "issue-personal")?
+        let _commit = tx.commit()?
+        ret Result::Ok(credential.1)
+    }
 }
 pub fn ci_create(db: Store, owner: i64, label: str, days: i64, publish: bool, yank: bool,
     packages: Vec[str],) -> Result[str, SqliteError] {

@@ -1,0 +1,209 @@
+//! One Encore worker validates uploaded archives without blocking HTTP or SQLite.
+import archive::{EntryKind, Limits, Reader}
+import core::option::Option
+import core::result::Result
+import core::vec::Vec
+
+import std::http::ascii_lower
+
+import json::{Json, field, object, string, stringify}
+
+extern fn registry_archive_wait() -> usize
+extern fn registry_archive_path(job: usize) -> str
+extern fn registry_archive_finish(job: usize, documents: str, error: str) ->()
+
+fn safe_path(path: str) -> bool {
+    let size = path.byte_len()
+    if size == 0_usize || size > 1024_usize || path.byte_at(0_usize) == 47_u8 {
+        ret false
+    }
+    let mut start = 0_usize
+    let mut i = 0_usize
+    while i <= size {
+        if i < size {
+            let byte = path.byte_at(i)
+            if byte < 32_u8 || byte >= 127_u8 || byte == 92_u8 || byte == 58_u8 ||
+            byte == 63_u8 || byte == 42_u8 || byte == 34_u8 || byte == 60_u8 ||
+            byte == 62_u8 || byte == 124_u8 {
+                ret false
+            }
+        }
+        if i == size || path.byte_at(i) == 47_u8 {
+            let length = i - start
+            if length == 0_usize && i < size {
+                ret false
+            }
+            let part = path.slice_bytes(start, length)
+            if part == "." || part == ".." {
+                ret false
+            }
+            if length > 0_usize &&(part.byte_at(length - 1_usize) == 46_u8 || part.byte_at(length - 1_usize) == 32_u8) {
+                ret false
+            }
+            let mut base = 0_usize
+            while base < length && part.byte_at(base) != 46_u8 {
+                base += 1_usize
+            }
+            if base <= 4_usize {
+                let name = ascii_lower(part.slice_bytes(0_usize, base))
+                if name == "con" || name == "prn" || name == "aux" || name == "nul" {
+                    ret false
+                }
+                if base == 4_usize &&(name.range_eq(0_usize, 3_usize, "com") || name.range_eq(0_usize, 3_usize, "lpt")) &&
+                name.byte_at(3_usize) >= 49_u8 && name.byte_at(3_usize) <= 57_u8 {
+                    ret false
+                }
+            }
+            start = i + 1_usize
+        }
+        i += 1_usize
+    }
+    ret true
+}
+
+fn manifest_source(reader: Reader) -> Result[str, str] {
+    let mut source = ""
+    loop {
+        let chunk = match reader.read(65536_usize) {
+            Result::Ok(value) => value
+            Result::Err(_) => {
+                ret Result::Err("invalid archive")
+            }
+        }
+        if chunk.byte_len() == 0_usize {
+            break
+        }
+        source += chunk
+    }
+    if source.find_byte_from(0_u8, 0_usize) < source.byte_len() {
+        ret Result::Err("manifest contains NUL")
+    }
+    ret Result::Ok(source)
+}
+
+fn validate(reader: Reader) -> Result[str, str] {
+    let mut names = Vec[(str, bool)]::new()
+    let mut documents = Vec[Json]::new()
+    let mut documents_size = 2_usize
+    let mut root = false
+    let mut source = false
+    loop {
+        let next = match reader.next() {
+            Result::Ok(value) => value
+            Result::Err(error) => {
+                ret Result::Err(error.message)
+            }
+        }
+        let entry = match next {
+            Option::Some(value) => value
+            Option::None => {
+                break
+            }
+        }
+        let directory = match entry.kind {
+            EntryKind::Directory => true _ => false
+        }
+        let regular = match entry.kind {
+            EntryKind::File => true _ => false
+        }
+        let name = entry.path
+        let length = name.byte_len()
+        if !safe_path(name) || entry.sparse ||(entry.permissions & 3072_u32) != 0_u32 ||(!directory && !regular) {
+            ret Result::Err("unsafe archive member or too many files")
+        }
+        let canonical = ascii_lower(if name.byte_at(length - 1_usize) == 47_u8 {
+                name.slice_bytes(0_usize, length - 1_usize)
+            } else {
+                name
+            }
+        )
+        let mut i = 0_usize
+        while i < names.len() {
+            let previous = names.get(i).unwrap_or(("", false))
+            let size = previous.0.byte_len()
+            if canonical == previous.0 ||
+            (!previous.1 && canonical.byte_len() > size && canonical.range_eq(0_usize, size, previous.0) && canonical.byte_at(size) == 47_u8) ||
+            (!directory && size > canonical.byte_len() && previous.0.range_eq(0_usize, canonical.byte_len(), canonical) && previous.0.byte_at(canonical.byte_len()) == 47_u8) {
+                ret Result::Err("duplicate or conflicting archive member")
+            }
+            i += 1_usize
+        }
+        names.push((canonical, directory))
+        if regular && length > 4_usize && name.range_eq(0_usize, 4_usize, "src/") && name.range_eq(length - 4_usize, 4_usize, ".enq") {
+            source = true
+        }
+        if directory {
+            continue
+        }
+        let manifest = name == "encore.toml" ||(length > 12_usize && name.range_eq(length - 12_usize, 12_usize, "/encore.toml"))
+        if manifest {
+            if entry.size > 262144_u64 {
+                ret Result::Err("manifest too large")
+            }
+            let text = manifest_source(reader)?
+            let item = object(vec![field("path", string(name)), field("source", string(text))])
+            documents_size += stringify(item).byte_len() +(if documents.len() == 0_usize {
+                    0_usize
+                } else {
+                    1_usize
+                }
+            )
+            if documents_size > 524288_usize {
+                ret Result::Err("too much manifest data")
+            }
+            documents.push(item)
+            if name == "encore.toml" {
+                root = true
+            }
+        }
+    }
+    if !root || !source {
+        ret Result::Err("archive requires root encore.toml and src/*.enq")
+    }
+    ret Result::Ok(stringify(Json::Array(documents)))
+}
+
+/// Keeps the reader and all archive policy state local to this native Encore thread.
+#attr(safe)
+pub fn archive_worker() -> u32 {
+    loop {
+        let job = unsafe {
+            registry_archive_wait()
+        }
+        if job == 0_usize {
+            ret 0_u32
+        }
+        let path = unsafe {
+            registry_archive_path(job)
+        }
+        let mut documents = ""
+        let mut error = ""
+        if path != "" {
+            match Reader::open_with(path, Limits {
+                    4096_usize, 67108864_u64, 4194304_u64, 134217728_u64
+                }
+                ,
+            ) {
+                Result::Err(_) => {
+                    error = "invalid archive"
+                }
+                Result::Ok(opened) => {
+                    with opened as reader {
+                        match validate(reader) {
+                            Result::Ok(value) => {
+                                documents = value
+                            }
+                            Result::Err(message) => {
+                                error = message
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        unsafe {
+            registry_archive_finish(job, documents, error)
+        }
+    }
+    ret 0_u32
+}

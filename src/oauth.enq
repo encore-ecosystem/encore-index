@@ -1,14 +1,17 @@
-import refrain::config::{setting, public_url}
+import refrain::config::{oauth_client, oauth_endpoint, oauth_secret, public_url}
 //! Bounded OAuth workers; only fixed provider URLs are used in production.
 import core::result::Result
-import json::{Json, parse}
-import refrain::validation::string_field
 import std::http::{HttpClient, HttpClientConfig, HttpRequest, Url}
+
+import json::{Json, field, object, parse, string, stringify}
+
+import refrain::oidc::verify_google_token
+import refrain::storage::numeric_id
+import refrain::validation::string_field
 
 extern fn registry_oauth_wait() -> usize
 extern fn registry_oauth_input(job: usize) -> str
 extern fn registry_oauth_finish(job: usize, subject: str) ->()
-extern fn registry_oauth_endpoint(kind: i32) -> str
 
 /// Percent-encodes form fields without passing secrets to a shell.
 pub fn form_encode(value: str) -> str {
@@ -17,9 +20,9 @@ pub fn form_encode(value: str) -> str {
     while i < value.len() {
         let byte = value.byte_at(i) as usize
         if (byte >= 65_usize && byte <= 90_usize) ||(byte >= 97_usize && byte <= 122_usize) ||(byte >= 48_usize && byte <= 57_usize) || byte == 45_usize || byte == 46_usize || byte == 95_usize || byte == 126_usize {
-            out += value.slice(i, 1_usize)
+            out += value.slice_bytes(i, 1_usize)
         } else {
-            out += "%" + "0123456789ABCDEF".slice(byte / 16_usize, 1_usize) + "0123456789ABCDEF".slice(byte % 16_usize, 1_usize)
+            out += "%" + "0123456789ABCDEF".slice_bytes(byte / 16_usize, 1_usize) + "0123456789ABCDEF".slice_bytes(byte % 16_usize, 1_usize)
         }
         i += 1_usize
     }
@@ -29,25 +32,18 @@ fn exchange(input: str) -> str {
     let document = parse(input).unwrap_or(Json::Null)
     let code = string_field(document, "code")
     let verifier = string_field(document, "verifier")
-    if code == "" || verifier == "" {
+    let provider = string_field(document, "provider")
+    if code == "" || verifier == "" ||(provider != "github" && provider != "google") {
         ret ""
     }
-    let token_url = Url::parse(unsafe {
-            registry_oauth_endpoint(0_i32)
-        }
-    ).unwrap_or(Url::empty())
-    let user_url = Url::parse(unsafe {
-            registry_oauth_endpoint(1_i32)
-        }
-    ).unwrap_or(Url::empty())
-    let ca_file = unsafe {
-        registry_oauth_endpoint(2_i32)
-    }
+    let token_url = Url::parse(oauth_endpoint(provider, 0_i32)).unwrap_or(Url::empty())
+    let user_url = Url::parse(oauth_endpoint(provider, 1_i32)).unwrap_or(Url::empty())
+    let ca_file = oauth_endpoint(provider, 2_i32)
     let client = HttpClient::with_config(HttpClientConfig::default().with_max_redirects(0_usize).with_max_body_size(65536_usize).with_timeout_ms(5000_usize).with_ca_file(ca_file))
-    let body = "client_id=" + form_encode(setting("ENCORE_INDEX_GITHUB_CLIENT_ID", "ENCORE_GITHUB_CLIENT_ID", "")) +
-    "&client_secret=" + form_encode(setting("ENCORE_INDEX_GITHUB_CLIENT_SECRET", "ENCORE_GITHUB_CLIENT_SECRET", "")) +
+    let body = "client_id=" + form_encode(oauth_client(provider)) +
+    "&client_secret=" + form_encode(oauth_secret(provider)) +
     "&code=" + form_encode(code) + "&code_verifier=" + form_encode(verifier) +
-    "&redirect_uri=" + form_encode(public_url() + "/auth/github/callback")
+    "&redirect_uri=" + form_encode(public_url() + "/auth/" + provider + "/callback") + "&grant_type=authorization_code"
     let token_response = match client.send(HttpRequest::new("POST", token_url).with_header("Accept", "application/json").with_header("User-Agent", "Encore-Index").with_header("Content-Type", "application/x-www-form-urlencoded").with_body(body)) {
         Result::Ok(value) => value
         Result::Err(_) => {
@@ -58,6 +54,23 @@ fn exchange(input: str) -> str {
         ret ""
     }
     let tokens = parse(token_response.body()).unwrap_or(Json::Null)
+    if provider == "google" {
+        let id_token = string_field(tokens, "id_token")
+        if id_token == "" {
+            ret ""
+        }
+        let keys_url = Url::parse(oauth_endpoint(provider, 3_i32)).unwrap_or(Url::empty())
+        let keys = match client.send(HttpRequest::get(keys_url).with_header("Accept", "application/json").with_header("User-Agent", "Encore-Index")) {
+            Result::Ok(value) => value
+            Result::Err(_) => {
+                ret ""
+            }
+        }
+        if keys.status() != 200_u16 {
+            ret ""
+        }
+        ret verify_google_token(id_token, keys.body(), oauth_client(provider), string_field(document, "nonce"))
+    }
     let token = string_field(tokens, "access_token")
     if token == "" || token.len() > 4096_usize || string_field(tokens, "token_type") != "bearer" {
         ret ""
@@ -72,10 +85,17 @@ fn exchange(input: str) -> str {
         ret ""
     }
     let user = parse(user_response.body()).unwrap_or(Json::Null)
-    ret match user.get("id").unwrap_or(Json::Null) {
+    // GitHub's immutable numeric ID is adapter-specific; the account layer
+    // accepts opaque subjects from any configured provider.
+    let subject = match user.get("id").unwrap_or(Json::Null) {
         Json::Number(value) => value
         _ => ""
     }
+    let login = string_field(user, "login")
+    if numeric_id(subject) == 0_i64 || login == "" || login.len() > 256_usize {
+        ret ""
+    }
+    ret stringify(object(vec![field("provider", string("github")), field("subject", string(subject)), field("login", string(login))]))
 }
 /// Runs on one of exactly two long-lived native worker threads.
 pub fn oauth_worker() -> u32 {

@@ -22,6 +22,7 @@ static uintptr_t reg_wait(int state, int claimed) {
 }
 uintptr_t registry_storage_wait(void) { return reg_wait(1, 2); }
 uintptr_t registry_oauth_wait(void) { return reg_wait(5, 6); }
+uintptr_t registry_archive_wait(void) { return reg_wait(4, 7); }
 void registry_oauth_stop(void) { reg_stop(); }
 void registry_storage_ready(int32_t ok) {
   pthread_mutex_lock(&reg_mutex); reg_storage_ready = ok ? 1 : -1;
@@ -49,6 +50,47 @@ encore_str registry_storage_field(uintptr_t id, int32_t field) {
 static void reg_complete(RegJob *job) {
   pthread_mutex_lock(&reg_mutex); job->state = 3; job->touched = time(NULL);
   pthread_mutex_unlock(&reg_mutex);
+}
+encore_str registry_archive_path(uintptr_t id) {
+  pthread_mutex_lock(&reg_mutex); RegJob *job = reg_owned_job(id, 7);
+  pthread_mutex_unlock(&reg_mutex);
+  if (!job) return registry_text("");
+  pthread_mutex_lock(&reg_upload_mutex);
+  RegUpload *upload = reg_upload_find(job->a, job->owner);
+  encore_str path = registry_text("");
+  if (!upload) reg_error(job, 404, "upload not found; restart publication");
+  else if (upload->state == 3) reg_reply(job, 200, upload->result ? upload->result : "{\"published\":true}");
+  else if (upload->state == 4) reg_error(job, 409, "validation is still running");
+  else if (!reg_hex(job->b) || !upload->length) reg_error(job, 400, "checksum required");
+  else {
+    upload->state = 4;
+    free(upload->manifest); upload->manifest = NULL;
+    pthread_mutex_unlock(&reg_upload_mutex);
+    bool ok = reg_hash_file(upload->path, upload->checksum) && !strcmp(upload->checksum, job->b);
+    pthread_mutex_lock(&reg_upload_mutex);
+    if (ok) path = registry_text(upload->path);
+    else { upload->state = 2; reg_error(job, 400, "checksum mismatch"); }
+  }
+  pthread_mutex_unlock(&reg_upload_mutex);
+  return path;
+}
+void registry_archive_finish(uintptr_t id, encore_str documents, encore_str error) {
+  pthread_mutex_lock(&reg_mutex); RegJob *job = reg_owned_job(id, 7);
+  pthread_mutex_unlock(&reg_mutex);
+  if (!job) return;
+  pthread_mutex_lock(&reg_upload_mutex);
+  RegUpload *upload = reg_upload_find(job->a, job->owner);
+  if (upload && upload->state == 4 && (encore_str_size(documents) || encore_str_size(error))) {
+    if (encore_str_size(error)) reg_error(job, 400, encore_str_data(error));
+    else if (encore_str_size(documents) && encore_str_size(documents) <= 524288) {
+      upload->manifest = strndup(encore_str_data(documents), encore_str_size(documents));
+      if (upload->manifest) reg_reply(job, 200, upload->manifest);
+      else reg_error(job, 503, "out of memory");
+    } else reg_error(job, 400, "invalid archive");
+    upload->state = 2;
+  }
+  pthread_mutex_unlock(&reg_upload_mutex);
+  reg_complete(job);
 }
 void registry_storage_finish(uintptr_t id, int32_t status, encore_str body) {
   pthread_mutex_lock(&reg_mutex); RegJob *job = reg_owned_job(id, 2);

@@ -3,8 +3,10 @@ import core::ops::ContextManager
 import core::option::Option
 import core::result::Result
 import core::vec::Vec
-import refrain::storage_schema::initialize
+
 import sqlite::{Connection, Row, SqliteError, Transaction, Value}
+
+import refrain::storage_schema::initialize
 
 /// A connection or a transaction-scoped view of the same connection.
 pub struct Store {
@@ -201,7 +203,12 @@ pub fn numeric_id(value: str) -> i64 {
 /// Records an event inside the caller's transaction.
 pub fn audit(db: Store, owner: i64, credential: i64, action: str) -> Result[bool, SqliteError] {
     ret Result::Ok(db.execute("INSERT INTO auth_audit(owner,credential,action) VALUES(?1,?2,?3)",
-            p3(Value::Integer(owner), Value::Integer(credential), Value::Text(action)),)? == 1_i64)
+            p3(Value::Integer(owner), if credential == 0_i64 {
+                    Value::Null
+                } else {
+                    Value::Integer(credential)
+                }
+                , Value::Text(action),),)? == 1_i64)
 }
 pub fn revoke(db: Store, owner: i64, credential: i64) -> Result[bool, SqliteError] {
     with db.begin()? as tx {

@@ -1,9 +1,8 @@
+#include <arpa/inet.h>
 #ifndef ENCORE_REGISTRY_TRANSPORT_H
 #define ENCORE_REGISTRY_TRANSPORT_H
 /* SQL-free transport. States: 1 storage queued, 2 storage-owned, 3 complete,
  * 4 validation queued, 5 OAuth queued, 6 OAuth-owned, 7 validator-owned. */
-#include <archive.h>
-#include <archive_entry.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -56,8 +55,6 @@ static RegJob reg_jobs[REG_JOBS];
 static pthread_mutex_t reg_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t reg_upload_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t reg_ready = PTHREAD_COND_INITIALIZER;
-static pthread_t reg_workers[1];
-static size_t reg_worker_count;
 static bool reg_stopping;
 static uint64_t reg_next_id;
 static char reg_directory[3072], reg_public_url[2048];
@@ -150,194 +147,6 @@ static RegUpload *reg_upload_find(const char *id, int64_t owner) {
       return &reg_uploads[i];
   return NULL;
 }
-static bool reg_safe_path(const char *path) {
-  if (!path || !*path || *path == '/' || strlen(path) > 1024)
-    return false;
-  const char *part = path;
-  for (const char *p = path;; ++p) {
-    if (*p == '\\' || *p == ':' || *p == '?' || *p == '*' || *p == '"' ||
-        *p == '<' || *p == '>' || *p == '|' || (unsigned char)*p >= 127 ||
-        (*p && (unsigned char)*p < 32))
-      return false;
-    if (*p == '/' || !*p) {
-      size_t len = (size_t)(p - part);
-      if (!len && *p)
-        return false;
-      if ((len == 1 && part[0] == '.') ||
-          (len == 2 && part[0] == '.' && part[1] == '.'))
-        return false;
-      if (len && (part[len - 1] == '.' || part[len - 1] == ' '))
-        return false;
-      char device[5] = {0};
-      size_t base = 0;
-      while (base < len && part[base] != '.')
-        ++base;
-      if (base <= 4) {
-        for (size_t i = 0; i < base; ++i)
-          device[i] = part[i] >= 'A' && part[i] <= 'Z' ? part[i] + ('a' - 'A')
-                                                       : part[i];
-        if (!strcmp(device, "con") || !strcmp(device, "prn") ||
-            !strcmp(device, "aux") || !strcmp(device, "nul") ||
-            (base == 4 &&
-             (!strncmp(device, "com", 3) || !strncmp(device, "lpt", 3)) &&
-             device[3] >= '1' && device[3] <= '9'))
-          return false;
-      }
-      part = p + 1;
-    }
-    if (!*p)
-      break;
-  }
-  return true;
-}
-/* No extraction and no execution. All bytes, including sparse/logical sizes,
- * are bounded; duplicate member names are rejected before publication. */
-static char *reg_validate_archive(const char *path, char **error) {
-  struct archive *a = archive_read_new();
-  struct archive_entry *entry;
-  archive_read_support_filter_gzip(a);
-  archive_read_support_format_tar(a);
-  char *names[4096] = {0};
-  bool directories[4096] = {0};
-  size_t count = 0, total = 0;
-  bool source = false;
-  char *documents = strdup("[");
-  size_t documents_size = 1;
-  bool root = false;
-  *error = "invalid archive";
-  if (!documents || archive_read_open_filename(a, path, 65536) != ARCHIVE_OK)
-    goto bad;
-  int status;
-  while ((status = archive_read_next_header(a, &entry)) == ARCHIVE_OK) {
-    if (archive_filter_code(a, 0) != ARCHIVE_FILTER_GZIP) {
-      *error = "gzip archive required";
-      goto bad;
-    }
-    const char *name = archive_entry_pathname(entry);
-    if (count == 4096 || !reg_safe_path(name) || archive_entry_symlink(entry) ||
-        archive_entry_hardlink(entry) || archive_entry_sparse_count(entry) ||
-        (archive_entry_perm(entry) & 06000) ||
-        (archive_entry_filetype(entry) != AE_IFREG &&
-         archive_entry_filetype(entry) != AE_IFDIR)) {
-      *error = "unsafe archive member or too many files";
-      goto bad;
-    }
-    size_t canonical_length = strlen(name);
-    if (name[canonical_length - 1] == '/')
-      --canonical_length;
-    char canonical[1025];
-    for (size_t i = 0; i < canonical_length; ++i)
-      canonical[i] =
-          name[i] >= 'A' && name[i] <= 'Z' ? name[i] + ('a' - 'A') : name[i];
-    canonical[canonical_length] = 0;
-    bool directory = archive_entry_filetype(entry) == AE_IFDIR;
-    for (size_t i = 0; i < count; ++i) {
-      size_t previous = strlen(names[i]);
-      if (!strcmp(canonical, names[i]) ||
-          (!directories[i] && canonical_length > previous &&
-           !strncmp(canonical, names[i], previous) &&
-           canonical[previous] == '/') ||
-          (!directory && previous > canonical_length &&
-           !strncmp(canonical, names[i], canonical_length) &&
-           names[i][canonical_length] == '/')) {
-        *error = "duplicate or conflicting archive member";
-        goto bad;
-      }
-    }
-    directories[count] = directory;
-    names[count] = strdup(canonical);
-    if (!names[count++])
-      goto bad;
-    la_int64_t size = archive_entry_size(entry);
-    if (size < 0 || size > 64 * 1024 * 1024 ||
-        total + (size_t)size > 64 * 1024 * 1024) {
-      *error = "unpacked archive exceeds 64 MiB";
-      goto bad;
-    }
-    total += (size_t)size;
-    size_t len = strlen(name);
-    bool manifest = !strcmp(name, "encore.toml") ||
-                    (len > 12 && !strcmp(name + len - 12, "/encore.toml"));
-    if (archive_entry_filetype(entry) == AE_IFREG &&
-        !strncmp(name, "src/", 4) && len > 4 && !strcmp(name + len - 4, ".enq"))
-      source = true;
-    if (archive_entry_filetype(entry) == AE_IFDIR)
-      continue;
-    char *text =
-        manifest && size <= 262144 ? calloc((size_t)size + 1, 1) : NULL;
-    if (manifest && !text) {
-      *error = "manifest too large";
-      goto bad;
-    }
-    char buffer[65536];
-    size_t seen = 0;
-    la_ssize_t n;
-    while ((n = archive_read_data(a, buffer, sizeof(buffer))) > 0) {
-      if (seen + (size_t)n > (size_t)size) {
-        free(text);
-        goto bad;
-      }
-      if (text)
-        memcpy(text + seen, buffer, (size_t)n);
-      seen += (size_t)n;
-    }
-    if (n < 0 || seen != (size_t)size) {
-      free(text);
-      goto bad;
-    }
-    if (text) {
-      if (memchr(text, 0, (size_t)size)) {
-        free(text);
-        *error = "manifest contains NUL";
-        goto bad;
-      }
-      char *qp = reg_quote(name), *qt = reg_quote(text);
-      char *item = qp && qt
-                       ? reg_format("%s{\"path\":%s,\"source\":%s}",
-                                         documents_size > 1 ? "," : "", qp, qt)
-                       : NULL;
-      free(qp);
-      free(qt);
-      free(text);
-      if (!item)
-        goto bad;
-      size_t extra = strlen(item);
-      if (documents_size + extra > 524288) {
-        free(item);
-        *error = "too much manifest data";
-        goto bad;
-      }
-      char *next = realloc(documents, documents_size + extra + 2);
-      if (!next) {
-        free(item);
-        goto bad;
-      }
-      documents = next;
-      memcpy(documents + documents_size, item, extra + 1);
-      documents_size += extra;
-      free(item);
-      if (!strcmp(name, "encore.toml"))
-        root = true;
-    }
-  }
-  if (status != ARCHIVE_EOF || !root || !source) {
-    *error = "archive requires root encore.toml and src/*.enq";
-    goto bad;
-  }
-  documents[documents_size++] = ']';
-  documents[documents_size] = 0;
-  for (size_t i = 0; i < count; ++i)
-    free(names[i]);
-  archive_read_free(a);
-  return documents;
-bad:
-  for (size_t i = 0; i < count; ++i)
-    free(names[i]);
-  free(documents);
-  archive_read_free(a);
-  return NULL;
-}
-
 static void reg_file_process(RegJob *j, int64_t owner) {
   if (j->op == 8) {
     if (!reg_hex(j->a)) { reg_error(j, 404, "archive not found"); return; }
@@ -471,28 +280,6 @@ static void reg_file_process(RegJob *j, int64_t owner) {
         else
           reg_error(j, 409, "chunk offset/content mismatch or write failure");
       }
-    } else if (j->op == 5) {
-      if (u->state == 3)
-        reg_reply(j, 200, u->result ? u->result : "{\"published\":true}");
-      else if (!reg_hex(j->b) || !u->length)
-        reg_error(j, 400, "checksum required");
-      else {
-        u->state = 4;
-        pthread_mutex_unlock(&reg_upload_mutex);
-        if (!reg_hash_file(u->path, u->checksum) || strcmp(u->checksum, j->b))
-          reg_error(j, 400, "checksum mismatch");
-        else {
-          char *error;
-          free(u->manifest);
-          u->manifest = reg_validate_archive(u->path, &error);
-          if (u->manifest)
-            reg_reply(j, 200, u->manifest);
-          else
-            reg_error(j, 400, error);
-        }
-        pthread_mutex_lock(&reg_upload_mutex);
-        u->state = 2;
-      }
     } else reg_error(j, 400, "unknown file operation");
   }
   pthread_mutex_unlock(&reg_upload_mutex);
@@ -509,24 +296,6 @@ static void reg_job_clear(RegJob *j) {
   memset(j, 0, sizeof(*j));
 }
 
-static void *reg_validator(void *unused) {
-  (void)unused;
-  pthread_mutex_lock(&reg_mutex);
-  for (;;) {
-    if (reg_stopping) break;
-    RegJob *job = NULL;
-    for (size_t i = 0; i < REG_JOBS; ++i)
-      if (reg_jobs[i].state == 4) { job = &reg_jobs[i]; break; }
-    if (!job) { pthread_cond_wait(&reg_ready, &reg_mutex); continue; }
-    job->state = 7;
-    pthread_mutex_unlock(&reg_mutex);
-    reg_file_process(job, job->owner);
-    pthread_mutex_lock(&reg_mutex);
-    job->state = 3; job->touched = time(NULL);
-  }
-  pthread_mutex_unlock(&reg_mutex);
-  return NULL;
-}
 static bool reg_service_start(const char *directory, const char *url) {
   if (strlen(directory) >= sizeof(reg_directory) ||
       strlen(url) >= sizeof(reg_public_url) || strchr(url, '"') ||
@@ -548,7 +317,25 @@ static bool reg_service_start(const char *directory, const char *url) {
           *p == '[' || *p == ']'))
       return false;
   }
-  if (!secure && !((!strncmp(authority, "127.0.0.1", 9) &&
+  /* Explicit LAN listening permits HTTP origins on private IPv4 networks. */
+  bool lan_http = false;
+  const char *bind = getenv("ENCORE_INDEX_BIND");
+  if (!secure && bind && !strcmp(bind, "0.0.0.0")) {
+    char host[64];
+    size_t host_length = strcspn(authority, ":");
+    if (host_length && host_length < sizeof(host)) {
+      memcpy(host, authority, host_length);
+      host[host_length] = 0;
+      struct in_addr address;
+      if (inet_pton(AF_INET, host, &address) == 1) {
+        uint32_t ip = ntohl(address.s_addr);
+        lan_http = (ip & 0xff000000u) == 0x0a000000u ||
+                   (ip & 0xfff00000u) == 0xac100000u ||
+                   (ip & 0xffff0000u) == 0xc0a80000u;
+      }
+    }
+  }
+  if (!secure && !lan_http && !((!strncmp(authority, "127.0.0.1", 9) &&
                     (!authority[9] || authority[9] == ':')) ||
                    (!strncmp(authority, "localhost", 9) &&
                     (!authority[9] || authority[9] == ':')) ||
@@ -583,8 +370,6 @@ static bool reg_service_start(const char *directory, const char *url) {
     return false;
 
   reg_storage_ready = 0;
-  if (pthread_create(&reg_workers[0], NULL, reg_validator, NULL)) return false;
-  reg_worker_count = 1;
   return true;
 }
 static void reg_stop(void) {
@@ -594,8 +379,6 @@ static void reg_stop(void) {
 /* All Encore workers must be joined before queue memory is released. */
 static void reg_service_stop(void) {
   reg_stop();
-  for (size_t i = 0; i < reg_worker_count; ++i) pthread_join(reg_workers[i], NULL);
-  reg_worker_count = 0;
   for (size_t i = 0; i < REG_JOBS; ++i) reg_job_clear(&reg_jobs[i]);
   for (size_t i = 0; i < REG_UPLOADS; ++i) reg_upload_clear(&reg_uploads[i]);
 }

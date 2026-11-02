@@ -1,20 +1,26 @@
-import refrain::config::{setting, public_url}
+import refrain::config::{auth_enabled, public_url, setting}
+import refrain::encoding::query_decode
 //! Bounded asynchronous registry API on Blaze; one Encore worker owns SQLite.
 import blaze::routing::{get, post, put, delete}
-import blaze::{AppFactory, AsyncHandler, Request, Response, Router, ServerConfig, ShutdownToken, serve}
 import core::future::{Context, Future, Poll}
 import core::result::Result
-import json::{Json, parse, stringify}
-import refrain::auth::{cookie, form, auth_response}
+
+import std::io::{eprintln, println}
+import std::os::{argv, read_file}
+
+import blaze::{AppFactory, AsyncHandler, Request, Response, Router, ServerConfig, ShutdownToken, serve}
+import dotenv
+import json::{Json, field, object, parse, stringify}
+import sqlite::SqliteError
+
+import refrain::archive_worker::archive_worker
+import refrain::auth::{auth_response, cookie, form}
 import refrain::oauth::oauth_worker
-import refrain::storage::{Store, user_add, reserve, revoke_legacy, link_github, numeric_id}
+import refrain::storage::{Store, link_github, numeric_id, reserve, revoke_legacy, user_add}
 import refrain::storage_auth::legacy_token
 import refrain::storage_worker::storage_worker
 import refrain::validation::{publication_metadata, string_field}
 import refrain::views::{catalogue, package_page}
-import sqlite::SqliteError
-import std::io::{eprintln, println}
-import std::os::{argv, read_file}
 
 extern fn registry_store_open(directory: str) -> i32
 extern fn registry_store_close() ->()
@@ -23,8 +29,6 @@ extern fn registry_storage_started() -> i32
 extern fn registry_submit(operation: i32, a: str, b: str, token: str, body: str) -> usize
 extern fn registry_job_status(job: usize) -> i32
 extern fn registry_job_take(job: usize) -> str
-extern fn registry_query_decode(value: str) -> str
-extern fn registry_auth_enabled() -> i32
 extern fn registry_oauth_stop() ->()
 
 enum Route {
@@ -46,6 +50,8 @@ enum Route {
     CopyScript
     AuthStart
     AuthCallback
+    GoogleAuthStart
+    GoogleAuthCallback
     Account
     AuthAction
     Device
@@ -128,23 +134,38 @@ impl Future[Response] for Pending {
     }
 }
 
+/// Duplicate query keys are rejected, including percent-encoded aliases.
 fn query_value(request: Request, key: str) -> str {
     let query = request.query()
+    if query.len() > 1024_usize {
+        ret ""
+    }
     let mut start = 0_usize
     let mut i = 0_usize
-    while i <= query.len() && query.len() <= 256_usize {
-        if i == query.len() || query.slice(i, 1_usize) == "&" {
-            let item = query.slice(start, i - start)
-            if item.len() > key.len() && item.slice(0_usize, key.len() + 1_usize) == key + "=" {
-                ret unsafe {
-                    registry_query_decode(item.slice(key.len() + 1_usize, item.len() - key.len() - 1_usize))
+    let mut found = false
+    let mut result = ""
+    while i <= query.len() {
+        if i == query.len() || query.slice_bytes(i, 1_usize) == "&" {
+            let item = query.slice_bytes(start, i - start)
+            let mut equal = 0_usize
+            while equal < item.len() && item.slice_bytes(equal, 1_usize) != "=" {
+                equal += 1_usize
+            }
+            let name = query_decode(item.slice_bytes(0_usize, equal))
+            if name == key {
+                if found {
+                    ret ""
+                }
+                found = true
+                if equal < item.len() {
+                    result = query_decode(item.slice_bytes(equal + 1_usize, item.len() - equal - 1_usize))
                 }
             }
             start = i + 1_usize
         }
         i += 1_usize
     }
-    ret ""
+    ret result
 }
 
 impl AsyncHandler[Route, Pending] for IndexApp {
@@ -156,11 +177,13 @@ impl AsyncHandler[Route, Pending] for IndexApp {
             ""
         }
         ret match route {
-            Route::AuthStart => enqueue(20_i32, query_value(request, "next"), "", "", "", 20_i32, "")
-            Route::AuthCallback => enqueue(21_i32, query_value(request, "state"), query_value(request, "code"), cookie(request, true), "", 20_i32, "")
-            Route::Account => enqueue(22_i32, "", "", cookie(request, false), "", 20_i32, "")
-            Route::Device => enqueue(29_i32, query_value(request, "code"), "", cookie(request, false), "", 29_i32, "")
-            Route::AuthAction => enqueue(26_i32, "", request.header("Origin").unwrap_or(""), cookie(request, false), stringify(form(request)), 20_i32, "")
+            Route::AuthStart => enqueue(20_i32, query_value(request, "next"), "github", "", "", 20_i32, "")
+            Route::AuthCallback => enqueue(21_i32, query_value(request, "state"), query_value(request, "code"), cookie(request, true), stringify(object(vec![field("provider", Json::String("github")), field("session", Json::String(cookie(request, false))), field("error", Json::String(query_value(request, "error")))])), 20_i32, "")
+            Route::GoogleAuthStart => enqueue(20_i32, query_value(request, "next"), "google", "", "", 20_i32, "")
+            Route::GoogleAuthCallback => enqueue(21_i32, query_value(request, "state"), query_value(request, "code"), cookie(request, true), stringify(object(vec![field("provider", Json::String("google")), field("session", Json::String(cookie(request, false))), field("error", Json::String(query_value(request, "error")))])), 20_i32, "")
+            Route::Account => enqueue(22_i32, "", cookie(request, true), cookie(request, false), "", 20_i32, "")
+            Route::Device => enqueue(29_i32, query_value(request, "code"), cookie(request, true), cookie(request, false), "", 29_i32, "")
+            Route::AuthAction => enqueue(26_i32, cookie(request, true), request.header("Origin").unwrap_or(""), cookie(request, false), stringify(form(request)), 20_i32, "")
             Route::Me => enqueue(27_i32, "", "", token, "", 30_i32, "")
             Route::Logout => enqueue(28_i32, "", "", token, "", 30_i32, "")
             Route::DeviceStart => {
@@ -183,10 +206,7 @@ impl AsyncHandler[Route, Pending] for IndexApp {
             Route::CopyScript => immediate(Response::text(self.copy_script).with_header("Content-Type", "text/javascript; charset=utf-8").with_header("Cache-Control", "no-cache").with_header("X-Content-Type-Options", "nosniff"))
             Route::Health => immediate(response(200_u16, "{\"status\":\"ok\",\"publication\":true}"))
             Route::Config => {
-                let auth = if unsafe {
-                    registry_auth_enabled()
-                }
-                != 0_i32 {
+                let auth = if auth_enabled() {
                     ",\"auth\":{\"version\":1,\"device\":\"/api/v1/auth/device\",\"token\":\"/api/v1/auth/token\",\"me\":\"/api/v1/me\",\"logout\":\"/api/v1/auth/logout\"}"
                 } else {
                     ""
@@ -233,6 +253,8 @@ impl AppFactory[Route, IndexApp] for IndexApp {
         ret Router[Route, IndexApp]::new(self)
         .route("/auth/github/start", get[Route](Route::AuthStart))
         .route("/auth/github/callback", get[Route](Route::AuthCallback))
+        .route("/auth/google/start", get[Route](Route::GoogleAuthStart))
+        .route("/auth/google/callback", get[Route](Route::GoogleAuthCallback))
         .route("/account", get[Route](Route::Account))
         .route("/account/action", post[Route](Route::AuthAction))
         .route("/auth/device", get[Route](Route::Device))
@@ -290,6 +312,14 @@ fn admin(command: str, directory: str) -> Result[str, SqliteError] {
     }
 }
 fn main() -> u32 {
+    match dotenv::load() {
+        Result::Ok(_) => {
+        }
+        Result::Err(error) => {
+            eprintln(f"Cannot load .env at line {error.line}: {error.message}")
+            ret 1_u32
+        }
+    }
     let command = argument(1_usize)
     if command != "serve" && command != "init" && command != "user-add" && command != "token-create" && command != "token-revoke" && command != "reserve" && command != "github-link" {
         eprintln("Usage: encore-index init | serve | user-add NAME | token-create OWNER | token-revoke ID | reserve PACKAGE OWNER | github-link OWNER GITHUB_ID") ret 2_u32
@@ -322,7 +352,7 @@ fn run_command(command: str) -> u32 {
         == 0_i32 {
             eprintln("Cannot start storage workers") ret 1_u32
         }
-        let config = ServerConfig::new("127.0.0.1", port as usize).with_workers(1_usize).with_max_request_body(65536_usize).with_max_pipeline_depth(4_usize).with_max_write_queue(5000000_usize)
+        let config = ServerConfig::new(setting("ENCORE_INDEX_BIND", "ENCORE_REGISTRY_BIND", "127.0.0.1"), port as usize).with_workers(1_usize).with_max_request_body(65536_usize).with_max_pipeline_depth(4_usize).with_max_write_queue(5000000_usize)
         let copy_script = read_file("assets/copy.js")
         if copy_script == "" {
             eprintln("Cannot load assets/copy.js") ret 1_u32
@@ -339,6 +369,7 @@ fn run_command(command: str) -> u32 {
             registry_storage_started()
         }
         != 0_i32
+        let archive = spawn archive_worker()
         let oauth_left = spawn oauth_worker()
         let oauth_right = spawn oauth_worker()
         let mut code = 1_u32
@@ -359,6 +390,7 @@ fn run_command(command: str) -> u32 {
         }
         let _left = oauth_left.join()
         let _right = oauth_right.join()
+        let _archive = archive.join()
         let _storage = storage.join()
         ret code
     } else {

@@ -1,5 +1,8 @@
 //! Service settings. Empty values are unset; the Index name wins over legacy names.
+import core::option::Option
 import std::os::env
+
+extern fn registry_auth_test_build() -> bool
 
 pub fn setting(name: str, legacy: str, fallback: str) -> str {
     let value = env(name).unwrap_or("")
@@ -17,4 +20,118 @@ pub fn setting(name: str, legacy: str, fallback: str) -> str {
 pub fn public_url() -> str {
     ret setting("ENCORE_INDEX_PUBLIC_URL", "ENCORE_REGISTRY_PUBLIC_URL",
         "http://127.0.0.1:" + setting("ENCORE_INDEX_PORT", "ENCORE_REGISTRY_PORT", "8137"),)
+}
+
+/// Provider credentials are independent; empty settings disable only that provider.
+pub fn oauth_client(provider: str) -> str {
+    ret if provider == "github" {
+        setting("ENCORE_INDEX_GITHUB_CLIENT_ID", "ENCORE_GITHUB_CLIENT_ID", "")
+    } elif provider == "google" {
+        env("ENCORE_INDEX_GOOGLE_CLIENT_ID").unwrap_or("")
+    } else {
+        ""
+    }
+}
+pub fn oauth_secret(provider: str) -> str {
+    ret if provider == "github" {
+        setting("ENCORE_INDEX_GITHUB_CLIENT_SECRET", "ENCORE_GITHUB_CLIENT_SECRET", "")
+    } elif provider == "google" {
+        env("ENCORE_INDEX_GOOGLE_CLIENT_SECRET").unwrap_or("")
+    } else {
+        ""
+    }
+}
+
+pub fn provider_enabled(provider: str) -> bool {
+    let client = oauth_client(provider)
+    let secret = oauth_secret(provider)
+    ret client != "" && client.byte_len() <= 256_usize && secret != "" && secret.byte_len() <= 256_usize
+}
+
+pub fn auth_enabled() -> bool {
+    ret provider_enabled("github") || provider_enabled("google")
+}
+
+pub fn cookie_name(oauth: bool) -> str {
+    let secure = public_url().slice_bytes(0_usize, 8_usize) == "https://"
+    ret if oauth {
+        if secure {
+            "__Host-encore_oauth"
+        } else {
+            "encore_oauth"
+        }
+    } else {
+        if secure {
+            "__Host-encore_session"
+        } else {
+            "encore_session"
+        }
+    }
+}
+
+// Preserve the native compile-time gate: production builds ignore all test URLs.
+#attr(safe)
+fn oauth_test_setting(name: str) -> Option[str] {
+    if unsafe {
+        registry_auth_test_build()
+    }
+    {
+        ret env(name)
+    }
+    ret Option::None
+}
+
+pub fn oauth_authorize_url(provider: str) -> str {
+    let google = provider == "google"
+    let override = oauth_test_setting(if google {
+            "ENCORE_TEST_GOOGLE_AUTHORIZE_URL"
+        } else {
+            "ENCORE_TEST_AUTHORIZE_URL"
+        }
+    )
+    ret override.unwrap_or(if google {
+            "https://accounts.google.com/o/oauth2/v2/auth"
+        } else {
+            "https://github.com/login/oauth/authorize"
+        }
+    )
+}
+
+pub fn oauth_endpoint(provider: str, kind: i32) -> str {
+    let google = provider == "google"
+    let name = if google {
+        if kind == 0_i32 {
+            "ENCORE_TEST_GOOGLE_TOKEN_URL"
+        } elif kind == 3_i32 {
+            "ENCORE_TEST_GOOGLE_JWKS_URL"
+        } else {
+            "ENCORE_TEST_CA"
+        }
+    } else {
+        if kind == 0_i32 {
+            "ENCORE_TEST_TOKEN_URL"
+        } elif kind == 1_i32 {
+            "ENCORE_TEST_USER_URL"
+        } else {
+            "ENCORE_TEST_CA"
+        }
+    }
+    let fallback = if google {
+        if kind == 0_i32 {
+            "https://oauth2.googleapis.com/token"
+        } elif kind == 3_i32 {
+            "https://www.googleapis.com/oauth2/v3/certs"
+        } else {
+            ""
+        }
+    } else {
+        if kind == 0_i32 {
+            "https://github.com/login/oauth/access_token"
+        } elif kind == 1_i32 {
+            "https://api.github.com/user"
+        } else {
+            ""
+        }
+    }
+    ret oauth_test_setting(name).unwrap_or(fallback)
 }

@@ -2,8 +2,9 @@
 import core::option::Option
 import core::result::Result
 import core::vec::Vec
-import json::{Json, field, parse, stringify, object, string}
-import toml::{TomlValue, toml_parse_document, toml_get_string}
+
+import json::{Json, field, object, parse, string, stringify}
+import toml::{TomlValue, toml_get_string, toml_parse_document}
 
 pub fn identifier(value: str) -> bool {
     if value.len() < 2_usize || value.len() > 64_usize {

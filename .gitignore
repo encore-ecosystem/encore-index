@@ -11,3 +11,4 @@
 .env.*
 *.log
 /data-*/
+/packages/*/target/
